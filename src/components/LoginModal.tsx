@@ -273,14 +273,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             {mode === 'login' ? (
               <>
                 <span className="text-slate-400">계정이 없으신가요? </span>
-                <button type="button" onClick={() => { setMode('signup'); setError(''); setSuccessMessage(''); }} className="font-bold text-[#003087] hover:underline">
+                <button type="button" onClick={() => { setMode('signup'); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">
                   회원가입
                 </button>
               </>
             ) : (
               <>
                 <span className="text-slate-400">이미 계정이 있으신가요? </span>
-                <button type="button" onClick={() => { setMode('login'); setError(''); setSuccessMessage(''); }} className="font-bold text-[#003087] hover:underline">
+                <button type="button" onClick={() => { setMode('login'); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">
                   로그인
                 </button>
               </>

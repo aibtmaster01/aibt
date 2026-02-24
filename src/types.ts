@@ -26,6 +26,8 @@ export interface User {
   passesByCert?: Record<string, PassInfo>;
   /** 구매한 회차 (재수강) - certId → [dateId1, dateId2, ...], 구매한 시험 일정 ID 목록 */
   purchasedScheduleIdsByCert?: Record<string, string[]>;
+  /** 이메일 인증 완료 여부 — 미인증 시 앱 내 안내·재발송 배너 노출 */
+  is_verified?: boolean;
 }
 
 /** 이용권 정보 (시험당일 12:00 KST 활성화) */

@@ -23,7 +23,7 @@ type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/
 type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout';
 
 const App: React.FC = () => {
-  const { user, loading: authLoading, logout, updateUser } = useAuth();
+  const { user, loading: authLoading, logout, updateUser, resendVerificationEmail } = useAuth();
   const [route, setRoute] = useState<Route>('/');
   const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
@@ -54,6 +54,11 @@ const App: React.FC = () => {
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
   /** 로그인 모달 진입 시 처음 보여줄 탭 */
   const [loginInitialMode, setLoginInitialMode] = useState<'login' | 'signup' | null>(null);
+  /** 미인증 사용자: 인증 메일 재발송 모달 */
+  const [showResendVerificationModal, setShowResendVerificationModal] = useState(false);
+  const [resendPassword, setResendPassword] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
   /** 결과 화면에서 무료 회원 "다시 풀기" → AI/시험 모드 선택 모달 */
   const [showRetryModeModal, setShowRetryModeModal] = useState(false);
   /** 결과 화면에서 무료 회원 "다음 회차" → 결제 필요 팝업 후 결제 화면 */
@@ -467,6 +472,11 @@ const App: React.FC = () => {
             startNextAfterRoundId={null}
             onConsumedStartNext={() => {}}
             initialRoundId={selectedRoundId ?? undefined}
+            onRequestLogin={() => {
+              setLoginInitialMode('login');
+              setShowLoginModal(true);
+              setLoginModalIntent('standalone');
+            }}
           />
         ) : null;
       case '/quiz':
@@ -666,6 +676,24 @@ const App: React.FC = () => {
           onLogout={handleLogout}
         />
         <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
+          {user && user.is_verified === false && (
+            <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+              <span className="text-amber-900 text-sm font-medium">
+                이메일 인증을 완료해주세요. 메일이 오지 않았나요?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setResendError(null);
+                  setResendPassword('');
+                  setShowResendVerificationModal(true);
+                }}
+                className="text-amber-800 underline font-semibold text-sm hover:text-amber-900 shrink-0"
+              >
+                인증 메일 재발송
+              </button>
+            </div>
+          )}
           {renderContent()}
         </main>
       </div>
@@ -684,6 +712,61 @@ const App: React.FC = () => {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 미인증 사용자: 인증 메일 재발송 모달 */}
+      {showResendVerificationModal && user?.email && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">인증 메일 재발송</h3>
+            <p className="text-slate-600 text-sm mb-4">비밀번호를 입력하면 {user.email}로 인증 메일을 다시 보냅니다.</p>
+            <input
+              type="password"
+              value={resendPassword}
+              onChange={(e) => { setResendPassword(e.target.value); setResendError(null); }}
+              placeholder="비밀번호"
+              className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder:text-slate-400 mb-3"
+              autoFocus
+            />
+            {resendError && <p className="text-red-600 text-sm mb-2">{resendError}</p>}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResendVerificationModal(false);
+                  setResendPassword('');
+                  setResendError(null);
+                }}
+                className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={!resendPassword.trim() || resendLoading}
+                onClick={async () => {
+                  if (!resendPassword.trim() || !user?.email) return;
+                  setResendLoading(true);
+                  setResendError(null);
+                  try {
+                    await resendVerificationEmail(user.email, resendPassword.trim());
+                    setShowResendVerificationModal(false);
+                    setResendPassword('');
+                    alert('인증 메일을 발송했습니다. 받은편지함과 스팸함을 확인해주세요.');
+                  } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : '재발송에 실패했습니다. 비밀번호를 확인해주세요.';
+                    setResendError(msg);
+                  } finally {
+                    setResendLoading(false);
+                  }
+                }}
+                className="flex-1 py-3 rounded-xl bg-[#0034d3] text-white font-bold hover:bg-[#003087] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {resendLoading ? '발송 중…' : '재발송'}
+              </button>
+            </div>
           </div>
         </div>
       )}

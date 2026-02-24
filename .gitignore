@@ -17,9 +17,28 @@ dist-ssr
 .env.*
 !.env.example
 
-# Firebase service account (민감 정보)
-serviceAccountKey.json
-*-firebase-adminsdk*.json
+# Firebase service account (민감 정보, 모든 경로)
+**/serviceAccountKey.json
+**/*-firebase-adminsdk*.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.so
+
+# backend 전용 (서비스 계정·환경 변수는 루트 규칙으로도 적용되나 명시)
+backend/.env
+backend/.venv/
+
+# backend BIGDATA 대용량 JSON (문제 데이터 — 로컬/업로드용, 저장소 미포함)
+backend/BIGDATA/Final_*.json
+backend/BIGDATA/*_final.json
+backend/BIGDATA/*1000*.json
+backend/BIGDATA/*1260*.json
 
 # Editor directories and files
 .vscode/*

@@ -25,6 +25,8 @@ interface ExamListProps {
   onConsumedStartNext?: () => void;
   /** 마이페이지 "재응시" 등으로 진입 시 해당 회차 모드 선택 모달 자동 오픈 */
   initialRoundId?: string | null;
+  /** 게스트가 2·3·4회차 잠금 확인 시 로그인 모달 열기 (미제공 시 onNavigate('/login')) */
+  onRequestLogin?: () => void;
 }
 
 /** 1~5회 자격증 공통 명칭 (기초 점검 1~3 / 실전 언락 4~5) */
@@ -64,6 +66,7 @@ export const ExamList: React.FC<ExamListProps> = ({
   startNextAfterRoundId = null,
   onConsumedStartNext,
   initialRoundId = null,
+  onRequestLogin,
 }) => {
   const initialRoundIdOpenedRef = React.useRef<string | null>(null);
   const [showStaticModal, setShowStaticModal] = useState(false);
@@ -653,7 +656,10 @@ export const ExamList: React.FC<ExamListProps> = ({
               type="button"
               onClick={() => {
                 setShowLockedModal(false);
-                if (lockedAction === 'login') onNavigate('/login');
+                if (lockedAction === 'login') {
+                  if (onRequestLogin) onRequestLogin();
+                  else onNavigate('/login');
+                }
               }}
               className="mt-5 w-full py-3 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1644a8]"
             >

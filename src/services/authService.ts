@@ -102,6 +102,8 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
     purchasedScheduleIdsByCert,
   };
 
+  const isVerified = (docData.is_verified as boolean) !== false;
+
   if (memberships && typeof memberships === 'object') {
     const { subscriptions, paidCertIds, expiredCertIds, isPremium } = membershipsToUserFields(memberships);
     return {
@@ -112,6 +114,7 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
       subscriptions,
       paidCertIds,
       expiredCertIds,
+      is_verified: isVerified,
       ...baseUser,
     };
   }
@@ -129,6 +132,7 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
     subscriptions,
     paidCertIds: (docData.paidCertIds as string[]) || [],
     expiredCertIds: (docData.expiredCertIds as string[]) || [],
+    is_verified: isVerified,
     ...baseUser,
   };
 }
@@ -138,10 +142,7 @@ export async function loginWithEmailPassword(email: string, password: string): P
   try {
     const credential = await signInWithEmailAndPassword(auth, email, password);
     uid = credential.user.uid;
-    if (!credential.user.emailVerified) {
-      await signOut(auth);
-      throw new AuthError('이메일 인증이 완료되지 않았습니다. 인증 메일을 확인해주세요.', 'UNVERIFIED');
-    }
+    // 이메일 미인증이어도 로그인 허용 — 인증 메일이 안 오는 경우가 있어, 앱 안에서 재발송·안내 가능하도록
   } catch (err: unknown) {
     if (err instanceof AuthError) throw err;
     const code = (err as { code?: string })?.code;
@@ -163,7 +164,8 @@ export async function loginWithEmailPassword(email: string, password: string): P
   }
 
   const data = userSnap.data();
-  if (data.is_verified === false) {
+  const firebaseUser = auth.currentUser;
+  if (firebaseUser?.emailVerified && data.is_verified === false) {
     await updateDoc(userRef, { is_verified: true });
     data.is_verified = true;
   }
@@ -349,8 +351,8 @@ export async function getSessionForCurrentAuth(uid: string): Promise<User | null
   if (!userSnap.exists()) return null;
 
   const data = userSnap.data();
-  if (data.is_verified === false) return null;
   if (data.isBanned === true) return null;
+  // is_verified === false여도 세션 유지 (미인증 사용자도 앱 이용 가능, 상단에서 인증 안내)
 
   const deviceId = getDeviceId();
   const registeredDevices = (data.registered_devices as string[]) || [];

@@ -56,8 +56,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const appUser = await getSessionForCurrentAuth(firebaseUser.uid);
         setUser(appUser);
+        // 세션이 없어도 즉시 로그아웃하지 않음 — 회원가입 직후 setDoc 전에 여기 올 수 있어, 로그아웃하면 setDoc 권한 오류 발생
         if (!appUser) {
-          await logoutUser();
+          setUser(null);
         }
       } catch {
         setUser(null);
