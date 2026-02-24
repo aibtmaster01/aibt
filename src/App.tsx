@@ -1,0 +1,914 @@
+import React, { useState, useEffect } from 'react';
+import { Lock, ClipboardCheck, BookOpen, X, Info } from 'lucide-react';
+import { DashboardSidebar } from './components/DashboardSidebar';
+import { EmptyState } from './components/dashboard/empty-state';
+import { Home } from './pages/Home';
+import { LoginModal } from './components/LoginModal';
+import { MyPage } from './pages/MyPage';
+import { ExamList } from './pages/ExamList';
+import { Quiz } from './pages/Quiz';
+import { Result } from './pages/Result';
+import { Admin } from './pages/Admin';
+import { Checkout } from './pages/Checkout';
+import { AccountSettings } from './pages/AccountSettings';
+import { User, Certification } from './types';
+import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from './constants';
+import { useAuth } from './contexts/AuthContext';
+import { submitQuizResult } from './services/gradingService';
+import { invalidateMyPageCache } from './services/db/localCacheDB';
+import { ensureUserSubscription, setPaymentComplete } from './services/authService';
+import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50 } from './services/examService';
+
+type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin';
+type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout';
+
+const App: React.FC = () => {
+  const { user, loading: authLoading, logout, updateUser } = useAuth();
+  const [route, setRoute] = useState<Route>('/');
+  const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
+  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
+  const [quizMode, setQuizMode] = useState<'exam' | 'study'>('study');
+  const [preFetchedQuestions, setPreFetchedQuestions] = useState<import('./types').Question[] | null>(null);
+  const [quizResult, setQuizResult] = useState<{
+    score: number;
+    total: number;
+    sessionHistory?: import('./pages/Result').QuizAnswerRecord[];
+    questions?: import('./types').Question[];
+    roundMemo?: import('./pages/Quiz').RoundMemo;
+  } | null>(null);
+  
+  // State for new flow
+  const [pendingGuestResult, setPendingGuestResult] = useState<{score: number, total: number, certId: string, dateId: string} | null>(null);
+  const [showCouponEffect, setShowCouponEffect] = useState(false);
+  /** 게스트 20번까지 풀고 로그인한 경우: 로그인 후 팝업 띄우고 21번부터 이어가기 */
+  const [pendingGuestContinue, setPendingGuestContinue] = useState<{ certId: string; roundId: string } | null>(null);
+  const [quizStartIndex, setQuizStartIndex] = useState<number | undefined>(undefined);
+  const [showGuestContinueModal, setShowGuestContinueModal] = useState(false);
+  const [showSignupSuccessModal, setShowSignupSuccessModal] = useState(false);
+  /** 퀴즈에서 오답 플레이스홀더 클릭 시 게스트 → 로그인 후 결제로 보내기 */
+  const [pendingCheckoutCertId, setPendingCheckoutCertId] = useState<string | null>(null);
+  /** 결제 화면: 페이지 대신 대형 모달로 표시 (문제 풀이 중 이탈 없이 결제 가능) */
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
+  /** 로그인 모달 진입 시 처음 보여줄 탭 */
+  const [loginInitialMode, setLoginInitialMode] = useState<'login' | 'signup' | null>(null);
+  /** 결과 화면에서 무료 회원 "다시 풀기" → AI/시험 모드 선택 모달 */
+  const [showRetryModeModal, setShowRetryModeModal] = useState(false);
+  /** 결과 화면에서 무료 회원 "다음 회차" → 결제 필요 팝업 후 결제 화면 */
+  const [showNextRoundPaymentModal, setShowNextRoundPaymentModal] = useState(false);
+  /** 결과 화면 "다음 회차" → 모드 선택 모달 (현재 화면) → 5초 생성 효과 → 퀴즈 직행 */
+  const [showNextRoundModeModal, setShowNextRoundModeModal] = useState(false);
+  const [nextRoundInfo, setNextRoundInfo] = useState<{ id: string; round: number; type: string } | null>(null);
+  const [showNextRoundPreparing, setShowNextRoundPreparing] = useState(false);
+  const [nextRoundPreparingCountdown, setNextRoundPreparingCountdown] = useState(5);
+  const [nextRoundPreparingPhase, setNextRoundPreparingPhase] = useState<'countdown' | 'ready'>('countdown');
+  const [nextRoundSelectedMode, setNextRoundSelectedMode] = useState<'exam' | 'study'>('exam');
+  const [nextRoundFetchedQuestions, setNextRoundFetchedQuestions] = useState<import('./types').Question[] | null>(null);
+
+  /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
+  useEffect(() => {
+    if (!showNextRoundPreparing || !nextRoundInfo || !user || !selectedCertId) return;
+    if (nextRoundPreparingPhase === 'countdown') {
+      if (nextRoundPreparingCountdown <= 0) {
+        setNextRoundPreparingPhase('ready');
+        return;
+      }
+      const t = setInterval(() => setNextRoundPreparingCountdown((c) => (c <= 0 ? 0 : c - 1)), 1000);
+      return () => clearInterval(t);
+    }
+    if (nextRoundPreparingPhase === 'ready') {
+      const t = setTimeout(() => {
+        const info = nextRoundInfo;
+        const mode = nextRoundSelectedMode;
+        const questions = nextRoundFetchedQuestions;
+        setShowNextRoundPreparing(false);
+        setNextRoundInfo(null);
+        setNextRoundPreparingPhase('countdown');
+        setNextRoundPreparingCountdown(5);
+        setNextRoundFetchedQuestions(null);
+        if (!info) return;
+        if (info.round >= 4) {
+          if (questions && questions.length > 0) {
+            handleSelectAiRound(info.id, questions, mode);
+          } else {
+            navigate('/exam-list');
+          }
+        } else {
+          handleSelectRound(info.id, mode);
+        }
+      }, 1800);
+      return () => clearTimeout(t);
+    }
+  }, [showNextRoundPreparing, nextRoundInfo, nextRoundPreparingPhase, nextRoundPreparingCountdown, nextRoundSelectedMode, nextRoundFetchedQuestions, selectedCertId, user]);
+
+  /** 맞춤형(round >= 4)일 때 5초 동안 문제 생성 요청 */
+  useEffect(() => {
+    if (!showNextRoundPreparing || !nextRoundInfo || nextRoundInfo.round < 4 || !user || !selectedCertId) return;
+    let cancelled = false;
+    getQuestionsForRound(selectedCertId, nextRoundInfo.round, user)
+      .then((q) => { if (!cancelled) setNextRoundFetchedQuestions(q); })
+      .catch(() => { if (!cancelled) setNextRoundFetchedQuestions([]); });
+    return () => { cancelled = true; };
+  }, [showNextRoundPreparing, nextRoundInfo?.id, nextRoundInfo?.round, user, selectedCertId]);
+
+  // Navigation Helper
+  const navigate = (path: string) => {
+    if (path !== '/login') setLoginInitialMode(null);
+    const [pathname, search] = path.includes('?') ? path.split('?') : [path, ''];
+    const params = new URLSearchParams(search);
+    if (pathname === '/exam-list') {
+      const cert = params.get('cert');
+      const round = params.get('round');
+      if (cert) setSelectedCertId(cert);
+      if (round) setSelectedRoundId(round);
+    }
+    if (pathname === '/mypage') {
+      const cert = params.get('cert');
+      if (cert) setSelectedCertId(cert);
+    }
+    // 결제: 페이지 이동 대신 모달 오픈 (현재 화면 유지 → 문제 풀이 이어하기 가능)
+    if (pathname === '/checkout') {
+      setShowCheckoutModal(true);
+      return;
+    }
+    // Basic Auth Guard: 로그인 필요 경로 → 로그인 모달
+    if ((pathname === '/mypage' || pathname === '/admin' || pathname === '/account-settings') && !user) {
+      setLoginInitialMode('login');
+      setShowLoginModal(true);
+      setLoginModalIntent('standalone');
+      setRoute(pathname === '/mypage' ? '/' : pathname as Route);
+      return;
+    }
+    setRoute(pathname as Route);
+    // Scroll to top on navigation
+    window.scrollTo(0, 0);
+  };
+
+  const navigateToAuth = (mode: 'login' | 'signup') => {
+    setLoginInitialMode(mode);
+    setShowLoginModal(true);
+    setLoginModalIntent('standalone');
+    window.scrollTo(0, 0);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setRoute('/');
+  };
+
+  // Flow Handlers
+  const handleStartExamFlow = (certId?: string, _mode: 'start' | 'continue' = 'continue') => {
+    if (user) {
+      const targetCertId = certId || CERTIFICATIONS[0].id;
+      setSelectedCertId(targetCertId);
+
+      const hasSubscription = user.subscriptions.some(s => s.id === targetCertId);
+
+      if (!hasSubscription) {
+        const newCert = CERTIFICATIONS.find(c => c.id === targetCertId);
+        if (newCert) {
+          updateUser((u) => ({
+            ...u,
+            subscriptions: [...u.subscriptions, newCert],
+          }));
+        }
+      }
+
+      navigate('/exam-list');
+    } else {
+      setLoginInitialMode('login');
+      setShowLoginModal(true);
+      setLoginModalIntent('standalone');
+    }
+  };
+
+  // 메인 화면에서 자격증 선택 시 → 모의고사 회차 목록으로 이동 (게스트/회원 공통)
+  const handleStartDiagnosticTest = (certId: string, _dateId?: string) => {
+    if (!CERT_IDS_WITH_QUESTIONS.includes(certId)) {
+      alert('해당 자격증은 현재 준비 중입니다.');
+      return;
+    }
+    setSelectedCertId(certId);
+    navigate('/exam-list');
+  };
+
+  const handleSelectExamFromMyPage = (certId: string) => {
+    setSelectedCertId(certId);
+    navigate('/exam-list');
+  };
+
+  const handleSelectRound = (roundId: string, mode?: 'exam' | 'study') => {
+    setSelectedRoundId(roundId);
+    setQuizMode(mode ?? 'study');
+    setPreFetchedQuestions(null);
+    navigate('/quiz');
+  };
+
+  const handleSelectAiRound = (roundId: string, questions: import('./types').Question[], mode?: 'exam' | 'study') => {
+    setSelectedRoundId(roundId);
+    setQuizMode(mode ?? 'study');
+    setPreFetchedQuestions(questions);
+    navigate('/quiz');
+  };
+
+  /** 과목 강화 학습: 5초 오버레이 → 50문항 큐레이션(오답 우선·이해도 낮은 개념) 후 퀴즈 진입, 부족 시 팝업 */
+  const [showSubjectStrengthPreparing, setShowSubjectStrengthPreparing] = useState(false);
+  const handleStartSubjectStrengthTraining = async (certId: string) => {
+    if (!user?.id) return;
+    setShowSubjectStrengthPreparing(true);
+    const delayMs = 3000;
+    const delayPromise = new Promise<void>((r) => setTimeout(r, delayMs));
+    try {
+      const [_, result] = await Promise.all([
+        delayPromise,
+        fetchSubjectStrengthTraining50(user.id, certId),
+      ]);
+      if (result.insufficient || result.questions.length < 50) {
+        setShowSubjectStrengthPreparing(false);
+        alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
+        return;
+      }
+      setSelectedCertId(certId);
+      setSelectedRoundId('__subject_strength__');
+      setQuizMode('study');
+      setPreFetchedQuestions(result.questions);
+      setShowSubjectStrengthPreparing(false);
+      navigate('/quiz');
+    } catch (e) {
+      console.error('[과목 강화 학습]', e);
+      setShowSubjectStrengthPreparing(false);
+      alert('문제를 불러오는 중 오류가 발생했습니다.');
+    }
+  };
+
+  /** 데이터 부족 시 규격화된 모달 (과목 강화 / 취약 유형 / 취약 개념) */
+  const [showInsufficientDataModal, setShowInsufficientDataModal] = useState(false);
+
+  /** 취약 유형 집중학습: 5초 오버레이 → 유형 1,2,3위 50문항, 부족 시 팝업 */
+  const [showWeakTypePreparing, setShowWeakTypePreparing] = useState(false);
+  const handleStartWeakTypeFocus = async (certId: string) => {
+    if (!user?.id) return;
+    setShowWeakTypePreparing(true);
+    const delayMs = 3000;
+    try {
+      const [_, result] = await Promise.all([
+        new Promise<void>((r) => setTimeout(r, delayMs)),
+        fetchWeakTypeFocus50(user.id, certId),
+      ]);
+      setShowWeakTypePreparing(false);
+      if (result.insufficient || result.questions.length < 50) {
+        setShowInsufficientDataModal(true);
+        return;
+      }
+      setSelectedCertId(certId);
+      setSelectedRoundId('__weak_type_focus__');
+      setQuizMode('study');
+      setPreFetchedQuestions(result.questions);
+      navigate('/quiz');
+    } catch (e) {
+      console.error('[취약 유형 집중학습]', e);
+      setShowWeakTypePreparing(false);
+      alert('문제를 불러오는 중 오류가 발생했습니다.');
+    }
+  };
+
+  /** 취약 개념 집중학습: 5초 오버레이 → 이해도 하위 2~10개 개념 50문항, 부족 시 팝업 */
+  const [showWeakConceptPreparing, setShowWeakConceptPreparing] = useState(false);
+  const handleStartWeakConceptFocus = async (certId: string) => {
+    if (!user?.id) return;
+    setShowWeakConceptPreparing(true);
+    const delayMs = 3000;
+    try {
+      const [_, result] = await Promise.all([
+        new Promise<void>((r) => setTimeout(r, delayMs)),
+        fetchWeakConceptFocus50(user.id, certId),
+      ]);
+      setShowWeakConceptPreparing(false);
+      if (result.insufficient || result.questions.length < 50) {
+        setShowInsufficientDataModal(true);
+        return;
+      }
+      setSelectedCertId(certId);
+      setSelectedRoundId('__weak_concept_focus__');
+      setQuizMode('study');
+      setPreFetchedQuestions(result.questions);
+      navigate('/quiz');
+    } catch (e) {
+      console.error('[취약 개념 집중학습]', e);
+      setShowWeakConceptPreparing(false);
+      alert('문제를 불러오는 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleQuizFinish = (
+    score: number,
+    total: number,
+    sessionHistory?: import('./pages/Result').QuizAnswerRecord[],
+    questions?: import('./types').Question[],
+    roundMemo?: import('./pages/Quiz').RoundMemo
+  ) => {
+    setQuizResult({ score, total, sessionHistory, questions, roundMemo });
+
+    // 로그인 회원: 학습 이력 저장 + 참여 자격증 구독 반영 (마이페이지 진입 가능)
+    if (user && sessionHistory?.length && questions?.length && selectedCertId) {
+      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: selectedRoundId ?? undefined })
+        .then((result) => {
+          if (result) {
+            console.log(`[퀴즈 결과 저장 성공] examId: ${result.examId}, 문제 수: ${sessionHistory.length}`);
+            const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
+            if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
+          } else {
+            console.warn('[퀴즈 결과 저장 실패] submitQuizResult가 null 반환 (certCode 변환 실패 가능)');
+          }
+        })
+        .catch((e) => {
+          console.error('[퀴즈 결과 저장 실패]', {
+            error: e,
+            userId: user.id,
+            certId: selectedCertId,
+            questionCount: sessionHistory.length,
+            stack: e instanceof Error ? e.stack : undefined,
+          });
+        });
+      ensureUserSubscription(user.id, selectedCertId).catch((e) => console.error('구독 반영 실패', e));
+      if (!user.subscriptions.some((s) => s.id === selectedCertId)) {
+        const newCert = CERTIFICATIONS.find((c) => c.id === selectedCertId);
+        if (newCert) {
+          updateUser((u) => ({ ...u, subscriptions: [...u.subscriptions, newCert] }));
+        }
+      }
+    }
+
+    navigate('/result');
+  };
+  
+  const handleCheckoutComplete = () => {
+    if (user && selectedCertId) {
+      setPaymentComplete(user.id, selectedCertId)
+        .then(() => {
+          const newCert = CERTIFICATIONS.find((c) => c.id === selectedCertId);
+          updateUser((u) => {
+            const isSubscribed = u.subscriptions.some((s) => s.id === selectedCertId);
+            const isPaid = u.paidCertIds?.includes(selectedCertId);
+            let next = { ...u };
+            if (!isSubscribed && newCert) {
+              next.subscriptions = [...(next.subscriptions || []), newCert];
+            }
+            if (!isPaid) {
+              next.paidCertIds = [...(next.paidCertIds || []), selectedCertId];
+            }
+            if (next.expiredCertIds?.includes(selectedCertId)) {
+              next.expiredCertIds = next.expiredCertIds!.filter((id) => id !== selectedCertId);
+            }
+            next.isPremium = true;
+            return next;
+          });
+          alert('결제가 완료되었습니다! 새로고침 후에도 열공 모드가 유지됩니다.');
+          setShowCheckoutModal(false);
+          // 모달만 닫고 현재 화면 유지 → 퀴즈 풀이 중이면 이어서 풀 수 있음
+        })
+        .catch((err) => {
+          console.error('[결제 완료] Firestore 저장 실패', err);
+          alert('결제는 완료되었으나 상태 저장에 실패했습니다. 새로고침 시 무료로 보일 수 있습니다.');
+          setShowCheckoutModal(false);
+          // 모달만 닫고 현재 화면 유지
+        });
+    } else {
+      alert('결제가 완료되었습니다! 학습을 시작하세요.');
+      setShowCheckoutModal(false);
+      // 비로그인 등: 모달만 닫고 현재 화면 유지
+    }
+  };
+
+  // Check status for current selected cert
+  const isCurrentCertPremium = user ? (user.isPremium || (selectedCertId && user.paidCertIds?.includes(selectedCertId))) : false;
+  const isCurrentCertExpired = user ? (selectedCertId && user.expiredCertIds?.includes(selectedCertId)) : false;
+
+  // Render Page Content based on Route
+  const renderContent = () => {
+    switch (route) {
+      case '/':
+        if (user) {
+          return (
+            <MyPage
+              user={user}
+              onNavigate={navigate}
+              onSelectExam={handleSelectExamFromMyPage}
+              onStartNewCert={handleStartExamFlow}
+              onUpdateUser={updateUser}
+              onStartWeaknessRetry={(certId) => {
+                setSelectedCertId(certId);
+                navigate('/exam-list');
+              }}
+              onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
+              showSubjectStrengthPreparing={showSubjectStrengthPreparing}
+              onStartWeakTypeFocus={handleStartWeakTypeFocus}
+              showWeakTypePreparing={showWeakTypePreparing}
+              onStartWeakConceptFocus={handleStartWeakConceptFocus}
+              showWeakConceptPreparing={showWeakConceptPreparing}
+              onLogout={handleLogout}
+            />
+          );
+        }
+        return (
+          <EmptyState
+            onStartCert={(id) => {
+              setSelectedCertId(id);
+              navigate('/exam-list');
+            }}
+          />
+        );
+      case '/mypage':
+        return user ? (
+          <MyPage 
+            user={user} 
+            initialCertId={selectedCertId ?? undefined}
+            onNavigate={navigate} 
+            onSelectExam={handleSelectExamFromMyPage}
+            onStartNewCert={handleStartExamFlow}
+            onUpdateUser={updateUser}
+            onStartWeaknessRetry={(certId) => {
+              setSelectedCertId(certId);
+              navigate('/exam-list');
+            }}
+            onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
+            showSubjectStrengthPreparing={showSubjectStrengthPreparing}
+            onStartWeakTypeFocus={handleStartWeakTypeFocus}
+            showWeakTypePreparing={showWeakTypePreparing}
+            onStartWeakConceptFocus={handleStartWeakConceptFocus}
+            showWeakConceptPreparing={showWeakConceptPreparing}
+            onLogout={handleLogout}
+          />
+        ) : null;
+      case '/account-settings':
+        return user ? (
+          <AccountSettings
+            user={user}
+            onBack={() => navigate('/mypage')}
+            onUpdateUser={updateUser}
+            onLogout={handleLogout}
+          />
+        ) : null;
+      case '/exam-list':
+        return selectedCertId ? (
+          <ExamList 
+            certId={selectedCertId}
+            user={user}
+            onSelectRound={handleSelectRound}
+            onSelectAiRound={handleSelectAiRound}
+            onBack={() => navigate(user ? '/mypage' : '/')}
+            onNavigate={navigate}
+            isPremiumUser={!!isCurrentCertPremium}
+            isExpired={!!isCurrentCertExpired}
+            onLogout={handleLogout}
+            currentPath="/exam-list"
+            startNextAfterRoundId={null}
+            onConsumedStartNext={() => {}}
+            initialRoundId={selectedRoundId ?? undefined}
+          />
+        ) : null;
+      case '/quiz':
+        return selectedRoundId && selectedCertId ? (
+          <>
+            <Quiz 
+              roundId={selectedRoundId} 
+              certId={selectedCertId}
+              user={user}
+              mode={quizMode}
+              preFetchedQuestions={preFetchedQuestions}
+              startIndex={quizStartIndex}
+              onFinish={handleQuizFinish} 
+              onExit={() => {
+                setPreFetchedQuestions(null);
+                setQuizStartIndex(undefined);
+                navigate(user ? '/mypage' : '/');
+              }}
+              onGuestLimitReached={({ certId, roundId }) => {
+                setPendingGuestContinue({ certId, roundId });
+                setLoginInitialMode('login');
+                setShowLoginModal(true);
+                setLoginModalIntent('guestContinue');
+              }}
+              onRequestCheckout={() => {
+                if (!user) {
+                  setPendingCheckoutCertId(selectedCertId);
+                  setLoginInitialMode('login');
+                  setShowLoginModal(true);
+                  setLoginModalIntent('checkout');
+                } else {
+                  navigate('/checkout');
+                }
+              }}
+            />
+            {showGuestContinueModal && (
+              <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+                <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl text-center">
+                  <p className="text-lg font-bold text-slate-900 mb-2">로그인 완료!</p>
+                  <p className="text-slate-600 text-sm mb-6">이어서 21번 문제부터 풀 수 있어요.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowGuestContinueModal(false)}
+                    className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800"
+                  >
+                    이어서 진행
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : null;
+      case '/result':
+        return quizResult ? (
+          <Result 
+            score={quizResult.score} 
+            total={quizResult.total} 
+            certId={selectedCertId}
+            user={user}
+            isPaidUser={isCurrentCertPremium}
+            sessionHistory={quizResult.sessionHistory}
+            questions={quizResult.questions}
+            roundMemo={quizResult.roundMemo}
+            onHome={() => navigate('/')}
+            onRetry={() => {
+              if (selectedRoundId) setShowRetryModeModal(true);
+              else navigate('/exam-list');
+            }}
+            onGoToDashboard={() => navigate('/mypage')}
+            onNextRoundAuto={() => {
+              if (!user || !selectedCertId) {
+                navigate('/');
+                return;
+              }
+              if (!isCurrentCertPremium) {
+                setShowNextRoundPaymentModal(true);
+                return;
+              }
+              if (!selectedRoundId) {
+                navigate('/exam-list');
+                return;
+              }
+              const current = EXAM_ROUNDS.find((r) => r.id === selectedRoundId && r.certId === selectedCertId);
+              if (!current) {
+                navigate('/exam-list');
+                return;
+              }
+              const nextRound = EXAM_ROUNDS.find((r) => r.certId === selectedCertId && r.round === current.round + 1);
+              if (!nextRound) {
+                navigate('/exam-list');
+                return;
+              }
+              setNextRoundInfo({ id: nextRound.id, round: nextRound.round, type: nextRound.type ?? 'practice' });
+              setShowNextRoundModeModal(true);
+            }}
+            onLogin={() => { setLoginInitialMode('login'); setShowLoginModal(true); setLoginModalIntent('standalone'); }}
+            onGoToCheckout={() => {
+              if (selectedCertId) navigate('/checkout');
+              else navigate('/'); 
+            }}
+            onContinueLearning={() => {
+              if (selectedCertId) navigate('/exam-list');
+              else navigate('/');
+            }}
+            showCouponEffect={showCouponEffect}
+          />
+        ) : null;
+      case '/admin':
+        return user?.isAdmin ? <Admin currentUser={user} /> : <div>Access Denied</div>;
+      default:
+        return <div>404 Not Found</div>;
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-slate-400 font-medium">로딩 중...</div>
+      </div>
+    );
+  }
+
+  // 랜딩만 사이드바 없음, 그 외 모든 화면에 좌측 사이드바 노출
+  const isLanding = route === '/' && !user;
+  const handleLoginModalAuthSuccess = (options?: { isNewUser?: boolean }) => {
+    const intent = loginModalIntent;
+    setShowLoginModal(false);
+    setLoginModalIntent(null);
+    if (intent === 'guestContinue' && pendingGuestContinue) {
+      setSelectedCertId(pendingGuestContinue.certId);
+      setSelectedRoundId(pendingGuestContinue.roundId);
+      setQuizStartIndex(20);
+      setShowGuestContinueModal(true);
+      setPendingGuestContinue(null);
+    } else if (intent === 'checkout') {
+      setSelectedCertId(pendingCheckoutCertId ?? selectedCertId);
+      setPendingCheckoutCertId(null);
+      navigate('/checkout');
+    } else if (options?.isNewUser) {
+      setShowSignupSuccessModal(true);
+    } else {
+      navigate('/mypage');
+    }
+  };
+
+  if (isLanding) {
+    return (
+      <>
+        {showLoginModal && (
+          <LoginModal
+            initialMode={loginInitialMode ?? 'login'}
+            persistent={loginModalIntent === 'guestContinue'}
+            onBack={loginModalIntent === 'guestContinue' ? undefined : () => { setShowLoginModal(false); setLoginModalIntent(null); }}
+            onAuthSuccess={handleLoginModalAuthSuccess}
+          />
+        )}
+        {renderContent()}
+        {showCheckoutModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+            <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#edf1f5] rounded-3xl shadow-2xl animate-slide-up my-auto">
+              <button
+                type="button"
+                onClick={() => setShowCheckoutModal(false)}
+                className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/90 hover:bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors"
+                aria-label="닫기"
+              >
+                <X size={24} />
+              </button>
+              <Checkout
+                certId={selectedCertId || undefined}
+                onBack={() => setShowCheckoutModal(false)}
+                onComplete={handleCheckoutComplete}
+              />
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {showLoginModal && (
+        <LoginModal
+          initialMode={loginInitialMode ?? 'login'}
+          persistent={loginModalIntent === 'guestContinue'}
+          onBack={loginModalIntent === 'guestContinue' ? undefined : () => { setShowLoginModal(false); setLoginModalIntent(null); }}
+          onAuthSuccess={handleLoginModalAuthSuccess}
+        />
+      )}
+      <div className="h-screen bg-[#edf1f5] flex overflow-hidden">
+        <DashboardSidebar
+          user={user}
+          certId={selectedCertId}
+          currentPath={route}
+          onNavigate={navigate}
+          onLogout={handleLogout}
+        />
+        <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
+          {renderContent()}
+        </main>
+      </div>
+      {showSignupSuccessModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl text-center">
+            <p className="text-lg font-bold text-slate-900 mb-2">회원 가입 완료</p>
+            <p className="text-slate-600 text-sm mb-6">지금 바로 학습을 시작해보세요</p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSignupSuccessModal(false);
+                navigate('/mypage');
+              }}
+              className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 결제 화면: 대형 모달 (페이지 이동 없이 현재 화면 유지 → 퀴즈 이어하기 가능) */}
+      {showCheckoutModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#edf1f5] rounded-3xl shadow-2xl animate-slide-up my-auto">
+            <button
+              type="button"
+              onClick={() => setShowCheckoutModal(false)}
+              className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/90 hover:bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors"
+              aria-label="닫기"
+            >
+              <X size={24} />
+            </button>
+            <Checkout
+              certId={selectedCertId || undefined}
+              onBack={() => {
+                setShowCheckoutModal(false);
+              }}
+              onComplete={handleCheckoutComplete}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 결과 화면 "다음 회차" → 모드 선택(현재 화면) → 5초 생성 효과 → 퀴즈 직행 */}
+      {showNextRoundModeModal && nextRoundInfo && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setShowNextRoundModeModal(false); setNextRoundInfo(null); }} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in">
+            <h3 className="text-lg font-black text-slate-900 mb-2">다음 회차 모드 선택</h3>
+            <p className="text-sm text-slate-500 mb-5">풀이 방식을 선택하면 모의고사가 준비된 뒤 바로 시작됩니다.</p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNextRoundModeModal(false);
+                  setNextRoundSelectedMode('study');
+                  setNextRoundPreparingCountdown(5);
+                  setNextRoundPreparingPhase('countdown');
+                  setNextRoundFetchedQuestions(null);
+                  setShowNextRoundPreparing(true);
+                }}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-brand-100 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-5 h-5 text-brand-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">AI 학습 모드</span>
+                  <span className="text-xs text-slate-500">해설 보면서 자유롭게 풀기</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNextRoundModeModal(false);
+                  setNextRoundSelectedMode('exam');
+                  setNextRoundPreparingCountdown(5);
+                  setNextRoundPreparingPhase('countdown');
+                  setNextRoundFetchedQuestions(null);
+                  setShowNextRoundPreparing(true);
+                }}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <ClipboardCheck className="w-5 h-5 text-slate-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">실전 시험 모드</span>
+                  <span className="text-xs text-slate-500">제한 시간 내 실전처럼 풀기</span>
+                </div>
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setShowNextRoundModeModal(false); setNextRoundInfo(null); }}
+              className="mt-4 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 결과 화면 다음 회차 5초 준비 오버레이 (현재 화면 유지) */}
+      {showNextRoundPreparing && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="text-center text-white px-6">
+            {nextRoundPreparingPhase === 'countdown' ? (
+              <>
+                <p className="text-slate-300 text-sm mb-2">맞춤형 모의고사를 준비하고 있어요</p>
+                <p className="text-5xl font-black tabular-nums">{nextRoundPreparingCountdown}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-xl font-bold mb-1">모의고사가 준비되었습니다</p>
+                <p className="text-slate-300 text-sm">곧 시작됩니다</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 결과 화면 "다시 풀기" → AI 학습 모드 / 실전 모드 선택 후 바로 퀴즈 시작 */}
+      {showRetryModeModal && selectedRoundId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRetryModeModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in">
+            <h3 className="text-lg font-black text-slate-900 mb-2">모의고사 모드 선택</h3>
+            <p className="text-sm text-slate-500 mb-5">풀이 방식을 선택해 주세요.</p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRetryModeModal(false);
+                  const round = EXAM_ROUNDS.find((r) => r.id === selectedRoundId);
+                  if (round?.type === 'ai-generated' && quizResult?.questions?.length) {
+                    handleSelectAiRound(selectedRoundId, quizResult.questions, 'study');
+                  } else {
+                    handleSelectRound(selectedRoundId, 'study');
+                  }
+                }}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-brand-100 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-5 h-5 text-brand-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">AI 학습 모드</span>
+                  <span className="text-xs text-slate-500">해설 보면서 자유롭게 풀기</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRetryModeModal(false);
+                  const round = EXAM_ROUNDS.find((r) => r.id === selectedRoundId);
+                  if (round?.type === 'ai-generated' && quizResult?.questions?.length) {
+                    handleSelectAiRound(selectedRoundId, quizResult.questions, 'exam');
+                  } else {
+                    handleSelectRound(selectedRoundId, 'exam');
+                  }
+                }}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <ClipboardCheck className="w-5 h-5 text-slate-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">실전 시험 모드</span>
+                  <span className="text-xs text-slate-500">제한 시간 내 실전처럼 풀기</span>
+                </div>
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRetryModeModal(false)}
+              className="mt-4 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 무료 회원 결과 화면 "다음 회차" → 결제 필요 팝업 (확인 시 결제 화면) */}
+      {showNextRoundPaymentModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowNextRoundPaymentModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center animate-scale-in">
+            <div className="w-12 h-12 rounded-full bg-brand-100 flex items-center justify-center mx-auto mb-4">
+              <Lock className="w-6 h-6 text-brand-600" />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 mb-2">결제가 필요합니다</h3>
+            <p className="text-sm text-slate-500 mb-5">
+              2회차까지 무료로 이용 가능합니다.
+              <br />
+              결제 후 전체 및 맞춤형 모의고사를 이용하실 수 있습니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNextRoundPaymentModal(false);
+                if (selectedCertId) navigate('/checkout');
+              }}
+              className="w-full py-3.5 rounded-xl bg-brand-500 text-slate-900 font-bold text-sm hover:bg-brand-400"
+            >
+              결제하러 가기
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowNextRoundPaymentModal(false)}
+              className="mt-3 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 데이터 부족 안내 (과목 강화 / 취약 유형 / 취약 개념 50문항 미달 시) */}
+      {showInsufficientDataModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowInsufficientDataModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center animate-scale-in">
+            <div className="w-12 h-12 rounded-full bg-[#99ccff] flex items-center justify-center mx-auto mb-4">
+              <Info className="w-6 h-6 text-[#1e56cd]" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-900 mb-2">아직 충분한 데이터가 쌓이지 않았어요</h3>
+            <p className="text-sm text-slate-500 mb-5">조금 더 학습을 진행해주세요.</p>
+            <button
+              type="button"
+              onClick={() => setShowInsufficientDataModal(false)}
+              className="w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1e56cd]/90"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+export default App;

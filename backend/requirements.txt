@@ -1,0 +1,12 @@
+firebase-admin>=6.0.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# BIGDATA Step02_Exam_Generator (RAG)
+langchain
+langchain-community
+langchain-openai
+langchain-huggingface
+chromadb
+pandas
+sentence-transformers
