@@ -18,6 +18,22 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: (id) => {
+              if (id.includes('node_modules')) {
+                if (id.includes('firebase')) return 'firebase';
+                if (id.includes('recharts')) return 'recharts';
+                if (id.includes('katex')) return 'katex';
+                if (id.includes('react-dom') || id.includes('react/')) return 'react-vendor';
+                if (id.includes('framer-motion')) return 'framer-motion';
+              }
+            },
+          },
+        },
+        chunkSizeWarningLimit: 600,
+      },
     };
 });

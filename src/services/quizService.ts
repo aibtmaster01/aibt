@@ -1,3 +1,10 @@
+/**
+ * quizService.ts
+ * - 현재 앱의 1~5회차 문제 로딩은 examService.getQuestionsForRound + question_pools 사용.
+ * - 아래 getQuestions() / fetchStaticQuestions() 는 루트 컬렉션 'questions' (q_1_1 등) 를 참조하는
+ *   레거시 코드이며, 어디서도 호출되지 않음. 루트 questions 컬렉션은 폐기 문제가 남아 있을 수 있으므로
+ *   Firebase 콘솔에서 삭제해도 앱 동작에 영향 없음. (실제 문제는 certifications/.../question_pools/.../questions)
+ */
 import {
   collection,
   doc,
@@ -70,7 +77,8 @@ function mapToQuestion(id: string, data: FirestoreQuestionDoc | QuestionPoolDoc)
 }
 
 /**
- * Fetch questions for round 1~4 from static exams.
+ * [레거시·미사용] Fetch questions for round 1~4 from static_exams + 루트 'questions' 컬렉션.
+ * 앱은 examService.getQuestionsForRound(static_exams + question_pools) 만 사용하므로 이 경로는 호출되지 않음.
  */
 async function fetchStaticQuestions(certId: string, round: number): Promise<Question[]> {
   const examRef = doc(db, 'certifications', certId, 'static_exams', `Round_${round}`);
@@ -85,7 +93,7 @@ async function fetchStaticQuestions(certId: string, round: number): Promise<Ques
     return [];
   }
 
-  // Firestore 'in' query limit is 30, batch if needed
+  // 루트 컬렉션 'questions' (폐기 예정·현재 미사용)
   const questionsRef = collection(db, 'questions');
   const results: Question[] = [];
 

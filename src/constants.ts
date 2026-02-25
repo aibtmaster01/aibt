@@ -25,6 +25,15 @@ export const SUBJECT_NAMES_BY_CERT: Record<string, string[]> = {
   ADSP: ['데이터 이해', '데이터 분석', '데이터 활용'],
 };
 
+/** 유형별 분석(레이더)용 문제 유형 5개 라벨 - stats.problem_type_stats 키와 동일 순서 권장 */
+export const PROBLEM_TYPE_LABELS: string[] = [
+  '단순암기형',
+  '개념이해형',
+  '계산풀이형',
+  '결과독해형',
+  '실무적용형',
+];
+
 // Helper to get cert by code
 const getCert = (code: string) => CERTIFICATIONS.find(c => c.code === code)!;
 

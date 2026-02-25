@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import type { User } from "../types";
-import { CERTIFICATIONS, EXAM_SCHEDULE_DATES, EXAM_ROUNDS, SUBJECT_NAMES_BY_CERT } from "../constants";
+import { CERTIFICATIONS, EXAM_SCHEDULE_DATES, EXAM_ROUNDS, SUBJECT_NAMES_BY_CERT, PROBLEM_TYPE_LABELS } from "../constants";
 import { getDaysLeft, getNearestExamDate, getPurchasedSchedulesForCert, getDaysLeftForDateId, getNearestExamFromCertInfo, formatExamDateDisplay } from "../utils/dateUtils";
 import {
   fetchHasAnyExamRecord,
@@ -22,7 +22,7 @@ import {
   FailCouponModal,
 } from "../components/dashboard/modals";
 import { Skeleton } from "../components/ui/skeleton";
-import { Lock, ChevronRight, ChevronDown, FileX, RefreshCw } from "lucide-react";
+import { Lock, ChevronRight, ChevronDown, FileX } from "lucide-react";
 import { mockTrendData, mockDashboardStats, MY_PAGE_EMPTY_MESSAGES } from "../data/myPageMockData";
 
 function formatExamDate(dateId: string | undefined): string {
@@ -113,7 +113,6 @@ export const MyPage: React.FC<MyPageProps> = ({
   const [dashboardStats, setDashboardStats] = useState<Awaited<
     ReturnType<typeof getCachedOrFetchMyPageData>
   > | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [certInfo, setCertInfo] = useState<Awaited<
     ReturnType<typeof getCertificationInfo>
   > | null>(null);
@@ -196,7 +195,6 @@ export const MyPage: React.FC<MyPageProps> = ({
       return;
     }
     setLoading(true);
-    if (forceRefresh) setRefreshing(true);
     const certCode = activeCert.code;
     Promise.all([
       getCachedOrFetchMyPageData(user.id, certCode, { forceRefresh }),
@@ -215,10 +213,7 @@ export const MyPage: React.FC<MyPageProps> = ({
           weaknessTop2: [],
         });
       })
-      .finally(() => {
-        setLoading(false);
-        setRefreshing(false);
-      });
+      .finally(() => setLoading(false));
   }, [user?.id, activeCert?.code]);
 
   useEffect(() => {
@@ -271,13 +266,14 @@ export const MyPage: React.FC<MyPageProps> = ({
       : "-";
 
   const hasLearningHistory = trend.length > 0;
-  const displayRecentPassRate = hasLearningHistory ? recentPassRate : mockTrendData.recentPassRate;
-  const displayTrend = hasLearningHistory ? trend : mockTrendData.trendData;
-  const displaySubjectScores = hasLearningHistory ? subjectScores : mockDashboardStats.subjectScores;
-  /** 무료 회원: 레이더/취약은 목데이터(들쭉날쭉·물음표 표시용) */
-  const displayRadarData = hasLearningHistory && isPremiumCert ? radarData : mockDashboardStats.radarData;
-  const displayWeaknessTop2 = hasLearningHistory && isPremiumCert ? weaknessTop2 : mockDashboardStats.weaknessTop2;
-  /** 무료 회원용 과목별 막대: 1과목 70%, 2과목 40%, 3과목 38%, 4과목 60% (과목명은 cert 그대로) */
+  /** 데이터 없을 땐 목업 미노출 — 딤 뒤 흐릿한 데이터 제거 */
+  const displayRecentPassRate = hasLearningHistory ? recentPassRate : 0;
+  const displayTrend = hasLearningHistory ? trend : [];
+  const displaySubjectScores = hasLearningHistory ? subjectScores : [];
+  /** 학습 이력 있으면 유료 여부와 관계없이 실제 유형/취약 데이터 표시 (샘플 문구·물음표 제거) */
+  const displayRadarData = hasLearningHistory ? radarData : [];
+  const displayWeaknessTop2 = hasLearningHistory ? weaknessTop2 : [];
+  /** 무료 회원용 과목별 막대(실제 데이터 있을 때만 사용) */
   const freeSubjectScoresForDisplay = (certInfo?.subjects ?? [
     { subject_number: 1, name: "과목 1", question_count: 20 },
     { subject_number: 2, name: "과목 2", question_count: 20 },
@@ -286,7 +282,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   ]).slice(0, 4).map((s, i) => ({
     subjectNumber: s.subject_number ?? i + 1,
     subject: s.name,
-    score: mockDashboardStats.subjectScores[i]?.score ?? [70, 40, 38, 60][i] ?? 0,
+    score: subjectScores[i]?.score ?? 0,
   }));
 
   const ITEMS_PER_PAGE = 8;
@@ -310,21 +306,20 @@ export const MyPage: React.FC<MyPageProps> = ({
 
   const mockSubjectScores = (certInfo?.subjects ?? [{ subject_number: 1, name: "과목 1", question_count: 20 }, { subject_number: 2, name: "과목 2", question_count: 20 }, { subject_number: 3, name: "과목 3", question_count: 20 }, { subject_number: 4, name: "과목 4", question_count: 20 }]).slice(0, 4).map((s) => ({ subjectNumber: s.subject_number, subject: s.name, score: 0 }));
   const mockRadarData = (certInfo?.subjects ?? []).slice(0, 6).map((s) => ({ subject: s.name, A: 0, fullMark: 100 }));
-  const mockWeaknessTop2 = [{ name: "데이터 이해", accuracy: 0 }, { name: "데이터 분석", accuracy: 0 }];
-
+  /** 유형별 분석 카드: problem_type_stats 기반 5개 유형. 데이터 없을 땐 5개 유형 라벨로 fallback (과목 4개 아님) */
   const { radarChartData, weakestSubject } = useMemo(() => {
-    const fallback = (certInfo?.subjects ?? []).slice(0, 6).map((s) => ({ subject: s.name, A: 0, fullMark: 100 }));
+    const fallback = PROBLEM_TYPE_LABELS.map((label) => ({ subject: label, A: 0, fullMark: 100 }));
     const raw = displayRadarData.length ? displayRadarData : fallback;
     const data = raw.length ? raw.map((d) => ({ ...d, fullMark: 100 })) : [{ subject: "-", A: 0, fullMark: 100 }];
     const valid = data.filter((d) => d.subject !== "-" && typeof d.A === "number");
     const minVal = valid.length ? Math.min(...valid.map((d) => d.A)) : null;
     const weakest = minVal != null ? valid.find((d) => d.A === minVal)?.subject ?? null : null;
     return { radarChartData: data, weakestSubject: weakest };
-  }, [displayRadarData, certInfo?.subjects]);
+  }, [displayRadarData]);
 
   /** 과목별 안전도 분석 카드에서 '해당 과목' = 점수 가장 낮은 과목 (강화 학습 버튼용) */
   const weakestSubjectNumber = useMemo(() => {
-    const scores = hasLearningHistory && !isPremiumCert ? freeSubjectScoresForDisplay : (displaySubjectScores.length ? displaySubjectScores : []);
+    const scores = displaySubjectScores.length ? displaySubjectScores : freeSubjectScoresForDisplay;
     if (scores.length === 0) return 1;
     const min = Math.min(...scores.map((s) => s.score));
     const found = scores.find((s) => s.score === min);
@@ -457,16 +452,6 @@ export const MyPage: React.FC<MyPageProps> = ({
               </span>
             ) : null}
           </h1>
-          <button
-            type="button"
-            onClick={() => loadMyPageData(true)}
-            disabled={refreshing || loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/80 hover:bg-white border border-[#1e56cd]/30 text-[#1e56cd] text-sm font-medium disabled:opacity-50"
-            aria-label="데이터 새로고침"
-          >
-            <RefreshCw size={18} className={refreshing ? "animate-spin" : ""} />
-            새로고침
-          </button>
         </header>
 
         <div className={`grid grid-cols-12 gap-6 ${isExpired ? "pointer-events-none opacity-60 grayscale" : ""}`}>
@@ -476,52 +461,61 @@ export const MyPage: React.FC<MyPageProps> = ({
               예측 합격률
             </h3>
             <div className="relative flex-1 w-full max-w-xs mx-auto flex flex-col min-h-0 items-center">
-            <>
-              <p className="text-gray-700 text-base font-bold mb-1 text-center w-full">"{getPassRateMessage(displayRecentPassRate)}"</p>
-              <p className="text-slate-500 text-sm mb-3 text-center w-full">모의고사를 풀고 합격률을 올려보세요!</p>
-              <div className="relative flex items-center justify-center mb-5 w-full max-w-[300px] mx-auto">
-                <svg className="w-full h-auto" viewBox="0 0 180 180">
-                  <circle cx="90" cy="90" r="70" fill="none" stroke="#edf1f5" strokeWidth="18" />
-                  <circle
-                    cx="90"
-                    cy="90"
-                    r="70"
-                    fill="none"
-                    stroke="#1e56cd"
-                    strokeWidth="18"
-                    strokeLinecap="round"
-                    strokeDasharray={`${(displayRecentPassRate / 100) * 440} 440`}
-                    transform="rotate(-90 90 90)"
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center">
-                  <span className="text-5xl md:text-6xl font-black text-gray-700 leading-none">
-                    {displayRecentPassRate}
-                    <span className="text-2xl md:text-3xl">%</span>
-                  </span>
-                </div>
-              </div>
-              {hasLearningHistory && !isPremiumCert && (
-                <p className="text-xs font-medium mt-2 text-center w-full text-[#0284c7]">예시를 돕기 위한 샘플데이터입니다</p>
-              )}
-              {!isExpired && (
-                <div className="mt-auto w-full pt-4">
-                  <button
-                    type="button"
-                    onClick={() => onSelectExam(activeCertId)}
-                    className="w-full bg-[#1e56cd] text-white px-6 py-4 rounded-full text-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-[#1e56cd]/90"
-                  >
-                    학습 시작하기 <ChevronRight className="w-5 h-5" />
-                  </button>
-                </div>
-              )}
-            </>
-              {!hasLearningHistory && (
-                <div className="absolute inset-0 bg-white/90 flex items-center justify-center z-20 rounded-2xl">
-                  <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
+              {!hasLearningHistory ? (
+                <>
+                  <p className="text-gray-600 text-sm px-4 whitespace-pre-line text-center font-medium flex-1 flex items-center justify-center">
                     {MY_PAGE_EMPTY_MESSAGES.passRate}
                   </p>
-                </div>
+                  {!isExpired && (
+                    <div className="mt-auto w-full pt-4">
+                      <button
+                        type="button"
+                        onClick={() => onSelectExam(activeCertId)}
+                        className="w-full bg-[#1e56cd] text-white px-6 py-4 rounded-full text-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-[#1e56cd]/90"
+                      >
+                        학습 시작하기 <ChevronRight className="w-5 h-5" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-700 text-base font-bold mb-1 text-center w-full">"{getPassRateMessage(displayRecentPassRate)}"</p>
+                  <p className="text-slate-500 text-sm mb-3 text-center w-full">모의고사를 풀고 합격률을 올려보세요!</p>
+                  <div className="relative flex items-center justify-center mb-5 w-full max-w-[300px] mx-auto">
+                    <svg className="w-full h-auto" viewBox="0 0 180 180">
+                      <circle cx="90" cy="90" r="70" fill="none" stroke="#edf1f5" strokeWidth="18" />
+                      <circle
+                        cx="90"
+                        cy="90"
+                        r="70"
+                        fill="none"
+                        stroke="#1e56cd"
+                        strokeWidth="18"
+                        strokeLinecap="round"
+                        strokeDasharray={`${(displayRecentPassRate / 100) * 440} 440`}
+                        transform="rotate(-90 90 90)"
+                      />
+                    </svg>
+                    <div className="absolute flex flex-col items-center">
+                      <span className="text-5xl md:text-6xl font-black text-gray-700 leading-none">
+                        {displayRecentPassRate}
+                        <span className="text-2xl md:text-3xl">%</span>
+                      </span>
+                    </div>
+                  </div>
+                  {!isExpired && (
+                    <div className="mt-auto w-full pt-4">
+                      <button
+                        type="button"
+                        onClick={() => onSelectExam(activeCertId)}
+                        className="w-full bg-[#1e56cd] text-white px-6 py-4 rounded-full text-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-[#1e56cd]/90"
+                      >
+                        학습 시작하기 <ChevronRight className="w-5 h-5" />
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -536,30 +530,40 @@ export const MyPage: React.FC<MyPageProps> = ({
                   <h3 className="text-[#1e56cd] text-base font-bold">과목별 안전도 분석</h3>
                 </div>
                 <div className="relative flex-1 flex flex-col min-h-0">
-                  <div className="w-full space-y-6">
-                    {(hasLearningHistory && !isPremiumCert ? freeSubjectScoresForDisplay : (displaySubjectScores.length ? displaySubjectScores : mockSubjectScores)).slice(0, 4).map((s) => (
-                      <div key={s.subjectNumber} className="flex items-center gap-3 w-full">
-                        <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-14">{s.subjectNumber}과목</span>
-                        <div className="flex-1 min-w-0 h-5 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all min-w-[2px] bg-[#1e56cd]"
-                            style={{ width: `${hasLearningHistory && !isPremiumCert ? 0 : Math.min(100, s.score)}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-10 text-right">
-                          {hasLearningHistory && !isPremiumCert ? "?%" : `${s.score}%`}
-                        </span>
+                  {!hasLearningHistory ? (
+                    <div className="absolute inset-0 flex items-center justify-center z-20 rounded-2xl bg-white">
+                      <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
+                        데이터가 없습니다{"\n"}모의고사를 풀고 과목별 안전도를 확인해보세요!
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-full space-y-6">
+                        {(displaySubjectScores.length ? displaySubjectScores : freeSubjectScoresForDisplay).slice(0, 4).map((s) => (
+                          <div key={s.subjectNumber} className="flex items-center gap-3 w-full">
+                            <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-14">{s.subjectNumber}과목</span>
+                            <div className="flex-1 min-w-0 h-5 bg-slate-200 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all min-w-[2px] bg-[#1e56cd]"
+                                style={{ width: `${Math.min(100, s.score)}%` }}
+                              />
+                            </div>
+                            <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-10 text-right">
+                              {s.score}%
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => activeCertId && onStartSubjectStrengthTraining?.(activeCertId)}
-                    className="w-full mt-auto bg-[#99ccff] border border-[#99ccff] rounded-xl py-3 px-4 flex justify-between items-center text-sm font-bold text-[#1e56cd] hover:bg-[#b3d9ff] hover:border-[#99ccff]"
-                  >
-                    <span>과목 강화 학습</span>
-                    <ChevronRight className="w-4 h-4 text-[#1e56cd]" />
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => activeCertId && onStartSubjectStrengthTraining?.(activeCertId)}
+                        className="w-full mt-auto bg-[#99ccff] border border-[#99ccff] rounded-xl py-3 px-4 flex justify-between items-center text-sm font-bold text-[#1e56cd] hover:bg-[#b3d9ff] hover:border-[#99ccff]"
+                      >
+                        <span>과목 강화 학습</span>
+                        <ChevronRight className="w-4 h-4 text-[#1e56cd]" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -567,13 +571,10 @@ export const MyPage: React.FC<MyPageProps> = ({
               <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
                 <div className="flex justify-between items-start gap-2 mb-3">
                   <h3 className="text-[#1e56cd] text-base font-bold">유형별 분석</h3>
-                  {hasLearningHistory && !isPremiumCert && (
-                    <span className="text-[10px] text-[#1e56cd]/80 font-medium shrink-0">예시를 돕기 위한 샘플데이터입니다</span>
-                  )}
                 </div>
                 <div className="relative flex-1 flex flex-col min-h-0">
                   {!hasLearningHistory ? (
-                    <div className="absolute inset-0 bg-white/90 flex items-center justify-center z-20 rounded-2xl">
+                    <div className="absolute inset-0 bg-white flex items-center justify-center z-20 rounded-2xl">
                       <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
                         {MY_PAGE_EMPTY_MESSAGES.weakness}
                       </p>
@@ -642,13 +643,10 @@ export const MyPage: React.FC<MyPageProps> = ({
               <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
                 <div className="flex justify-between items-start gap-2 mb-3">
                   <h3 className="text-[#1e56cd] text-base font-bold">취약 개념 분석</h3>
-                  {hasLearningHistory && !isPremiumCert && (
-                    <span className="text-[10px] text-[#1e56cd]/80 font-medium shrink-0">예시를 돕기 위한 샘플데이터입니다</span>
-                  )}
                 </div>
                 <div className="relative flex-1 flex flex-col min-h-0">
                   {!hasLearningHistory ? (
-                    <div className="absolute inset-0 bg-white/90 flex items-center justify-center z-20 rounded-2xl">
+                    <div className="absolute inset-0 bg-white flex items-center justify-center z-20 rounded-2xl">
                       <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
                         {MY_PAGE_EMPTY_MESSAGES.weakness}
                       </p>
@@ -682,7 +680,11 @@ export const MyPage: React.FC<MyPageProps> = ({
                               );
                             })
                           ) : (
-                            <p className="text-sm text-gray-500 py-4">모의고사를 응시하면 AI가 취약점을 분석해드립니다.</p>
+                            <p className="text-sm text-gray-500 py-4">
+                              {hasLearningHistory
+                                ? "아직 취약 개념이 분석되지 않았어요. 모의고사를 더 풀어보세요."
+                                : "모의고사를 응시하면 AI가 취약점을 분석해드립니다."}
+                            </p>
                           )}
                         </div>
                       </div>
@@ -718,7 +720,9 @@ export const MyPage: React.FC<MyPageProps> = ({
               <div className="relative flex-1 min-h-[320px] flex flex-col">
               <div className="flex-grow min-h-0 overflow-y-auto pr-2 space-y-0">
               {paginatedTrend.length === 0 ? (
-                <p className="text-sm text-gray-500 py-8 text-center">기록이 없습니다.</p>
+                <p className="text-sm text-gray-600 py-8 text-center whitespace-pre-line font-medium">
+                  {hasLearningHistory ? "기록이 없습니다." : MY_PAGE_EMPTY_MESSAGES.learningRecord}
+                </p>
               ) : (
               paginatedTrend.map((item, i) => {
                 const isPass = item.isPass ?? item.score >= 60;
@@ -802,7 +806,7 @@ export const MyPage: React.FC<MyPageProps> = ({
               </div>
             )}
             {!hasLearningHistory && (
-              <div className="absolute inset-0 bg-white/90 flex items-center justify-center z-20 rounded-2xl">
+              <div className="absolute inset-0 bg-white flex items-center justify-center z-20 rounded-2xl">
                 <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
                   {MY_PAGE_EMPTY_MESSAGES.learningRecord}
                 </p>

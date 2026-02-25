@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings } from "lucide-react";
+import { List, LogOut, LayoutDashboard, Database, Code, FileText, Settings } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../constants";
 import { getCertDisplayName } from "../services/gradingService";
 import { useAllCertificationInfos } from "../hooks/useCertificationInfo";
@@ -174,18 +174,6 @@ export function DashboardSidebar({
       )}
 
       <div className="flex-1 min-h-[24px]" />
-
-      {/* 로그인 하단 - 비로그인 시에만 표시 (로그인 시 로그아웃은 프로필 팝업에서) */}
-      {!user && (
-        <button
-          type="button"
-          onClick={() => onNavigate("/login")}
-          className="text-white/90 hover:text-white"
-          aria-label="로그인"
-        >
-          <LogIn className="w-6 h-6 md:w-8 md:h-8" />
-        </button>
-      )}
     </aside>
   );
 }

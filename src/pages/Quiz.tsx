@@ -82,6 +82,7 @@ export const Quiz: React.FC<QuizProps> = ({
   const [showImageEnlarged, setShowImageEnlarged] = useState(false);
   const [enlargedImageSrc, setEnlargedImageSrc] = useState<string | null>(null);
   const [imageLoadError, setImageLoadError] = useState(false);
+  const questionBodyRef = useRef<HTMLDivElement>(null);
 
   const roundInfo = EXAM_ROUNDS.find((r) => r.id === roundId);
   const round = roundInfo?.round ?? 1;
@@ -92,6 +93,24 @@ export const Quiz: React.FC<QuizProps> = ({
   useEffect(() => {
     setImageLoadError(false);
   }, [currentQIndex]);
+
+  // 지문/보기 HTML 내 모든 이미지 위에 딤 + "이미지는 준비중입니다" 오버레이
+  useEffect(() => {
+    const el = questionBodyRef.current;
+    if (!el) return;
+    const imgs = el.querySelectorAll('img');
+    imgs.forEach((img) => {
+      if (img.closest('.quiz-image-dim-overlay-wrap') || img.closest('.quiz-image-explicit')) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'relative inline-block max-w-full quiz-image-dim-overlay-wrap';
+      img.parentNode?.insertBefore(wrap, img);
+      wrap.appendChild(img);
+      const overlay = document.createElement('div');
+      overlay.className = 'absolute inset-0 bg-black/60 flex items-center justify-center z-10 pointer-events-none';
+      overlay.innerHTML = '<span class="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지는 준비중입니다</span>';
+      wrap.appendChild(overlay);
+    });
+  }, [currentQIndex, questions[currentQIndex]?.content]);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,6 +445,7 @@ export const Quiz: React.FC<QuizProps> = ({
                   <div className={`min-w-0 flex flex-col ${mode === 'study' ? 'xl:flex-[7]' : ''} ${mode === 'exam' ? 'flex-1 max-w-4xl mx-auto w-full' : ''} gap-8`}>
                     {/* 지문 영역: 텍스트 + 표/이미지(텍스트 아래 적당한 간격으로), 선택지와는 gap 유지 */}
                     <div
+                      ref={questionBodyRef}
                       className={
                         'text-base text-gray-800 leading-relaxed break-keep w-full overflow-x-auto ' +
                         '[&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:my-4 [&_table]:text-sm ' +
@@ -462,7 +482,7 @@ export const Quiz: React.FC<QuizProps> = ({
                         </div>
                       )}
                       {currentQ.imageUrl && (
-                        <div className="flex justify-start mt-4">
+                        <div className="flex justify-start mt-4 quiz-image-explicit">
                           <div className="relative max-w-md w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-50 min-h-[180px]">
                             {imageLoadError ? (
                               <img src="/sample-question-image.png" alt="문제" className="w-full h-auto object-contain max-h-80 min-h-[180px]" />
@@ -474,6 +494,10 @@ export const Quiz: React.FC<QuizProps> = ({
                                 onError={() => setImageLoadError(true)}
                               />
                             )}
+                            {/* 시험 중 이미지 딤: 이미지는 준비중입니다 */}
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10 pointer-events-none">
+                              <span className="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지는 준비중입니다</span>
+                            </div>
                             <button
                               type="button"
                               onClick={() => {
@@ -481,7 +505,7 @@ export const Quiz: React.FC<QuizProps> = ({
                                 setEnlargedImageSrc(src ?? null);
                                 setShowImageEnlarged(true);
                               }}
-                              className="absolute right-2 top-2 w-9 h-9 rounded-lg bg-white/90 hover:bg-white shadow border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors"
+                              className="absolute right-2 top-2 w-9 h-9 rounded-lg bg-white/90 hover:bg-white shadow border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors z-20"
                               aria-label="이미지 확대"
                             >
                               <Search size={18} />

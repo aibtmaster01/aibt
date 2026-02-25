@@ -58,9 +58,9 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete }
                  </div>
               </div>
               
-              <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-xl font-bold text-sm">
+              <div className="flex items-center gap-2 text-brand-600 bg-brand-50 p-4 rounded-xl font-bold text-sm">
                 <ShieldCheck size={18} />
-                <span>합격 응원 쿠폰이 적용되었습니다. (-10,000원)</span>
+                <span>테스트기간 무료!</span>
               </div>
             </div>
 
@@ -87,15 +87,15 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete }
               <div className="space-y-4 mb-8 text-sm">
                 <div className="flex justify-between text-slate-500">
                   <span>상품 금액</span>
-                  <span>{originalPrice.toLocaleString()}원</span>
+                  <span>0원</span>
                 </div>
                 <div className="flex justify-between text-brand-600 font-bold">
-                  <span>쿠폰 할인</span>
-                  <span>-{discount.toLocaleString()}원</span>
+                  <span>테스트기간 무료!</span>
+                  <span>0원</span>
                 </div>
                 <div className="border-t border-slate-100 pt-4 flex justify-between items-center">
                   <span className="font-bold text-slate-900">최종 결제 금액</span>
-                  <span className="font-black text-2xl text-slate-900">{finalPrice.toLocaleString()}원</span>
+                  <span className="font-black text-2xl text-slate-900">0원</span>
                 </div>
               </div>
 

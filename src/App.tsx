@@ -118,6 +118,29 @@ const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [showNextRoundPreparing, nextRoundInfo?.id, nextRoundInfo?.round, user, selectedCertId]);
 
+  // 시험 결과 화면을 볼 때 마이페이지 캐시 무효화 → 이후 마이페이지 진입 시 최신 데이터 로드
+  useEffect(() => {
+    if (route !== '/result' || !user?.id || !selectedCertId) return;
+    const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
+    if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
+  }, [route, user?.id, selectedCertId]);
+
+  // /exam-list 진입 시 selectedCertId가 비어 있으면 첫 자격증으로 설정 (흰 화면 방지)
+  useEffect(() => {
+    if (route !== '/exam-list' || selectedCertId) return;
+    const fallback = user?.subscriptions?.[0]?.id ?? user?.paidCertIds?.[0] ?? CERTIFICATIONS[0]?.id;
+    if (fallback) setSelectedCertId(fallback);
+  }, [route, selectedCertId, user?.subscriptions, user?.paidCertIds]);
+
+  // /quiz 진입 시 round/cert 없으면 목록으로 복귀 (흰 화면 방지)
+  useEffect(() => {
+    if (route !== '/quiz') return;
+    if (selectedRoundId && selectedCertId) return;
+    setPreFetchedQuestions(null);
+    setQuizStartIndex(undefined);
+    navigate(selectedCertId ? '/exam-list' : '/');
+  }, [route, selectedRoundId, selectedCertId]);
+
   // Navigation Helper
   const navigate = (path: string) => {
     if (path !== '/login') setLoginInitialMode(null);
@@ -456,10 +479,11 @@ const App: React.FC = () => {
             onLogout={handleLogout}
           />
         ) : null;
-      case '/exam-list':
-        return selectedCertId ? (
+      case '/exam-list': {
+        const examListCertId = selectedCertId ?? user?.subscriptions?.[0]?.id ?? user?.paidCertIds?.[0] ?? CERTIFICATIONS[0]?.id;
+        return examListCertId ? (
           <ExamList 
-            certId={selectedCertId}
+            certId={examListCertId}
             user={user}
             onSelectRound={handleSelectRound}
             onSelectAiRound={handleSelectAiRound}
@@ -479,6 +503,7 @@ const App: React.FC = () => {
             }}
           />
         ) : null;
+      }
       case '/quiz':
         return selectedRoundId && selectedCertId ? (
           <>
