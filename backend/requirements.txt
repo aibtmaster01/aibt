@@ -2,6 +2,9 @@ firebase-admin>=6.0.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
+# BIGDATA 스크립트 (bold_remover 등)
+tqdm>=4.0.0
+
 # BIGDATA Step02_Exam_Generator (RAG)
 langchain
 langchain-community
