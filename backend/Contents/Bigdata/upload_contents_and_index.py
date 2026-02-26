@@ -16,7 +16,8 @@ import random
 from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # backend/
+# backend/ (스크립트가 Contents/Bigdata/ 안에 있으므로 상위 두 단계)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CONTENTS_PATH = os.path.join(SCRIPT_DIR, "Bigdata_contents_1681.json")
 INDEX_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index.json")

@@ -4,7 +4,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "IQR 계산",
         "이상치 판정"
@@ -77,7 +77,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "중앙값 대치",
         "이상치 영향"
@@ -274,7 +274,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "PCA vs LDA",
         "비지도 학습"
@@ -346,7 +346,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "편상관 분석",
         "Partial Correlation",
@@ -371,7 +371,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "상관계수 계산",
         "공분산",
@@ -396,7 +396,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "이항분포",
         "기댓값",
@@ -471,7 +471,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "범주형 데이터",
         "평균 대치 오류"
@@ -495,7 +495,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "이상값 탐지 기법",
         "기하 평균"
@@ -616,7 +616,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "결측 메커니즘",
         "MAR"
@@ -640,7 +640,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이상치",
         "중앙값 vs 평균"
@@ -664,7 +664,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이상값 처리 전략",
         "사기 탐지"
@@ -835,7 +835,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "단순 대치 한계",
         "분산 과소평가"
@@ -907,7 +907,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "F1-score",
         "혼동 행렬",
@@ -1030,7 +1030,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "피어슨 상관계수",
         "스피어먼 상관계수",
@@ -1202,7 +1202,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "다중 대치법",
         "MI 절차"
@@ -1226,7 +1226,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "KNN Imputation",
         "유사도 기반 대치"
@@ -1250,7 +1250,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "로그 변환",
         "왜도 수정"
@@ -1497,7 +1497,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "누적 기여율",
         "주성분 개수 결정"
@@ -1521,7 +1521,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관계수 해석",
         "비선형 관계",
@@ -1546,7 +1546,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "깁스 샘플링",
         "11회 트렌드",
@@ -1742,7 +1742,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "Min-Max 정규화",
         "계산 문제"
@@ -1766,7 +1766,7 @@
     "metadata": {
       "core_id": 33,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "평행 좌표 그래프",
         "고차원 시각화",
@@ -1863,7 +1863,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "표준화",
         "스케일 영향"
@@ -1887,7 +1887,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "상관계수 vs 결정계수",
         "설명력"
@@ -1911,7 +1911,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "포아송 분포",
         "희귀 사건",
@@ -2426,7 +2426,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "Winsorizing",
         "이상값 대치"
@@ -2870,7 +2870,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "TF 계산",
         "DTM",
@@ -2895,7 +2895,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "주성분 개수",
         "Scree Plot"
@@ -3111,7 +3111,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "파생 변수 계산",
         "평균 구매 단가"
@@ -3135,7 +3135,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "저항성",
         "Resistancy",
@@ -3160,7 +3160,7 @@
     "metadata": {
       "core_id": 33,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "마할라노비스 거리",
         "유클리드 거리",
@@ -3185,7 +3185,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "평균제곱오차",
         "MSE",
@@ -3258,7 +3258,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "t-분포",
         "자유도",
@@ -3283,7 +3283,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "표준정규분포",
         "Z-점수",
@@ -3308,7 +3308,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "가설 검정",
         "F-분포",
@@ -3382,7 +3382,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "체계적 표본추출",
         "표집 간격",
@@ -3407,7 +3407,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "비례 층화 추출",
         "샘플 배분",
@@ -3746,7 +3746,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "시계열 가법 모델",
         "관측치 산출"
@@ -3795,7 +3795,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "임계값 조정",
         "Threshold Moving",
@@ -3820,7 +3820,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "비용 민감 학습",
         "가중치 부여"
@@ -3844,7 +3844,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "변동 계수",
         "산포도 비교",
@@ -3869,7 +3869,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "사분위수",
         "IQR",
@@ -3894,7 +3894,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "히스토그램",
         "Bin 선택",
@@ -4092,7 +4092,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "결측치처리",
         "PCA"
@@ -4116,7 +4116,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "평활화",
         "이동평균"
@@ -4140,7 +4140,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "결측치추론",
         "KNN대체"
@@ -4381,7 +4381,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "카토그램",
         "공간 시각화",
@@ -4890,7 +4890,7 @@
     "metadata": {
       "core_id": 33,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "편상관 계수",
         "가짜 상관",
@@ -4915,7 +4915,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "표준오차 계산",
         "모분산",
@@ -5036,7 +5036,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "MDS",
         "거리 보존"
@@ -5084,7 +5084,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "이산확률분포",
         "연속확률분포",
@@ -5279,7 +5279,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "앤스컴 콰르텟",
         "시각화의 중요성",
@@ -5424,7 +5424,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "워드 클라우드",
         "시각화 해석",
@@ -5449,7 +5449,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "카토그램",
         "11회 트렌드",
@@ -5474,7 +5474,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "공간 자기상관",
         "Moran's I",
@@ -5548,7 +5548,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "시각화 도구",
         "비교 시각화",
@@ -5573,7 +5573,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "트리맵",
         "계층적 시각화",
@@ -5598,7 +5598,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "스타 차트",
         "방사형 차트",
@@ -5647,7 +5647,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "층화 표본추출",
         "군집 표본추출",
@@ -5672,7 +5672,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표본 오차",
         "비표본 오차",
@@ -5697,7 +5697,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "편의 추출",
         "유의 추출",
@@ -6465,7 +6465,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "TF-IDF",
         "가중치",
@@ -7044,7 +7044,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "요약 변수",
         "파생 변수"
@@ -7068,7 +7068,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "로그 변환",
         "왜도",
@@ -7093,7 +7093,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Scaling 필요성",
         "거리 기반 모델"
@@ -7117,7 +7117,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "EDA vs CDA",
         "데이터 탐색 목적"
@@ -7141,7 +7141,7 @@
     "metadata": {
       "core_id": 33,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "정준 상관 분석",
         "CCA",
@@ -7166,7 +7166,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표본 크기 결정",
         "11회 트렌드",
@@ -7191,7 +7191,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "2개념 비교",
+      "problem_type": "개념 비교형",
       "tags": [
         "불편성",
         "효율성",
@@ -7216,7 +7216,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표본분산",
         "자유도",
@@ -7241,7 +7241,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "2개념 비교",
+      "problem_type": "개념 비교형",
       "tags": [
         "일관성",
         "충분성",
@@ -7581,7 +7581,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "처리전략",
         "비즈니스맥락"
@@ -7752,7 +7752,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "표준화",
         "정규화",
@@ -7777,7 +7777,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "표준편차",
         "표준오차",
@@ -8025,7 +8025,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "언더샘플링",
         "오버샘플링",
@@ -8050,7 +8050,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "SMOTE",
         "선형 보간",
@@ -8075,7 +8075,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "G-mean",
         "F-measure",
@@ -8124,7 +8124,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "중앙값",
         "산술평균",
@@ -8149,7 +8149,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "왜도",
         "Skewness",
@@ -8636,7 +8636,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "왜도처리",
         "로그변환"
@@ -8684,7 +8684,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "HDFS리스크",
         "SPOF"
@@ -8780,7 +8780,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "L-다양성",
         "비식별정제"
@@ -8971,7 +8971,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관계수왜곡",
         "피어슨"
@@ -9116,7 +9116,7 @@
     "metadata": {
       "core_id": 40,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "MLE",
         "우도함수"
@@ -9140,7 +9140,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "결정계수",
         "통계공식"
@@ -9164,7 +9164,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상호작용",
         "시너지분석"
@@ -9237,7 +9237,7 @@
     "metadata": {
       "core_id": 50,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "활성화함수",
         "ReLU"
@@ -9429,7 +9429,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "MSE단점",
         "이상치페널티"
@@ -10179,7 +10179,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "회귀직선",
         "지렛대효과"
@@ -10277,7 +10277,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "모델선정",
         "랜덤포레스트"
@@ -10375,7 +10375,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "재현율",
         "의료데이터"
@@ -10543,7 +10543,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "분포 비교",
         "표본분포 시각화",
@@ -10568,7 +10568,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "RFM 분석",
         "은행 도메인"
@@ -10592,7 +10592,7 @@
     "metadata": {
       "core_id": 33,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "다변량 탐색 절차",
         "EDA",
@@ -10617,7 +10617,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "중심극한정리",
         "CLT",
@@ -10642,7 +10642,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "불편성",
         "Unbiasedness",
@@ -10667,7 +10667,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "최대우도추정법",
         "MLE",
@@ -11104,7 +11104,7 @@
     "metadata": {
       "core_id": 9,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상향식 접근",
         "적용 사례"
@@ -11128,7 +11128,7 @@
     "metadata": {
       "core_id": 49,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "의사결정나무",
         "분류 규칙",
@@ -11177,7 +11177,7 @@
     "metadata": {
       "core_id": 53,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "덴드로그램",
         "계층적 군집",
@@ -11250,7 +11250,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "EDA 4대 원칙",
         "존 튜키",
@@ -11371,7 +11371,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "래스터",
         "벡터",
@@ -11396,7 +11396,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "유선도",
         "Flow Map",
@@ -11421,7 +11421,7 @@
     "metadata": {
       "core_id": 35,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "가중평균",
         "산술평균",
@@ -11941,7 +11941,7 @@
     "metadata": {
       "core_id": 16,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "l-다양성",
         "정보 보호"
@@ -12037,7 +12037,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "평균 대치법",
         "분산 왜곡"
@@ -12182,7 +12182,7 @@
     "metadata": {
       "core_id": 22,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "k-익명성",
         "데이터유용성"
@@ -12278,7 +12278,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Ridge",
         "L2정규화"
@@ -12326,7 +12326,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "OLS성질",
         "잔차합"
@@ -12690,7 +12690,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "정밀도",
         "실무사례"
@@ -12738,7 +12738,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "특이도",
         "제1종오류"
@@ -12859,7 +12859,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "사회 연결망 분석",
         "매개 중심성",
@@ -12884,7 +12884,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "2개념 비교형",
+      "problem_type": "개념 비교형",
       "tags": [
         "웹 마이닝",
         "웹 구조 마이닝",
@@ -12958,7 +12958,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관vs인과",
         "결과해석"
@@ -12982,7 +12982,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "교호작용",
         "회귀분석"
@@ -13030,7 +13030,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "시계열 분해",
         "계절 요인",
@@ -13055,7 +13055,7 @@
     "metadata": {
       "core_id": 35,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "중윗값",
         "평균의 함정",
@@ -13618,7 +13618,7 @@
     "metadata": {
       "core_id": 67,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "정규성가정",
         "가설검정"
@@ -13667,7 +13667,7 @@
     "metadata": {
       "core_id": 79,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "A/B테스트",
         "리스크관리"
@@ -13691,7 +13691,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "과대적합 주의",
         "파생 변수 설계 원칙"
@@ -13715,7 +13715,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "시간 데이터 가공",
         "주기성 반영"
@@ -13739,7 +13739,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "Box-Cox 변환",
         "비선형 변환"
@@ -13763,7 +13763,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "이산화",
         "Binning",
@@ -13788,7 +13788,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "데이터 탐색 순서",
         "단변량 탐색",
@@ -13813,7 +13813,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "3상황 적응형",
+      "problem_type": "상황 적응형",
       "tags": [
         "점추정 시각화",
         "편향과 분산",
@@ -13911,7 +13911,7 @@
     "metadata": {
       "core_id": 12,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "$ROI$",
         "타당성분석"
@@ -14103,7 +14103,7 @@
     "metadata": {
       "core_id": 23,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관계수",
         "다중공선성",
@@ -14128,7 +14128,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "다중공선성",
         "PCA활용"
@@ -14224,7 +14224,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "WCSS",
         "군집화원리"
@@ -14248,7 +14248,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관계수원리",
         "표준화"
@@ -14320,7 +14320,7 @@
     "metadata": {
       "core_id": 35,
       "subject": 2,
-      "problem_type": "5계산 풀이형",
+      "problem_type": "계산 풀이형",
       "tags": [
         "분할표",
         "주변 빈도",
@@ -14369,7 +14369,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "포아송분포",
         "사건발생"
@@ -14489,7 +14489,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "표준편차",
         "분산",
@@ -14610,7 +14610,7 @@
     "metadata": {
       "core_id": 51,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "과적합",
         "해결책"
@@ -14897,7 +14897,7 @@
     "metadata": {
       "core_id": 80,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "모니터링",
         "임계치"
@@ -14993,7 +14993,7 @@
     "metadata": {
       "core_id": 10,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "우선순위",
         "매트릭스"
@@ -15089,7 +15089,7 @@
     "metadata": {
       "core_id": 23,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "비지도학습",
         "K-means"
@@ -15161,7 +15161,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "PCA",
         "스크리 플롯",
@@ -15211,7 +15211,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관행렬",
         "히트맵"
@@ -15702,7 +15702,7 @@
     "metadata": {
       "core_id": 34,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "차원축소",
         "탐색전략"
@@ -15750,7 +15750,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석",
         "모델선택",
@@ -15824,7 +15824,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "임계값",
         "트레이드오프"
@@ -15848,7 +15848,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "불균형데이터",
         "가중치학습"
@@ -16215,7 +16215,7 @@
     "metadata": {
       "core_id": 7,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -16383,7 +16383,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Open API",
         "공공 데이터"
@@ -16551,7 +16551,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터불균형",
         "오버샘플링"
@@ -16599,7 +16599,7 @@
     "metadata": {
       "core_id": 21,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "시계열정제",
         "보간법"
@@ -17257,7 +17257,7 @@
     "metadata": {
       "core_id": 79,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "우선순위",
         "액션플랜"
@@ -17353,7 +17353,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "텍스트 마이닝 전처리",
         "불용어",
@@ -17378,7 +17378,7 @@
     "metadata": {
       "core_id": 77,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "ACF",
         "추세진단"
@@ -17593,7 +17593,7 @@
     "metadata": {
       "core_id": 7,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -17688,7 +17688,7 @@
     "metadata": {
       "core_id": 9,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "하향식",
         "상향식",
@@ -17713,7 +17713,7 @@
     "metadata": {
       "core_id": 9,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상향식 위험",
         "데이터 품질"
@@ -17785,7 +17785,7 @@
     "metadata": {
       "core_id": 9,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "분석 기법 매칭",
         "지도 학습"
@@ -17833,7 +17833,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "전수조사",
         "수집비용"
@@ -17857,7 +17857,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "전수조사한계",
         "데이터운영"
@@ -17953,7 +17953,7 @@
     "metadata": {
       "core_id": 15,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이상치",
         "RobustScaling"
@@ -18049,7 +18049,7 @@
     "metadata": {
       "core_id": 15,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "로그변환해석",
         "회귀분석"
@@ -18385,7 +18385,7 @@
     "metadata": {
       "core_id": 47,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "다중공선성",
         "해결방안"
@@ -18409,7 +18409,7 @@
     "metadata": {
       "core_id": 50,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "미니배치",
         "SGD",
@@ -18530,7 +18530,7 @@
     "metadata": {
       "core_id": 63,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "다중공선성",
         "VIF",
@@ -18603,7 +18603,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "StandardScaler",
         "표준화"
@@ -18627,7 +18627,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표본설계",
         "정밀도조절"
@@ -18701,7 +18701,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "키추출",
         "JSON구조"
@@ -18821,7 +18821,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "스피어만",
         "비모수분석"
@@ -18869,7 +18869,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관분석",
         "히트맵",
@@ -18894,7 +18894,7 @@
     "metadata": {
       "core_id": 35,
       "subject": 2,
-      "problem_type": "1개념 암기형",
+      "problem_type": "개념 암기형",
       "tags": [
         "도수분포표",
         "계급값",
@@ -19253,7 +19253,7 @@
     "metadata": {
       "core_id": 7,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "가명정보활용",
         "안전조치",
@@ -19470,7 +19470,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "실시간수집",
         "로그모니터링"
@@ -19712,7 +19712,7 @@
     "metadata": {
       "core_id": 63,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "재현율",
         "비즈니스진단"
@@ -19760,7 +19760,7 @@
     "metadata": {
       "core_id": 72,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Word2Vec",
         "임베딩"
@@ -19784,7 +19784,7 @@
     "metadata": {
       "core_id": 79,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "성과평가",
         "성찰"
@@ -19808,7 +19808,7 @@
     "metadata": {
       "core_id": 80,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Concept Drift",
         "모델노후화"
@@ -20001,7 +20001,7 @@
     "metadata": {
       "core_id": 24,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "PCA전처리",
         "표준화"
@@ -20245,7 +20245,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "L-다양성",
         "비식별보완"
@@ -20269,7 +20269,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "비식별모델한계",
         "소규모데이터"
@@ -20656,7 +20656,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석",
         "로지스틱회귀",
@@ -20705,7 +20705,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석",
         "계수해석"
@@ -20753,7 +20753,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "계수해석",
         "무영향성"
@@ -20897,7 +20897,7 @@
     "metadata": {
       "core_id": 52,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Imbalance",
         "Class Weight"
@@ -21137,7 +21137,7 @@
     "metadata": {
       "core_id": 59,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "경량화",
         "CNN최적화"
@@ -21328,7 +21328,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "공공데이터",
         "외부데이터"
@@ -21977,7 +21977,7 @@
     "metadata": {
       "core_id": 53,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "군집분석활용",
         "시장세분화"
@@ -22217,7 +22217,7 @@
     "metadata": {
       "core_id": 10,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "하향식접근",
         "전략적기획"
@@ -22314,7 +22314,7 @@
     "metadata": {
       "core_id": 54,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "맥네마검정",
         "대응표본"
@@ -22482,7 +22482,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "ggplot2",
         "그래픽문법"
@@ -22554,7 +22554,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "왜도해석",
         "분포탐색"
@@ -22578,7 +22578,7 @@
     "metadata": {
       "core_id": 34,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "워드클라우드",
         "불용어",
@@ -22651,7 +22651,7 @@
     "metadata": {
       "core_id": 56,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "공통성",
         "변수정제"
@@ -22675,7 +22675,7 @@
     "metadata": {
       "core_id": 59,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "향상도",
         "결과해석"
@@ -22723,7 +22723,7 @@
     "metadata": {
       "core_id": 7,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -22868,7 +22868,7 @@
     "metadata": {
       "core_id": 16,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "재식별 위험",
         "결합 공격"
@@ -23299,7 +23299,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Feedback Loop",
         "결과해석"
@@ -23347,7 +23347,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터불일치",
         "실무검증"
@@ -23395,7 +23395,7 @@
     "metadata": {
       "core_id": 67,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "다중공선성",
         "PCA"
@@ -23443,7 +23443,7 @@
     "metadata": {
       "core_id": 67,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "슬라이딩윈도우",
         "한계점"
@@ -23491,7 +23491,7 @@
     "metadata": {
       "core_id": 67,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "과적합",
         "모델성능"
@@ -23515,7 +23515,7 @@
     "metadata": {
       "core_id": 67,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "F1-score",
         "불균형데이터"
@@ -23661,7 +23661,7 @@
     "metadata": {
       "core_id": 71,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "스피어만",
         "이상치"
@@ -23685,7 +23685,7 @@
     "metadata": {
       "core_id": 71,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "오즈비",
         "결과해석"
@@ -23853,7 +23853,7 @@
     "metadata": {
       "core_id": 12,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "분석생명주기",
         "프로세스순서"
@@ -23901,7 +23901,7 @@
     "metadata": {
       "core_id": 12,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터품질",
         "확보계획"
@@ -24335,7 +24335,7 @@
     "metadata": {
       "core_id": 29,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "산점도 행렬",
         "비선형 관계"
@@ -24479,7 +24479,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "산점도",
         "이변량탐색"
@@ -24551,7 +24551,7 @@
     "metadata": {
       "core_id": 63,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "선형성가정",
         "잔차패턴"
@@ -24575,7 +24575,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "트리맵",
         "요약시각화"
@@ -24792,7 +24792,7 @@
     "metadata": {
       "core_id": 3,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 품질",
         "신뢰성 확보"
@@ -25083,7 +25083,7 @@
     "metadata": {
       "core_id": 65,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "ANOVA",
         "사후분석"
@@ -25131,7 +25131,7 @@
     "metadata": {
       "core_id": 30,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표준편차이점",
         "해석력"
@@ -25299,7 +25299,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "박스플롯",
         "비교탐색"
@@ -25323,7 +25323,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Seaborn",
         "시각화도구"
@@ -25347,7 +25347,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "시각화팁",
         "분포비교"
@@ -25395,7 +25395,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "계통추출",
         "샘플링"
@@ -25635,7 +25635,7 @@
     "metadata": {
       "core_id": 44,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "과적합",
         "튜닝전략"
@@ -25827,7 +25827,7 @@
     "metadata": {
       "core_id": 48,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "로지스틱 회귀",
         "시그모이드",
@@ -26165,7 +26165,7 @@
     "metadata": {
       "core_id": 58,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Adam",
         "최적화"
@@ -26237,7 +26237,7 @@
     "metadata": {
       "core_id": 59,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "SMOTE",
         "데이터불균형"
@@ -26477,7 +26477,7 @@
     "metadata": {
       "core_id": 20,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "중복제거",
         "정합성"
@@ -26550,7 +26550,7 @@
     "metadata": {
       "core_id": 50,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "옵티마이저",
         "모멘텀"
@@ -26646,7 +26646,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "잔차분석",
         "모형진단"
@@ -26670,7 +26670,7 @@
     "metadata": {
       "core_id": 62,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "RMSE",
         "성능해석"
@@ -26814,7 +26814,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "CLT한계",
         "표본크기"
@@ -27030,7 +27030,7 @@
     "metadata": {
       "core_id": 65,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표준오차",
         "회귀진단"
@@ -27102,7 +27102,7 @@
     "metadata": {
       "core_id": 68,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "베이지안최적화",
         "최적화"
@@ -27318,7 +27318,7 @@
     "metadata": {
       "core_id": 4,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "집중형",
         "현업 관계",
@@ -27366,7 +27366,7 @@
     "metadata": {
       "core_id": 9,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상향식 한계",
         "비즈니스 통찰"
@@ -27605,7 +27605,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "API",
         "데이터수집경로"
@@ -27749,7 +27749,7 @@
     "metadata": {
       "core_id": 15,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "원핫인코딩",
         "차원의저주"
@@ -27773,7 +27773,7 @@
     "metadata": {
       "core_id": 15,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "스케일링영향",
         "KNN"
@@ -27989,7 +27989,7 @@
     "metadata": {
       "core_id": 17,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터무결성",
         "품질정의"
@@ -28252,7 +28252,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "시계열시각화",
         "이동평균"
@@ -28324,7 +28324,7 @@
     "metadata": {
       "core_id": 79,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이해관계자",
         "도메인지식"
@@ -28371,7 +28371,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -28490,7 +28490,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "구간화",
         "Binning",
@@ -28515,7 +28515,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "스케일링",
         "변수변환"
@@ -28731,7 +28731,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "신뢰구간",
         "소표본추정"
@@ -28803,7 +28803,7 @@
     "metadata": {
       "core_id": 39,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "표본크기",
         "수렴속도"
@@ -29092,7 +29092,7 @@
     "metadata": {
       "core_id": 6,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "계층관계",
         "개념정의"
@@ -29141,7 +29141,7 @@
     "metadata": {
       "core_id": 6,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "AI리스크",
         "데이터편향"
@@ -29311,7 +29311,7 @@
     "metadata": {
       "core_id": 14,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "문서형구조",
         "NoSQL"
@@ -29479,7 +29479,7 @@
     "metadata": {
       "core_id": 42,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "학습률",
         "수렴"
@@ -29576,7 +29576,7 @@
     "metadata": {
       "core_id": 61,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "부트스트랩",
         "신뢰구간"
@@ -29624,7 +29624,7 @@
     "metadata": {
       "core_id": 65,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관계수",
         "결과해석"
@@ -29696,7 +29696,7 @@
     "metadata": {
       "core_id": 31,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터유형",
         "히스토그램"
@@ -29937,7 +29937,7 @@
     "metadata": {
       "core_id": 11,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "법적리스크",
         "개인정보보호"
@@ -30057,7 +30057,7 @@
     "metadata": {
       "core_id": 49,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "랜덤포레스트",
         "특성중요도"
@@ -30105,7 +30105,7 @@
     "metadata": {
       "core_id": 63,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "VIF해석",
         "진단기준"
@@ -30129,7 +30129,7 @@
     "metadata": {
       "core_id": 63,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "ROC특징",
         "트레이드오프"
@@ -30177,7 +30177,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Concept Drift",
         "모델사후관리"
@@ -30201,7 +30201,7 @@
     "metadata": {
       "core_id": 66,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이분산성",
         "모델진단"
@@ -30440,7 +30440,7 @@
     "metadata": {
       "core_id": 35,
       "subject": 2,
-      "problem_type": "4절차 숙지형",
+      "problem_type": "절차 숙지형",
       "tags": [
         "데이터 요약 과정",
         "수치형 vs 범주형",
@@ -30489,7 +30489,7 @@
     "metadata": {
       "core_id": 42,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "GBM",
         "앙상블"
@@ -30537,7 +30537,7 @@
     "metadata": {
       "core_id": 42,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "과적합진단",
         "튜닝전략"
@@ -30585,7 +30585,7 @@
     "metadata": {
       "core_id": 43,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "정보손실",
         "모델정의오류"
@@ -30826,7 +30826,7 @@
     "metadata": {
       "core_id": 55,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "PCA전처리",
         "표준화"
@@ -30874,7 +30874,7 @@
     "metadata": {
       "core_id": 57,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "실무제약",
         "최적화"
@@ -30970,7 +30970,7 @@
     "metadata": {
       "core_id": 61,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "결과해석",
         "실무적용"
@@ -31068,7 +31068,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "비용민감학습",
         "가중치"
@@ -31116,7 +31116,7 @@
     "metadata": {
       "core_id": 27,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "불균형평가지표",
         "정확도의함정"
@@ -31188,7 +31188,7 @@
     "metadata": {
       "core_id": 36,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Pandas",
         "비복원추출"
@@ -31212,7 +31212,7 @@
     "metadata": {
       "core_id": 46,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "층화샘플링",
         "데이터불균형"
@@ -31501,7 +31501,7 @@
     "metadata": {
       "core_id": 52,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "연관성 분석",
         "지표 해석",
@@ -31526,7 +31526,7 @@
     "metadata": {
       "core_id": 56,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "요인명명",
         "해석"
@@ -31646,7 +31646,7 @@
     "metadata": {
       "core_id": 11,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터불균형",
         "확보리스크"
@@ -31670,7 +31670,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "수집전략",
         "목표정렬"
@@ -31694,7 +31694,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터품질",
         "신뢰성"
@@ -31742,7 +31742,7 @@
     "metadata": {
       "core_id": 13,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "개인정보보호",
         "비식별화"
@@ -32006,7 +32006,7 @@
     "metadata": {
       "core_id": 66,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "박스플롯",
         "분포해석"
@@ -32030,7 +32030,7 @@
     "metadata": {
       "core_id": 66,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "Q-Q Plot",
         "정규성"
@@ -32126,7 +32126,7 @@
     "metadata": {
       "core_id": 72,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "감성분석",
         "한계점"
@@ -32150,7 +32150,7 @@
     "metadata": {
       "core_id": 78,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터스키마",
         "시스템연동"
@@ -32174,7 +32174,7 @@
     "metadata": {
       "core_id": 78,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "지연시간",
         "모델경량화"
@@ -32222,7 +32222,7 @@
     "metadata": {
       "core_id": 26,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "원핫인코딩",
         "범주형변환"
@@ -32270,7 +32270,7 @@
     "metadata": {
       "core_id": 8,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -32317,7 +32317,7 @@
     "metadata": {
       "core_id": 12,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "범위관리",
         "리스크"
@@ -32702,7 +32702,7 @@
     "metadata": {
       "core_id": 1,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "JSON",
         "반정형데이터"
@@ -32774,7 +32774,7 @@
     "metadata": {
       "core_id": 1,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "JSONvsXML",
         "데이터경량화"
@@ -33036,7 +33036,7 @@
     "metadata": {
       "core_id": 16,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "법규 준수",
         "의료 데이터"
@@ -33132,7 +33132,7 @@
     "metadata": {
       "core_id": 64,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터윤리",
         "보고원칙"
@@ -33156,7 +33156,7 @@
     "metadata": {
       "core_id": 66,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "p-value",
         "결과해석"
@@ -33325,7 +33325,7 @@
     "metadata": {
       "core_id": 72,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "어간추출",
         "전처리부작용"
@@ -33444,7 +33444,7 @@
     "metadata": {
       "core_id": 25,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "왜도",
         "로그변환"
@@ -34021,7 +34021,7 @@
     "metadata": {
       "core_id": 37,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "왜도",
         "대푯값비교"
@@ -34213,7 +34213,7 @@
     "metadata": {
       "core_id": 74,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "등치지역도",
         "시각화왜곡"
@@ -34502,7 +34502,7 @@
     "metadata": {
       "core_id": 3,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "위험 요소",
         "조직 저항"
@@ -34526,7 +34526,7 @@
     "metadata": {
       "core_id": 8,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "위험도평가",
         "유일성"
@@ -34598,7 +34598,7 @@
     "metadata": {
       "core_id": 12,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "팀구성",
         "거버넌스"
@@ -34743,7 +34743,7 @@
     "metadata": {
       "core_id": 42,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "차원축소",
         "연산효율"
@@ -34839,7 +34839,7 @@
     "metadata": {
       "core_id": 43,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이진분류",
         "로지스틱회귀"
@@ -34863,7 +34863,7 @@
     "metadata": {
       "core_id": 43,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "다중공선성",
         "PCA"
@@ -35106,7 +35106,7 @@
     "metadata": {
       "core_id": 65,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "p-value",
         "결론도출"
@@ -35178,7 +35178,7 @@
     "metadata": {
       "core_id": 69,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이상치",
         "배깅vs부스팅"
@@ -35226,7 +35226,7 @@
     "metadata": {
       "core_id": 70,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "메타모델",
         "알고리즘선택"
@@ -35394,7 +35394,7 @@
     "metadata": {
       "core_id": 74,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "심슨의역설",
         "시각화오류"
@@ -35467,7 +35467,7 @@
     "metadata": {
       "core_id": 75,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "버블차트",
         "면적인지"
@@ -35539,7 +35539,7 @@
     "metadata": {
       "core_id": 76,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "히트맵",
         "시각화한계"
@@ -35731,7 +35731,7 @@
     "metadata": {
       "core_id": 34,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "시각화개선",
         "가독성"
@@ -35851,7 +35851,7 @@
     "metadata": {
       "core_id": 44,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "학습률",
         "함정문제"
@@ -36043,7 +36043,7 @@
     "metadata": {
       "core_id": 11,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터요건",
         "로지스틱회귀"
@@ -36356,7 +36356,7 @@
     "metadata": {
       "core_id": 5,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터포맷",
         "NoSQL"
@@ -36478,7 +36478,7 @@
     "metadata": {
       "core_id": 8,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터 분석"
       ],
@@ -36715,7 +36715,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "누적막대",
         "실무시각화"
@@ -37362,7 +37362,7 @@
     "metadata": {
       "core_id": 16,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "직접 식별자",
         "용어 정의"
@@ -37553,7 +37553,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "덴드로그램",
         "군집분석"
@@ -37722,7 +37722,7 @@
     "metadata": {
       "core_id": 38,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "추출편향",
         "데이터품질"
@@ -38371,7 +38371,7 @@
     "metadata": {
       "core_id": 8,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "T-근접성",
         "분포보존"
@@ -38395,7 +38395,7 @@
     "metadata": {
       "core_id": 8,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터유용성",
         "정보손실"
@@ -38491,7 +38491,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "이동평균",
         "시계열탐색"
@@ -38635,7 +38635,7 @@
     "metadata": {
       "core_id": 43,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터속성",
         "시점예측"
@@ -38659,7 +38659,7 @@
     "metadata": {
       "core_id": 43,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "비즈니스매칭",
         "모델선정"
@@ -38827,7 +38827,7 @@
     "metadata": {
       "core_id": 54,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "정밀도",
         "FP비용"
@@ -38851,7 +38851,7 @@
     "metadata": {
       "core_id": 54,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "카이제곱가설",
         "독립성검정"
@@ -39093,7 +39093,7 @@
     "metadata": {
       "core_id": 57,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "분산안정화",
         "로그변환"
@@ -39117,7 +39117,7 @@
     "metadata": {
       "core_id": 57,
       "subject": 3,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "슬라이딩윈도우",
         "노이즈"
@@ -39289,7 +39289,7 @@
     "metadata": {
       "core_id": 69,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "XGBoost",
         "성능비교"
@@ -39433,7 +39433,7 @@
     "metadata": {
       "core_id": 74,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "상관히트맵",
         "변수탐색"
@@ -39481,7 +39481,7 @@
     "metadata": {
       "core_id": 75,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "가로막대",
         "가독성"
@@ -39505,7 +39505,7 @@
     "metadata": {
       "core_id": 75,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "정렬",
         "순위비교"
@@ -39577,7 +39577,7 @@
     "metadata": {
       "core_id": 76,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "가로막대",
         "가독성"
@@ -39746,7 +39746,7 @@
     "metadata": {
       "core_id": 11,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "우선순위",
         "전략기획"
@@ -39818,7 +39818,7 @@
     "metadata": {
       "core_id": 66,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "로그변환",
         "분산안정화"
@@ -39962,7 +39962,7 @@
     "metadata": {
       "core_id": 28,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "데이터마트",
         "저장소구조"
@@ -40033,7 +40033,7 @@
     "metadata": {
       "core_id": 75,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "레이더차트",
         "다변량비교"
@@ -40201,7 +40201,7 @@
     "metadata": {
       "core_id": 16,
       "subject": 1,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "마스킹",
         "기술 사례"
@@ -40225,7 +40225,7 @@
     "metadata": {
       "core_id": 71,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "대표성",
         "편향"
@@ -40536,7 +40536,7 @@
     "metadata": {
       "core_id": 32,
       "subject": 2,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "시각화왜곡",
         "데이터윤리"
@@ -40584,7 +40584,7 @@
     "metadata": {
       "core_id": 73,
       "subject": 4,
-      "problem_type": "상황 적용형",
+      "problem_type": "상황 적응형",
       "tags": [
         "KPI",
         "비즈니스정합성"

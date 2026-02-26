@@ -22,16 +22,31 @@ BIGDATA_PROBLEM_TYPE_DESCRIPTIONS = {
 
 
 def _load_core_concepts_raw():
-    """core_concepts_list.json 로드. 배열이면 개념명 리스트, 객체면 개념명→키워드 배열."""
+    """core_concepts_list.json 로드.
+    - 반환: (id 순서 리스트, core_concepts_by_id, core_concept_keywords)
+    - core_concepts_list.json 형식: {"1": {"concept": "개념명", "keywords": ["키워드1", ...]}, ...}
+    """
     if not os.path.exists(_CORE_CONCEPTS_PATH):
         raise FileNotFoundError(f"core_concepts_list.json 없음: {_CORE_CONCEPTS_PATH}")
     with open(_CORE_CONCEPTS_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, list):
-        return data, None
+        return data, {}, {}
     if isinstance(data, dict):
-        return list(data.keys()), data
-    raise ValueError("core_concepts_list.json 은 배열 또는 객체(개념명→키워드배열)이어야 합니다.")
+        ids = sorted(data.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        # id → { concept, keywords } (프론트 취약 개념 "개념79" → 개념명·키워드 표시용)
+        by_id = {}
+        # 개념명 → 키워드[] (core_concept_stats 키가 개념명일 때 태그 표시용)
+        by_concept_name = {}
+        for k, v in data.items():
+            if isinstance(v, dict) and "concept" in v:
+                concept = v.get("concept") or ""
+                keywords = v.get("keywords")
+                if isinstance(keywords, list):
+                    by_id[k] = {"concept": concept, "keywords": keywords}
+                    by_concept_name[concept] = keywords
+        return ids, by_id, by_concept_name
+    raise ValueError("core_concepts_list.json 은 배열 또는 객체(id→{concept, keywords})이어야 합니다.")
 
 
 BIGDATA_EXAM_NAME = "빅데이터분석기사 필기"
@@ -43,8 +58,11 @@ BIGDATA_EXAM_SCHEDULES = [
 
 
 def get_bigdata_config() -> dict:
-    """BIGDATA certification_info config (core_concepts 기반, 객체면 core_concept_keywords 포함)"""
-    core_concepts_list, core_concept_keywords = _load_core_concepts_raw()
+    """BIGDATA certification_info config (core_concepts_list.json 기반).
+    - core_concept_keywords: 개념명 → 키워드[] (취약 개념 카드에서 개념명으로 태그 조회)
+    - core_concepts_by_id: id "1"~"80" → { concept, keywords } (취약 개념 "개념79" → 개념명·키워드 표시)
+    """
+    core_concepts_ids, core_concepts_by_id, core_concept_keywords = _load_core_concepts_raw()
     config = {
         "exam_config": {
             "total_questions": 80,
@@ -60,13 +78,15 @@ def get_bigdata_config() -> dict:
             {"subject_number": 3, "name": "빅데이터 모델링", "question_count": 20, "score_per_question": 5},
             {"subject_number": 4, "name": "빅데이터 결과 해석", "question_count": 20, "score_per_question": 5},
         ],
-        "core_concepts": core_concepts_list,
-        "core_concepts_order": core_concepts_list,
+        "core_concepts": core_concepts_ids,
+        "core_concepts_order": core_concepts_ids,
         "problem_type_list": BIGDATA_PROBLEM_TYPES,
         "problem_type_descriptions": BIGDATA_PROBLEM_TYPE_DESCRIPTIONS,
         "exam_name": BIGDATA_EXAM_NAME,
         "exam_schedules": BIGDATA_EXAM_SCHEDULES,
     }
-    if core_concept_keywords is not None:
+    if core_concept_keywords:
         config["core_concept_keywords"] = core_concept_keywords
+    if core_concepts_by_id:
+        config["core_concepts_by_id"] = core_concepts_by_id
     return config
