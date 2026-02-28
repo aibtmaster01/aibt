@@ -274,6 +274,8 @@ export const MyPage: React.FC<MyPageProps> = ({
   const radarData = dashboardStats?.radarData ?? [];
   const subjectScores = dashboardStats?.subjectScores ?? [];
   const weaknessTop3 = dashboardStats?.weaknessTop3 ?? [];
+  /** 최근 3회 가중 이동 평균 합격률 (있으면 우선 표시, 없으면 기존 recentPassRate 사용) */
+  const weightedPassRate = (dashboardStats as import('../services/statsService').FetchDashboardStatsResult | null)?.weightedPassRate ?? null;
 
   const effectiveDaysLeft = nearestFromCertInfo?.daysLeft ?? daysLeft;
   const dDayText =
@@ -284,8 +286,8 @@ export const MyPage: React.FC<MyPageProps> = ({
       : "-";
 
   const hasLearningHistory = trend.length > 0;
-  /** 데이터 없을 땐 목업 미노출 — 딤 뒤 흐릿한 데이터 제거 */
-  const displayRecentPassRate = hasLearningHistory ? recentPassRate : 0;
+  /** 데이터 없을 땐 목업 미노출 — 딤 뒤 흐릿한 데이터 제거. 가중 합격률 우선 표시 */
+  const displayRecentPassRate = hasLearningHistory ? (weightedPassRate ?? recentPassRate) : 0;
   const displayTrend = hasLearningHistory ? trend : [];
   const displaySubjectScores = hasLearningHistory ? subjectScores : [];
   /** 학습 이력 있으면 유료 여부와 관계없이 실제 유형/취약 데이터 표시 (샘플 문구·물음표 제거) */
@@ -543,21 +545,56 @@ export const MyPage: React.FC<MyPageProps> = ({
                     </div>
                   ) : (
                     <>
-                      <div className="w-full space-y-6">
-                        {(displaySubjectScores.length ? displaySubjectScores : freeSubjectScoresForDisplay).slice(0, 4).map((s) => (
-                          <div key={s.subjectNumber} className="flex items-center gap-3 w-full">
-                            <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-14">{s.subjectNumber}과목</span>
-                            <div className="flex-1 min-w-0 h-5 bg-slate-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all min-w-[2px] bg-[#1e56cd]"
-                                style={{ width: `${Math.min(100, s.score)}%` }}
-                              />
+                      <div className="w-full space-y-4">
+                        {(displaySubjectScores.length ? displaySubjectScores : freeSubjectScoresForDisplay).slice(0, 4).map((s) => {
+                          const margin = (s as import('../services/statsService').SubjectScore).safetyMargin ?? (s.score - 40);
+                          const trendDir = (s as import('../services/statsService').SubjectScore).trend ?? null;
+                          // 신호등 색상
+                          const barColor = margin < 0
+                            ? 'bg-red-500'
+                            : margin < 10
+                              ? 'bg-amber-400'
+                              : margin < 21
+                                ? 'bg-orange-400'
+                                : 'bg-[#1e56cd]';
+                          const dotColor = margin < 0
+                            ? 'bg-red-500'
+                            : margin < 10
+                              ? 'bg-amber-400'
+                              : margin < 21
+                                ? 'bg-orange-400'
+                                : 'bg-emerald-500';
+                          const trendIcon = trendDir === 'up'
+                            ? <span className="text-emerald-500 text-xs font-bold leading-none">↑</span>
+                            : trendDir === 'down'
+                              ? <span className="text-red-500 text-xs font-bold leading-none">↓</span>
+                              : trendDir === 'stable'
+                                ? <span className="text-slate-400 text-xs font-bold leading-none">→</span>
+                                : null;
+                          return (
+                            <div key={s.subjectNumber} className="flex items-center gap-2 w-full">
+                              <span className="text-xs font-medium text-slate-600 shrink-0 tabular-nums w-10">{s.subjectNumber}과목</span>
+                              <div className="flex-1 min-w-0 h-4 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all min-w-[2px] ${barColor}`}
+                                  style={{ width: `${Math.min(100, Math.max(0, s.score))}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-semibold text-slate-700 shrink-0 tabular-nums w-9 text-right">
+                                {s.score}%
+                              </span>
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} title={margin < 0 ? '과락 위험' : margin < 10 ? '위험' : margin < 21 ? '주의' : '안전'} />
+                              {trendIcon && <span className="shrink-0 w-4 text-center">{trendIcon}</span>}
                             </div>
-                            <span className="text-sm font-medium text-slate-700 shrink-0 tabular-nums w-10 text-right">
-                              {s.score}%
-                            </span>
-                          </div>
-                        ))}
+                          );
+                        })}
+                      </div>
+                      {/* 범례 */}
+                      <div className="flex gap-3 mt-2 mb-2">
+                        <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />과락위험</span>
+                        <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />위험</span>
+                        <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" />주의</span>
+                        <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />안전</span>
                       </div>
                       <button
                         type="button"
