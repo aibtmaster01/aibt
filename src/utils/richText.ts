@@ -30,6 +30,17 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** HTML 엔티티 디코딩 (Firestore/API에서 $ 등이 엔티티로 올 수 있음) */
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#36;/g, '$')
+    .replace(/&#x24;/gi, '$')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
+}
+
 /**
  * 문자열 내 LaTeX와 허용된 HTML을 반영한 안전한 HTML 문자열로 변환
  * - $$...$$ : 디스플레이 수식
@@ -40,7 +51,10 @@ function escapeHtml(s: string): string {
  */
 export function richTextToHtml(text: string): string {
   if (!text || typeof text !== 'string') return '';
-  let out = text
+  const decoded = decodeHtmlEntities(text);
+  // 전각/유니코드 $ → ASCII $ (라텍스 매칭용)
+  let normalized = decoded.replace(/\uFF04/g, '$');
+  let out = normalized
     .replace(/\\n/g, '<br>')  // literal \n (backslash+n) → <br>
     .replace(/\n/g, '<br>');  // actual newline → <br>
   const displayBlocks: string[] = [];
@@ -58,10 +72,10 @@ export function richTextToHtml(text: string): string {
     displayBlocks.push(tex);
     return `${DISP}${i}${PREFIX}`;
   });
-  // 3) $...$ (inline, not $$)
-  out = out.replace(/\$([^\$\n]+?)\$/g, (_, tex) => {
+  // 3) $...$ (inline, not $$). 공백·줄바꿈 허용
+  out = out.replace(/\$\s*([^\$]+?)\s*\$/g, (_, tex) => {
     const i = inlineBlocks.length;
-    inlineBlocks.push(tex);
+    inlineBlocks.push(tex.trim().replace(/<br\s*\/?>/gi, '\n'));
     return `${INL}${i}${PREFIX}`;
   });
   // 4) \(...\) (inline)
@@ -84,7 +98,9 @@ export function richTextToHtml(text: string): string {
       'br', 'b', 'i', 'em', 'strong', 'sub', 'sup', 'span', 'p', 'div', 'ul', 'ol', 'li',
       'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
       'pre', 'code', 'h1', 'h2', 'h3',
+      // KaTeX 출력용
+      'svg', 'path', 'g', 'defs', 'use', 'line', 'circle', 'rect', 'mrow', 'mstyle', 'math', 'semantics', 'annotation', 'annotation-xml',
     ],
-    ALLOWED_ATTR: ['class', 'style', 'href', 'aria-hidden', 'data-id'],
+    ALLOWED_ATTR: ['class', 'style', 'href', 'aria-hidden', 'data-id', 'd', 'viewBox', 'xmlns', 'width', 'height', 'fill', 'stroke', 'transform'],
   });
 }
