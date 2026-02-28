@@ -28,7 +28,7 @@ def init_firebase() -> None:
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not cred_path or not os.path.exists(cred_path):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        backend_dir = os.path.dirname(script_dir)
+        backenpd_dir = os.path.dirname(script_dir)
         for name in ("serviceAccountKey.json", "aibt-99bc6-firebase-adminsdk.json"):
             fallback = os.path.join(backend_dir, name)
             if os.path.exists(fallback):
