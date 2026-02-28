@@ -272,6 +272,14 @@ const App: React.FC = () => {
     return () => clearTimeout(t);
   }, [showLoginToast]);
 
+  // 로그인 성공 시 user 갱신되면 로그인 모달 강제 닫기 (콜백 타이밍 이슈 대비)
+  useEffect(() => {
+    if (user && showLoginModal) {
+      setShowLoginModal(false);
+      setLoginModalIntent(null);
+    }
+  }, [user, showLoginModal]);
+
   // /exam-list 진입 시 selectedCertId가 비어 있으면 첫 자격증으로 설정 (흰 화면 방지)
   useEffect(() => {
     if (route !== '/exam-list' || selectedCertId) return;
