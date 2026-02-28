@@ -10,6 +10,7 @@ import {
 } from '../services/adminQuestionService';
 import { getQuestionIndexFromCache, syncQuestionIndex, type QuestionIndexItem } from '../services/db/localCacheDB';
 import { CERTIFICATIONS } from '../constants';
+import { RichText } from '../components/RichText';
 import type { Question } from '../types';
 
 const PAGE_SIZE = 20;
@@ -445,13 +446,50 @@ function ViewModal({
         <div className="space-y-4 text-sm">
           <div>
             <p className="font-bold text-[#0034d3] mb-1">문제</p>
-            <p className="text-slate-900 whitespace-pre-wrap">{question.content}</p>
+            <div className="text-slate-900 leading-relaxed [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded">
+              <RichText content={question.content} as="div" />
+            </div>
           </div>
+          {question.tableData != null && (
+            <div>
+              <p className="font-bold text-[#0034d3] mb-1">표</p>
+              <div className="w-full overflow-x-auto [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2">
+                {typeof question.tableData === 'string' ? (
+                  <RichText content={question.tableData} as="div" />
+                ) : Array.isArray(question.tableData?.headers) && Array.isArray(question.tableData?.rows) ? (
+                  <table>
+                    <thead>
+                      <tr>
+                        {question.tableData.headers.map((h, i) => (
+                          <th key={i}><RichText content={h} as="span" /></th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {question.tableData.rows.map((row, ri) => (
+                        <tr key={ri}>
+                          {row.map((cell, ci) => (
+                            <td key={ci}><RichText content={cell} as="span" /></td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : null}
+              </div>
+            </div>
+          )}
+          {question.imageUrl && (
+            <div>
+              <p className="font-bold text-[#0034d3] mb-1">이미지</p>
+              <img src={question.imageUrl} alt="문제" className="max-w-full max-h-64 object-contain rounded-lg border border-slate-200" />
+            </div>
+          )}
           <div>
             <p className="font-bold text-[#0034d3] mb-1">보기</p>
             <ul className="list-decimal list-inside space-y-1 text-slate-800">
               {question.options?.map((o, i) => (
-                <li key={i}>{o}</li>
+                <li key={i}><RichText content={o} as="span" /></li>
               ))}
             </ul>
           </div>
@@ -462,7 +500,9 @@ function ViewModal({
           {question.explanation && (
             <div>
               <p className="font-bold text-[#0034d3] mb-1">해설</p>
-              <p className="text-slate-800 whitespace-pre-wrap">{question.explanation}</p>
+              <div className="text-slate-800 leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_td]:border [&_td]:border-slate-300 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded">
+                <RichText content={question.explanation} as="div" />
+              </div>
             </div>
           )}
           {question.wrongFeedback && Object.keys(question.wrongFeedback).length > 0 && (
@@ -470,7 +510,7 @@ function ViewModal({
               <p className="font-bold text-[#0034d3] mb-1">오답 피드백</p>
               <ul className="space-y-1 text-slate-800">
                 {Object.entries(question.wrongFeedback).map(([key, val]) => (
-                  <li key={key}><strong>{key}번:</strong> {val}</li>
+                  <li key={key}><strong>{key}번:</strong> <RichText content={val} as="span" /></li>
                 ))}
               </ul>
             </div>
