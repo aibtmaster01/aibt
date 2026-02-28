@@ -67,14 +67,10 @@ export interface MyPageProps {
   onStartWeaknessRetry?: (certId: string) => void;
   /** 과목 강화 학습 (전체 과목 50문항 큐레이션 후 퀴즈) */
   onStartSubjectStrengthTraining?: (certId: string) => void;
-  /** 과목 강화 학습 재선별 중 오버레이 표시 */
-  showSubjectStrengthPreparing?: boolean;
   /** 취약 유형 집중학습 (유형 1,2,3위 50문항) */
   onStartWeakTypeFocus?: (certId: string) => void;
-  showWeakTypePreparing?: boolean;
   /** 취약 개념 집중학습 (이해도 하위 2~10개 개념 50문항) */
   onStartWeakConceptFocus?: (certId: string) => void;
-  showWeakConceptPreparing?: boolean;
   /** 오답확인 클릭 시 해당 시험 결과 화면으로 이동 (examId로 결과 로드 후 결과 페이지로 이동) */
   onViewExamResult?: (examId: string) => void;
   onLogout?: () => void;
@@ -89,11 +85,8 @@ export const MyPage: React.FC<MyPageProps> = ({
   onUpdateUser,
   onStartWeaknessRetry,
   onStartSubjectStrengthTraining,
-  showSubjectStrengthPreparing,
   onStartWeakTypeFocus,
-  showWeakTypePreparing,
   onStartWeakConceptFocus,
-  showWeakConceptPreparing,
   onViewExamResult,
   onLogout,
 }) => {
@@ -396,20 +389,6 @@ export const MyPage: React.FC<MyPageProps> = ({
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 bg-[#edf1f5] relative">
-        {showSubjectStrengthPreparing && (
-          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#edf1f5]/95 backdrop-blur-sm">
-            <p className="text-[#1e56cd] font-bold text-lg mb-2">내가 취약한 과목 문제들을 재선별 중입니다...</p>
-            <p className="text-slate-600 text-sm">잠시만 기다려 주세요.</p>
-          </div>
-        )}
-        {(showWeakTypePreparing || showWeakConceptPreparing) && (
-          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#edf1f5]/95 backdrop-blur-sm">
-            <p className="text-[#1e56cd] font-bold text-lg mb-2">
-              {showWeakTypePreparing ? '내가 취약한 유형 문제를 재선별 중입니다...' : '내가 취약한 개념 문제를 재선별 중입니다...'}
-            </p>
-            <p className="text-slate-600 text-sm">잠시만 기다려 주세요.</p>
-          </div>
-        )}
         {daysLeft !== null && daysLeft < 0 && (
           <div className="mb-5">
             <PostExamBanner

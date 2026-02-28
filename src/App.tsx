@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor } from 'lucide-react';
+import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Loader2, Sparkles } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
 import { EmptyState } from './components/dashboard/empty-state';
@@ -20,7 +20,7 @@ import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
 import { ensureUserSubscription, setPaymentComplete } from './services/authService';
-import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
+import { getQuestionsForRound, checkExamAccess, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
 import { logClientError } from './services/errorLogService';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
@@ -89,6 +89,13 @@ const App: React.FC = () => {
     type: 'subject_strength' | 'weak_type' | 'weak_concept';
     certId: string;
   } | null>(null);
+  /** 집중학습 5초 딤+팝업 (맞춤형 모의고사와 동일 스타일) */
+  const [focusPreparingType, setFocusPreparingType] = useState<'subject_strength' | 'weak_type' | 'weak_concept' | null>(null);
+  const [focusPreparingPhase, setFocusPreparingPhase] = useState<'countdown' | 'ready'>('countdown');
+  const [focusPreparingCountdown, setFocusPreparingCountdown] = useState(5);
+  const [focusPreparingMode, setFocusPreparingMode] = useState<'study' | 'exam'>('study');
+  const [focusPreparingCertId, setFocusPreparingCertId] = useState<string | null>(null);
+  const [focusPreparingQuestions, setFocusPreparingQuestions] = useState<import('./types').Question[] | null>(null);
 
   /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
   useEffect(() => {
@@ -135,6 +142,93 @@ const App: React.FC = () => {
       .catch(() => { if (!cancelled) setNextRoundFetchedQuestions([]); });
     return () => { cancelled = true; };
   }, [showNextRoundPreparing, nextRoundInfo?.id, nextRoundInfo?.round, user, selectedCertId]);
+
+  /** 집중학습 5초 카운트다운 */
+  useEffect(() => {
+    if (!focusPreparingType || focusPreparingPhase !== 'countdown') return;
+    if (focusPreparingCountdown <= 0) {
+      setFocusPreparingPhase('ready');
+      return;
+    }
+    const t = setInterval(() => setFocusPreparingCountdown((c) => (c <= 0 ? 0 : c - 1)), 1000);
+    return () => clearInterval(t);
+  }, [focusPreparingType, focusPreparingPhase, focusPreparingCountdown]);
+
+  /** 집중학습: 오버레이 열리면 fetch 시작 */
+  useEffect(() => {
+    if (!focusPreparingType || !user?.id || !focusPreparingCertId) return;
+    const certId = focusPreparingCertId;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        if (focusPreparingType === 'subject_strength') {
+          const result = await fetchSubjectStrengthTraining50(user.id, certId);
+          if (cancelled) return;
+          if (result.insufficient || result.questions.length < 50) {
+            setFocusPreparingType(null);
+            setFocusPreparingCertId(null);
+            alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
+            return;
+          }
+          setFocusPreparingQuestions(result.questions);
+        } else if (focusPreparingType === 'weak_type') {
+          const result = await fetchWeakTypeFocus50(user.id, certId);
+          if (cancelled) return;
+          if (result.questions.length === 0) {
+            setFocusPreparingType(null);
+            setFocusPreparingCertId(null);
+            alert('선별된 문제가 없습니다. 모의고사를 1회 이상 응시한 뒤 이용해 주세요.');
+            return;
+          }
+          setFocusPreparingQuestions(result.questions);
+        } else {
+          const result = await fetchWeakConceptFocus50(user.id, certId);
+          if (cancelled) return;
+          if (result.insufficient || result.questions.length < 50) {
+            setFocusPreparingType(null);
+            setFocusPreparingCertId(null);
+            setShowInsufficientDataModal(true);
+            return;
+          }
+          setFocusPreparingQuestions(result.questions);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setFocusPreparingType(null);
+        setFocusPreparingCertId(null);
+        const label = focusPreparingType === 'subject_strength' ? '과목 강화' : focusPreparingType === 'weak_type' ? '취약 유형' : '취약 개념';
+        console.error(`[${label} 집중학습]`, e);
+        alert('문제를 불러오는 중 오류가 발생했습니다.');
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [focusPreparingType, focusPreparingCertId, user?.id]);
+
+  /** 집중학습: ready + 문제 로드 완료 시 퀴즈 이동 */
+  useEffect(() => {
+    if (!focusPreparingType || focusPreparingPhase !== 'ready' || !focusPreparingQuestions?.length) return;
+    const type = focusPreparingType;
+    const mode = focusPreparingMode;
+    const certId = focusPreparingCertId;
+    const questions = focusPreparingQuestions;
+    const t = setTimeout(() => {
+      setFocusPreparingType(null);
+      setFocusPreparingPhase('countdown');
+      setFocusPreparingCountdown(5);
+      setFocusPreparingCertId(null);
+      setFocusPreparingQuestions(null);
+      if (!certId) return;
+      setSelectedCertId(certId);
+      setQuizMode(mode);
+      setPreFetchedQuestions(questions);
+      if (type === 'subject_strength') setSelectedRoundId('__subject_strength__');
+      else if (type === 'weak_type') setSelectedRoundId('__weak_type_focus__');
+      else setSelectedRoundId('__weak_concept_focus__');
+      navigate('/quiz');
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [focusPreparingType, focusPreparingPhase, focusPreparingQuestions, focusPreparingMode, focusPreparingCertId]);
 
   // 앱 기동 시 index.json 로컬/서버 버전 비교 후 새 버전일 때만 다운로드 (BIGDATA)
   useEffect(() => {
@@ -306,8 +400,6 @@ const App: React.FC = () => {
     navigate('/quiz');
   };
 
-  /** 과목 강화 학습: 모드 선택 모달 → 5초 오버레이 → 50문항 큐레이션 후 퀴즈 */
-  const [showSubjectStrengthPreparing, setShowSubjectStrengthPreparing] = useState(false);
   const handleStartSubjectStrengthTraining = (certId: string) => {
     if (!user?.id) return;
     setPendingFocusTraining({ type: 'subject_strength', certId });
@@ -316,86 +408,27 @@ const App: React.FC = () => {
   /** 데이터 부족 시 규격화된 모달 (과목 강화 / 취약 유형 / 취약 개념) */
   const [showInsufficientDataModal, setShowInsufficientDataModal] = useState(false);
 
-  /** 취약 유형 집중학습: 모드 선택 모달 → 5초 오버레이 → 50문항, 부족 시 팝업 */
-  const [showWeakTypePreparing, setShowWeakTypePreparing] = useState(false);
   const handleStartWeakTypeFocus = (certId: string) => {
     if (!user?.id) return;
     setPendingFocusTraining({ type: 'weak_type', certId });
   };
 
-  /** 취약 개념 집중학습: 모드 선택 모달 → 5초 오버레이 → 50문항, 부족 시 팝업 */
-  const [showWeakConceptPreparing, setShowWeakConceptPreparing] = useState(false);
   const handleStartWeakConceptFocus = (certId: string) => {
     if (!user?.id) return;
     setPendingFocusTraining({ type: 'weak_concept', certId });
   };
 
-  /** 집중학습 모드 선택(학습/시험) 후 실제 fetch + 퀴즈 진입 */
-  const handleFocusModeSelect = async (mode: 'study' | 'exam') => {
+  /** 집중학습 모드 선택 후 5초 딤+팝업(맞춤형 모의고사와 동일) → fetch 완료 시 퀴즈 진입 */
+  const handleFocusModeSelect = (mode: 'study' | 'exam') => {
     const pending = pendingFocusTraining;
     if (!pending || !user?.id) return;
     setPendingFocusTraining(null);
-    const { type, certId } = pending;
-    const delayMs = 3000;
-    const setPreparing = (v: boolean) => {
-      if (type === 'subject_strength') setShowSubjectStrengthPreparing(v);
-      else if (type === 'weak_type') setShowWeakTypePreparing(v);
-      else setShowWeakConceptPreparing(v);
-    };
-    setPreparing(true);
-    try {
-      if (type === 'subject_strength') {
-        const [_, result] = await Promise.all([
-          new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchSubjectStrengthTraining50(user.id, certId),
-        ]);
-        setPreparing(false);
-        if (result.insufficient || result.questions.length < 50) {
-          alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
-          return;
-        }
-        setSelectedCertId(certId);
-        setSelectedRoundId('__subject_strength__');
-        setQuizMode(mode);
-        setPreFetchedQuestions(result.questions);
-        navigate('/quiz');
-      } else if (type === 'weak_type') {
-        const [_, result] = await Promise.all([
-          new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchWeakTypeFocus50(user.id, certId),
-        ]);
-        setPreparing(false);
-        if (result.questions.length === 0) {
-          alert('선별된 문제가 없습니다. 모의고사를 1회 이상 응시한 뒤 이용해 주세요.');
-          return;
-        }
-        setSelectedCertId(certId);
-        setSelectedRoundId('__weak_type_focus__');
-        setQuizMode(mode);
-        setPreFetchedQuestions(result.questions);
-        navigate('/quiz');
-      } else {
-        const [_, result] = await Promise.all([
-          new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchWeakConceptFocus50(user.id, certId),
-        ]);
-        setPreparing(false);
-        if (result.insufficient || result.questions.length < 50) {
-          setShowInsufficientDataModal(true);
-          return;
-        }
-        setSelectedCertId(certId);
-        setSelectedRoundId('__weak_concept_focus__');
-        setQuizMode(mode);
-        setPreFetchedQuestions(result.questions);
-        navigate('/quiz');
-      }
-    } catch (e) {
-      setPreparing(false);
-      const label = type === 'subject_strength' ? '과목 강화' : type === 'weak_type' ? '취약 유형' : '취약 개념';
-      console.error(`[${label} 집중학습]`, e);
-      alert('문제를 불러오는 중 오류가 발생했습니다.');
-    }
+    setFocusPreparingType(pending.type);
+    setFocusPreparingPhase('countdown');
+    setFocusPreparingCountdown(5);
+    setFocusPreparingMode(mode);
+    setFocusPreparingCertId(pending.certId);
+    setFocusPreparingQuestions(null);
   };
 
   const handleQuizFinish = (
@@ -573,11 +606,8 @@ const App: React.FC = () => {
                 navigate('/exam-list');
               }}
               onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
-              showSubjectStrengthPreparing={showSubjectStrengthPreparing}
               onStartWeakTypeFocus={handleStartWeakTypeFocus}
-              showWeakTypePreparing={showWeakTypePreparing}
               onStartWeakConceptFocus={handleStartWeakConceptFocus}
-              showWeakConceptPreparing={showWeakConceptPreparing}
               onViewExamResult={handleViewExamResult}
               onLogout={handleLogout}
             />
@@ -608,11 +638,8 @@ const App: React.FC = () => {
               navigate('/exam-list');
             }}
             onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
-            showSubjectStrengthPreparing={showSubjectStrengthPreparing}
             onStartWeakTypeFocus={handleStartWeakTypeFocus}
-            showWeakTypePreparing={showWeakTypePreparing}
             onStartWeakConceptFocus={handleStartWeakConceptFocus}
-            showWeakConceptPreparing={showWeakConceptPreparing}
             onViewExamResult={handleViewExamResult}
             onLogout={handleLogout}
           />
@@ -743,6 +770,17 @@ const App: React.FC = () => {
                 navigate('/exam-list');
                 return;
               }
+              const access = checkExamAccess({
+                user,
+                certId: selectedCertId,
+                round: nextRound.round,
+                isWeaknessRound: nextRound.round >= 6,
+                weaknessTrialUsed: user?.weaknessTrialUsedByCert?.[selectedCertId] ?? false,
+              });
+              if (!access.allowed) {
+                setShowNextRoundPaymentModal(true);
+                return;
+              }
               setNextRoundInfo({ id: nextRound.id, round: nextRound.round, type: nextRound.type ?? 'practice' });
               setShowNextRoundModeModal(true);
             }}
@@ -752,8 +790,17 @@ const App: React.FC = () => {
               else navigate('/'); 
             }}
             onContinueLearning={() => {
-              if (selectedCertId) navigate('/exam-list');
-              else navigate('/');
+              if (!selectedCertId) {
+                navigate('/');
+                return;
+              }
+              const currentRound = EXAM_ROUNDS.find((r) => r.id === selectedRoundId && r.certId === selectedCertId)?.round;
+              if (!isCurrentCertPremium && currentRound === 2) {
+                setShowNextRoundPaymentModal(true);
+                return;
+              }
+              setSelectedRoundId(null);
+              navigate('/exam-list');
             }}
             showCouponEffect={showCouponEffect}
           />
@@ -1105,6 +1152,52 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* 집중학습(과목/유형/개념) 5초 딤+팝업 — 맞춤형 모의고사와 동일 스타일 */}
+      {focusPreparingType && (() => {
+        const titles = {
+          subject_strength: { countdown: '과목 강화 학습 큐레이션 중', ready: '과목 강화 학습이 준비되었습니다' },
+          weak_type: { countdown: '취약 유형 집중 학습 큐레이션 중', ready: '취약 유형 집중 학습이 준비되었습니다' },
+          weak_concept: { countdown: '취약 개념 집중 학습 큐레이션 중', ready: '취약 개념 집중 학습이 준비되었습니다' },
+        };
+        const subMessages = {
+          subject_strength: '선택한 과목의 문항을 선별하고 있어요.',
+          weak_type: '내 취약 유형 문제를 선별하고 있어요.',
+          weak_concept: '내 취약 개념 문제를 선별하고 있어요.',
+        };
+        const t = titles[focusPreparingType];
+        const sub = subMessages[focusPreparingType];
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-4">
+            <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden">
+              <div className="px-8 py-10 text-center">
+                {focusPreparingPhase === 'countdown' ? (
+                  <>
+                    <div className="flex justify-center mb-6">
+                      <div className="w-16 h-16 rounded-2xl bg-[#1e56cd]/20 border border-[#99ccff]/30 flex items-center justify-center">
+                        <Loader2 className="w-8 h-8 text-[#99ccff] animate-spin" strokeWidth={2.5} />
+                      </div>
+                    </div>
+                    <h3 className="text-[#e2e8f0] font-bold text-lg tracking-tight mb-3">{t.countdown}</h3>
+                    <p className="text-slate-300 text-sm leading-relaxed mb-1">{sub}</p>
+                    <p className="text-[#99ccff] text-sm leading-relaxed font-medium mb-6">잠시만 기다려 주세요</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-center mb-5">
+                      <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center">
+                        <Sparkles className="w-8 h-8 text-emerald-300" strokeWidth={2} />
+                      </div>
+                    </div>
+                    <h3 className="text-white font-bold text-xl mb-1">{t.ready}</h3>
+                    <p className="text-slate-400 text-sm font-medium">곧 퀴즈 화면으로 이동합니다</p>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 결과 화면 "다시 풀기" → AI 학습 모드 / 실전 모드 선택 후 바로 퀴즈 시작 */}
       {showRetryModeModal && selectedRoundId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
@@ -1233,7 +1326,7 @@ const App: React.FC = () => {
                 setShowNextRoundPaymentModal(false);
                 if (selectedCertId) navigate('/checkout');
               }}
-              className="w-full py-3.5 rounded-xl bg-brand-500 text-slate-900 font-bold text-sm hover:bg-brand-400"
+              className="w-full py-3.5 rounded-xl bg-brand-500 text-white font-bold text-sm hover:bg-brand-400"
             >
               결제하러 가기
             </button>
