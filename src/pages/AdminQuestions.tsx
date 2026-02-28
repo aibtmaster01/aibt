@@ -446,8 +446,8 @@ function ViewModal({
         <div className="space-y-4 text-sm">
           <div>
             <p className="font-bold text-[#0034d3] mb-1">문제</p>
-            <div className="text-slate-900 leading-relaxed [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded">
-              <RichText content={question.content} as="div" />
+            <div className="text-slate-900 leading-relaxed [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded [&_.katex]:text-[inherit]">
+              <RichText key={`q-${question.id}`} content={question.content ?? ''} as="div" />
             </div>
           </div>
           {question.tableData != null && (
