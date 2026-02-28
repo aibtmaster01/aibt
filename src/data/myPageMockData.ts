@@ -23,7 +23,7 @@ export const mockTrendData: FetchUserTrendDataResult = {
   ] as TrendDataItem[],
 };
 
-/** 집중 공략 + 예측 합격률 과목별용 목업 (radarData, subjectScores, weaknessTop2) */
+/** 집중 공략 + 예측 합격률 과목별용 목업 (radarData, subjectScores, weaknessTop3) */
 export const mockDashboardStats: FetchDashboardStatsResult = {
   /** 무료 회원용: 5각형 들쭉날쭉 (5축 모두 유형명 표시) */
   radarData: [
@@ -40,10 +40,11 @@ export const mockDashboardStats: FetchDashboardStatsResult = {
     { subject: "3과목", subjectNumber: 3, score: 38, totalProblems: 20 },
     { subject: "4과목", subjectNumber: 4, score: 60, totalProblems: 20 },
   ] as SubjectScore[],
-  /** 무료 회원용: 취약 개념 표시용 (퍼센트는 화면에서 ? 로 표시) */
-  weaknessTop2: [
+  /** 무료 회원용: 취약 개념 표시용 (3개) */
+  weaknessTop3: [
     { name: "빅데이터 모델링", accuracy: 38, count: 12 },
     { name: "빅데이터 결과 해석", accuracy: 40, count: 11 },
+    { name: "데이터 수집", accuracy: 42, count: 10 },
   ] as WeaknessItem[],
 };
 

@@ -7,6 +7,8 @@ import {
   markWeaknessTrialUsed,
 } from '../services/examService';
 import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT } from '../constants';
+import { getCertificationInfo } from '../services/gradingService';
+import type { CertificationInfo } from '../types';
 import { saveGuestQuizProgress, loadGuestQuizProgress } from '../utils/guestQuizStorage';
 import { CheckCircle, XCircle, AlertTriangle, StickyNote, ChevronLeft, ChevronRight, ChevronDown, Crown, Lightbulb, AlertCircle, Search, RotateCcw, X, Pin, Menu, LogOut } from 'lucide-react';
 import { WRONG_FEEDBACK_PLACEHOLDER } from '../services/examService';
@@ -27,6 +29,8 @@ export interface QuizAnswerRecord {
   selected: number;
   isCorrect: boolean;
   isConfused: boolean;
+  /** 해당 문항 풀이에 걸린 시간(초). 스탯 업데이트 시 estimated_time의 절반 미만이면 찍은 것으로 간주 */
+  elapsedSec?: number;
 }
 
 /** 회차별 메모 (핀으로 찍은 문제 + 자유 메모) - 오답 화면에서도 노출 */
@@ -83,6 +87,7 @@ export const Quiz: React.FC<QuizProps> = ({
   const [enlargedImageSrc, setEnlargedImageSrc] = useState<string | null>(null);
   const [imageLoadError, setImageLoadError] = useState(false);
   const questionBodyRef = useRef<HTMLDivElement>(null);
+  const questionStartTimeRef = useRef<number>(Date.now());
 
   const roundInfo = EXAM_ROUNDS.find((r) => r.id === roundId);
   const round = roundInfo?.round ?? 1;
@@ -90,8 +95,26 @@ export const Quiz: React.FC<QuizProps> = ({
   const weaknessRetryMode = roundId === '__weakness_retry__' || roundId === '__subject_retry__';
   const isPremium = !!(user && certId && isPremiumUnlocked(user, certId));
 
+  const [certInfo, setCertInfo] = useState<CertificationInfo | null>(null);
+  useEffect(() => {
+    if (roundId !== '__weak_concept_focus__' || !certId) return;
+    const code = CERTIFICATIONS.find((c) => c.id === certId)?.code;
+    if (!code) return;
+    getCertificationInfo(code).then(setCertInfo).catch(() => setCertInfo(null));
+  }, [roundId, certId]);
+
+  const quizPageTitle =
+    roundId === '__subject_strength__'
+      ? '과목 강화 학습'
+      : roundId === '__weak_type_focus__'
+        ? '취약 유형 집중 학습'
+        : roundId === '__weak_concept_focus__'
+          ? '취약 개념 집중 학습'
+          : (roundInfo?.title ?? '연습 모의고사');
+
   useEffect(() => {
     setImageLoadError(false);
+    questionStartTimeRef.current = Date.now();
   }, [currentQIndex]);
 
   // 지문/보기 HTML 내 모든 이미지 위에 딤 + "이미지는 준비중입니다" 오버레이
@@ -227,9 +250,10 @@ export const Quiz: React.FC<QuizProps> = ({
     if (chosen === null && overrideSelected === undefined) return;
     const answer1Based = to1BasedAnswer(currentQ.answer, currentQ.options.length);
     const isCorrect = chosen === answer1Based;
+    const elapsedSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
     const nextHistory = [
       ...sessionHistory,
-      { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused },
+      { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused, elapsedSec },
     ];
     setSessionHistory(nextHistory);
 
@@ -266,7 +290,8 @@ export const Quiz: React.FC<QuizProps> = ({
       const finalCorrect = isCorrect
         ? sessionHistory.filter((a) => a.isCorrect).length + 1
         : sessionHistory.filter((a) => a.isCorrect).length;
-      const finalHistory = [...sessionHistory, { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused }];
+      const finalElapsed = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
+      const finalHistory = [...sessionHistory, { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused, elapsedSec: finalElapsed }];
       if (weaknessRetryMode) {
         onWeaknessRetrySave?.(finalCorrect, questions.length, finalHistory, questions);
         setShowWeaknessRetryEndModal(true);
@@ -395,18 +420,17 @@ export const Quiz: React.FC<QuizProps> = ({
             <button type="button" onClick={() => setLnbOpen(true)} className="p-2 -ml-2 text-slate-600 hover:text-slate-900 shrink-0" aria-label="문항 목록 열기">
               <Menu size={24} />
             </button>
-            <span className="ml-2 font-bold text-slate-800 truncate">{roundInfo?.title ?? '연습 모의고사'}</span>
+            <span className="ml-2 font-bold text-slate-800 truncate">{quizPageTitle}</span>
           </div>
           <button type="button" onClick={confirmExit} className="p-2 text-slate-600 hover:text-slate-900 shrink-0" aria-label="시험 종료">
             <LogOut className="w-5 h-5 rotate-180" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 flex justify-start pb-32 lg:pb-8">
-          <div className="flex w-full max-w-[90rem] relative">
-            {/* 1. 문제 영역 (80% - 유연하게 남은 공간 차지) */}
-            <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative min-w-0 z-10">
-           
+        <div className="flex-1 min-h-0 flex flex-col p-4 md:p-6 lg:p-8 overflow-hidden">
+          <div className="flex flex-1 min-h-0 w-full max-w-[90rem] relative">
+            {/* 1. 문제 카드: 상단 고정 높이 + 하단 보기 고정 */}
+            <div className="flex-1 min-h-0 bg-white rounded-3xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative min-w-0 z-10">
               <header className={`relative border-b border-gray-100 px-6 md:px-8 py-4 flex items-center justify-center shrink-0 ${mode === 'exam' ? 'bg-blue-50/30' : 'bg-[#99ccff]/50'}`}>
                 <div className="absolute left-6 md:left-8 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <button
@@ -423,7 +447,7 @@ export const Quiz: React.FC<QuizProps> = ({
                 </div>
                 <div className="flex flex-col items-center text-center">
                   <span className={`text-xs md:text-sm font-semibold ${mode === 'exam' ? 'text-blue-600' : 'text-[#0034d3]'}`}>
-                    {roundInfo?.title ?? '연습 모의고사'} | {modeLabel}
+                    {quizPageTitle} | {modeLabel}
                   </span>
                   <span className="text-sm md:text-base font-bold text-slate-800 mt-0.5">{subjectLabel}</span>
                 </div>
@@ -438,16 +462,43 @@ export const Quiz: React.FC<QuizProps> = ({
                 <div className={`h-full transition-all duration-300 ease-out ${mode === 'exam' ? 'bg-blue-600' : 'bg-[#0034d3]'}`} style={{ width: `${progress}%` }} />
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                {/* 상단 네비 | 좌측 액션(지문+선택지+버튼) | 우측 해설 - 학습 모드는 항상 좌/우 구분, 7:3 비율 */}
-                <div className={`p-6 md:p-8 flex flex-col ${mode === 'study' ? 'xl:flex-row xl:gap-8 xl:items-stretch xl:min-h-full' : ''} gap-8`}>
-                  {/* 좌측 액션 영역: 지문 + 선택지 + 버튼 (7) */}
-                  <div className={`min-w-0 flex flex-col ${mode === 'study' ? 'xl:flex-[7]' : ''} ${mode === 'exam' ? 'flex-1 max-w-4xl mx-auto w-full' : ''} gap-8`}>
-                    {/* 지문 영역: 텍스트 + 표/이미지(텍스트 아래 적당한 간격으로), 선택지와는 gap 유지 */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                {/* 좌측: 문제(고정높이) + 보기(하단고정) | 우측: 해설 */}
+                <div className={`flex-1 min-h-0 p-6 md:p-8 flex flex-col ${mode === 'study' ? 'xl:flex-row xl:gap-8 xl:items-stretch' : ''}`}>
+                  {/* 좌측: 지문(영역 내 스크롤) + 보기(영역 내 스크롤) + 버튼 고정. 전체 높이 고정으로 문제 영역 크기 유지 */}
+                  <div className={`min-w-0 flex-1 min-h-0 flex flex-col ${mode === 'study' ? 'xl:flex-[7]' : ''} ${mode === 'exam' ? 'max-w-4xl mx-auto w-full' : ''}`}>
+                    {/* 취약 유형/취약 개념 집중학습 시 지문 상단 태그 */}
+                    {(roundId === '__weak_type_focus__' || roundId === '__weak_concept_focus__') && (
+                      <div className="shrink-0 flex flex-wrap items-center gap-2 mb-3">
+                        {roundId === '__weak_type_focus__' && (
+                          (currentQ.problem_types?.length ? currentQ.problem_types : currentQ.tags ?? []).map((label, i) => (
+                            <span key={i} className="px-2.5 py-1 rounded-md text-xs font-medium bg-[#99ccff]/50 text-[#1e56cd] border border-[#99ccff]/70">
+                              {typeof label === 'string' ? label : String(label)}
+                            </span>
+                          ))
+                        )}
+                        {roundId === '__weak_concept_focus__' && (
+                          <>
+                            {currentQ.core_concept && (
+                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-[#1e56cd] text-white border border-[#0034d3]">
+                                {currentQ.core_concept}
+                              </span>
+                            )}
+                            {(certInfo?.core_concept_keywords?.[currentQ.core_concept ?? ''] ?? []).map((kw, i) => (
+                              <span key={i} className="px-2.5 py-1 rounded-md text-xs font-medium bg-[#99ccff]/50 text-[#1e56cd] border border-[#99ccff]/70">
+                                {kw}
+                              </span>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {/* 지문+테이블+이미지: 고정 높이, 초과 시 영역 내에서만 스크롤 */}
                     <div
                       ref={questionBodyRef}
                       className={
-                        'text-base text-gray-800 leading-relaxed break-keep w-full overflow-x-auto ' +
+                        'shrink-0 h-[40vh] overflow-y-auto overflow-x-auto pr-2 ' +
+                        'text-base text-gray-800 leading-relaxed break-keep w-full ' +
                         '[&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:my-4 [&_table]:text-sm ' +
                         '[&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-3 [&_th]:text-center [&_td]:border [&_td]:border-slate-300 [&_td]:p-3 ' +
                         '[&_pre]:bg-slate-800 [&_pre]:text-slate-50 [&_pre]:p-4 [&_pre]:rounded-xl [&_pre]:overflow-x-auto [&_pre]:text-sm [&_pre]:my-4 [&_pre]:font-mono ' +
@@ -514,7 +565,9 @@ export const Quiz: React.FC<QuizProps> = ({
                         </div>
                       )}
                     </div>
-                    {/* 선택지 영역 */}
+                    {/* 보기 영역: 남는 높이만 사용, 길면 영역 내 스크롤 */}
+                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
                     <div className="bg-slate-50/50 rounded-2xl p-5 border border-slate-100">
                       <div className="space-y-2.5">
                         {currentQ.options.map((opt, idx) => {
@@ -591,8 +644,9 @@ export const Quiz: React.FC<QuizProps> = ({
                         <span className="text-sm text-slate-500 font-medium">헷갈려요</span>
                       </label>
                     </div>
-                    {/* 버튼 영역 */}
-                    <div className="w-full">
+                    </div>
+                    {/* 버튼 영역: 고정 */}
+                    <div className="w-full shrink-0 pt-4">
                       {mode === 'exam' ? (
                         <button
                           type="button"
@@ -638,11 +692,12 @@ export const Quiz: React.FC<QuizProps> = ({
                         </div>
                       )}
                     </div>
+                    </div>
                   </div>
-                  {/* 우측: 해설 영역 (학습 모드 항상 표시, 7:3 비율 중 3) - 문제 영역 끝까지 늘림 */}
+                  {/* 우측: 정답·해설 영역 (학습 모드, 7:3 비율 중 3). 길면 영역 내 스크롤 */}
                   {mode === 'study' && (
-                    <div ref={explanationBoxRef} className="xl:flex-[3] xl:shrink-0 flex flex-col xl:min-h-0">
-                      <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm overflow-auto flex-1 min-h-0 flex flex-col">
+                    <div ref={explanationBoxRef} className="xl:flex-[3] xl:shrink-0 flex flex-col xl:min-h-0 min-h-0">
+                      <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm overflow-y-auto overflow-x-auto flex-1 min-h-0 flex flex-col">
                         {effectiveSubmitted ? (
                           <div className="animate-slide-up">
                             <div className="mb-2">

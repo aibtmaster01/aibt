@@ -1,49 +1,37 @@
 /**
  * aiRoundCurationService.ts
- * Round 4 이상 맞춤형 큐레이션 엔진
- * - Smart Recycling & Wide Pool: 전체 question_pools 사용
- * - Exclude: 이전에 맞춘 문제 영구 제외
- * - Zone A: 틀린 문제 (복습 우선), Zone B: 안 푼 문제 (도전)
- * - certification_info.subjects 기준 과목별 question_count 배분
+ * Round 4 이상 맞춤형 큐레이션 엔진 (index 기반)
+ * - Firestore 풀 쿼리 없음: localCacheDB의 index.json 배열 사용
+ * - 3 Zone: 약점(낮은 proficiency sub_core_id) / 강점(높은 proficiency) / 랜덤
+ * - 선발된 q_id 80개(또는 20개)만 Firestore getDoc 병렬 조회 후 반환
  */
 
-import {
-  collection,
-  collectionGroup,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  limit,
-} from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Question, User, type ExamAnswerEntry } from '../types';
-import { CERTIFICATIONS, EXAM_ROUNDS } from '../constants';
+import { Question, User } from '../types';
+import { CERTIFICATIONS } from '../constants';
 import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
 import { getCertificationInfo } from './gradingService';
+import { generateAdaptiveExamPlan, extractTopicUnit, type AiMockExamMode } from './examService';
 import {
-  generateAiMockExam,
-  generateAdaptiveExamPlan,
-  extractTopicUnit,
-  fetchQuestionsFromPools,
-  type AdaptiveExamPlan,
-  type AiMockExamMode,
-} from './examService';
-import {
-  getQuestionMetadataByCert,
-  hasQuestionMetadataForCert,
-  putQuestionMetadataBulk,
-  type QuestionMetadataRecord,
+  getQuestionIndexFromCache,
+  type QuestionIndexItem,
 } from './db/localCacheDB';
 
 const ROUND4_TOTAL = 20;
 const ROUND5_TOTAL = 80;
-const DEFAULT_ELO = 1200;
-const RANDOM_ID_MAX = 1_000_000;
 
-/** stats.hierarchy_stats / stats.tag_stats 항목 (Phase 2: stats 문서 사용) */
+/** 자격증별 question_pools 하위 풀 ID (getDoc 경로용) */
+const QUESTION_POOL_ID_BY_CERT: Record<string, string> = {
+  BIGDATA: 'contents_1681',
+};
+
+/** 3 Zone 비율: 약점 / 강점 / 랜덤 (합 1) */
+const ZONE_RATIO_WEAKNESS = 0.4;
+const ZONE_RATIO_STRENGTH = 0.3;
+const ZONE_RATIO_RANDOM = 0.3;
+
+/** stats.core_concept_stats / stats.tag_stats 항목 (Phase 2: stats 문서 사용) */
 interface StatEntryLike {
   proficiency?: number;
   correct?: number;
@@ -51,7 +39,7 @@ interface StatEntryLike {
   misconception_count?: number;
 }
 
-/** Firestore 문제 문서 규격 (examService와 동일하게 hierarchy/tags/trend 등 반영) */
+/** Firestore 문제 문서 규격 (getDoc으로 조회한 문서) */
 interface FirestoreQuestionDoc {
   q_id?: string;
   question_text?: string;
@@ -62,7 +50,7 @@ interface FirestoreQuestionDoc {
   wrong_feedback?: Record<string, string> | string[];
   image?: string;
   difficulty_level?: number;
-  hierarchy?: string;
+  core_concept?: string;
   topic?: string;
   random_id?: number;
   tags?: string[];
@@ -73,6 +61,7 @@ interface FirestoreQuestionDoc {
   subject_number?: number;
   round?: number;
   core_id?: string;
+  sub_core_id?: string;
   table_data?: string | { headers: string[]; rows: string[][] } | null;
 }
 
@@ -124,8 +113,8 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
   const aiExplanation = data.ai_explanation ?? '';
   const options = Array.isArray(data.options) ? data.options : [];
   const rawAnswer = typeof data.answer === 'number' ? data.answer : 1;
-  const hierarchy =
-    (typeof data.hierarchy === 'string' && data.hierarchy.trim()) ||
+  const coreConcept =
+    (typeof data.core_concept === 'string' && data.core_concept.trim()) ||
     extractTopicUnit(data.topic) ||
     undefined;
   return {
@@ -138,7 +127,7 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
     wrongFeedback: wrongFeedbackTo1Based(data.wrong_feedback),
     imageUrl: data.image,
     topic: data.topic,
-    hierarchy: hierarchy ?? undefined,
+    core_concept: coreConcept ?? undefined,
     tags: Array.isArray(data.tags) ? data.tags : [],
     trend: data.trend ?? null,
     estimated_time_sec: typeof data.estimated_time_sec === 'number' ? data.estimated_time_sec : 0,
@@ -146,6 +135,8 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
     problem_types: data.problem_types,
     subject_number: typeof data.subject_number === 'number' ? data.subject_number : undefined,
     difficulty_level: typeof data.difficulty_level === 'number' ? data.difficulty_level : undefined,
+    core_id: data.core_id,
+    sub_core_id: typeof data.sub_core_id === 'string' ? data.sub_core_id : undefined,
     round: typeof data.round === 'number' ? data.round : undefined,
     tableData: data.table_data ?? undefined,
   };
@@ -160,254 +151,293 @@ function shuffleArray<T>(arr: T[]): T[] {
   return out;
 }
 
-/** Elo → difficulty_level 범위 (1~5). Elo 1200 ±50 → 약 2~4 */
-function eloToDifficultyRange(elo: number): number[] {
-  const base = Math.round((elo - 1000) / 100);
-  const levels = new Set<number>();
-  for (let d = Math.max(1, base - 1); d <= Math.min(5, base + 1); d++) {
-    levels.add(d);
-  }
-  return levels.size > 0 ? Array.from(levels) : [2, 3, 4];
-}
+/** 취약 유형(problem_type) 상위 N개 — proficiency 낮은 순 (유형 큐레이션 시 우선 출제) */
+const WEAK_TYPE_TOP_N = 3;
 
 /**
- * 유저의 exam_results에서 맞춘 문제(Exclude)·틀린 문제(Zone A) ID 집합 반환
- * (answers 필드: ExamAnswerEntry[] - qid, isCorrect, isConfused)
+ * index 기반 3 Zone 선발: 약점(낮은 sub_core_id proficiency) / 강점(높은) / 랜덤
+ * + 취약 유형(problem_type_stats 낮은 순) 문항을 시험 앞쪽에 우선 배치
  */
-const EXAM_RESULTS_READ_LIMIT = 100;
-
-async function fetchUserExamResultAnswerSets(
+async function selectQuestionIdsBy3Zones(
+  certCode: string,
   uid: string,
-  certCode: string
-): Promise<{ correctIds: Set<string>; wrongIds: Set<string> }> {
-  const correctIds = new Set<string>();
-  const wrongIds = new Set<string>();
-  const examRef = collection(db, 'users', uid, 'exam_results');
-  const q = query(examRef, orderBy('submittedAt', 'desc'), limit(EXAM_RESULTS_READ_LIMIT));
-  const snap = await getDocs(q);
-  snap.docs.forEach((d) => {
-    const data = d.data();
-    if (data.certCode !== certCode) return;
-    const answers = (data.answers as ExamAnswerEntry[] | undefined) ?? [];
-    answers.forEach((a) => {
-      const qid = a?.qid ?? '';
-      if (!qid) return;
-      if (a.isCorrect) correctIds.add(qid);
-      else wrongIds.add(qid);
-    });
-  });
-  return { correctIds, wrongIds };
-}
+  totalCount: number,
+  mode?: AiMockExamMode
+): Promise<string[]> {
+  const items = await getQuestionIndexFromCache(certCode);
+  if (!items || items.length === 0) return [];
 
-/** 맞춘 문제별 가장 오래전 풀이 시각 (ms) - Fallback 정렬용 */
-async function fetchCorrectQuestionEarliestDates(
-  uid: string,
-  certCode: string
-): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  const examRef = collection(db, 'users', uid, 'exam_results');
-  const q = query(examRef, orderBy('submittedAt', 'desc'), limit(EXAM_RESULTS_READ_LIMIT));
-  const snap = await getDocs(q);
-  snap.docs.forEach((d) => {
-    const data = d.data();
-    if (data.certCode !== certCode) return;
-    const submittedAt = data.submittedAt as { toMillis?: () => number; _seconds?: number } | undefined;
-    const ts = typeof submittedAt?.toMillis === 'function'
-      ? submittedAt.toMillis()
-      : typeof submittedAt?._seconds === 'number'
-        ? submittedAt._seconds * 1000
-        : Date.now();
-    const answers = (data.answers as ExamAnswerEntry[] | undefined) ?? [];
-    answers.forEach((a) => {
-      if (!a?.isCorrect) return;
-      const qid = a.qid ?? '';
-      if (!qid) return;
-      const prev = map.get(qid);
-      if (prev == null || ts < prev) map.set(qid, ts);
-    });
-  });
-  return map;
-}
-
-/** Static 4·5회차 완료 여부 (고난이도 스케일링 판단용) */
-async function hasCompletedStatic45(uid: string, certId: string): Promise<boolean> {
-  const roundIds = EXAM_ROUNDS.filter((r) => r.certId === certId && (r.round === 4 || r.round === 5)).map((r) => r.id);
-  if (roundIds.length === 0) return false;
-  const examRef = collection(db, 'users', uid, 'exam_results');
-  const q = query(examRef, orderBy('submittedAt', 'desc'), limit(80));
-  const snap = await getDocs(q);
-  const cert = CERTIFICATIONS.find((c) => c.id === certId);
-  const certCode = cert?.code ?? null;
-  if (!certCode) return false;
-  for (const d of snap.docs) {
-    const data = d.data();
-    if (data.certCode !== certCode) continue;
-    const rid = data.roundId as string | undefined;
-    if (rid && roundIds.includes(rid)) return true;
-  }
-  return false;
-}
-
-/** 맞춤형 큐레이션 시 풀 문제 수 상한 (Read 비용·성능 제한) */
-const POOL_QUESTIONS_READ_LIMIT = 2000;
-
-/** 메타데이터 레코드 → 큐레이션용 Question 스텁 (본문/옵션 제외) */
-function metadataToQuestionStubs(records: QuestionMetadataRecord[]): Question[] {
-  return records.map((r) => ({
-    id: r.q_id,
-    content: '',
-    options: [],
-    answer: 1,
-    explanation: '',
-    tags: r.tags ?? [],
-    trend: r.trend ?? null,
-    estimated_time_sec: r.estimated_time_sec ?? 0,
-    trap_score: r.trap_score ?? 0,
-    problem_types: r.problem_types,
-    subject_number: r.subject_number,
-    hierarchy: r.hierarchy,
-    difficulty_level: r.difficulty_level,
-    round: r.round,
-  }));
-}
-
-/** Firestore 문서 → QuestionMetadataRecord */
-function firestoreDocToMetadata(certCode: string, docId: string, data: FirestoreQuestionDoc): QuestionMetadataRecord {
-  return {
-    id: `${certCode}_${data.q_id ?? docId}`,
-    certCode,
-    q_id: data.q_id ?? docId,
-    subject_number: data.subject_number,
-    hierarchy: data.hierarchy,
-    difficulty_level: data.difficulty_level,
-    tags: Array.isArray(data.tags) ? data.tags : [],
-    round: data.round,
-    trap_score: typeof data.trap_score === 'number' ? data.trap_score : 0,
-    trend: data.trend ?? null,
-    estimated_time_sec: typeof data.estimated_time_sec === 'number' ? data.estimated_time_sec : 0,
-    problem_types: data.problem_types,
-    core_id: data.core_id,
+  const stats = await fetchStatsForCert(uid, certCode);
+  const subCoreStats = stats.sub_core_id_stats ?? {};
+  const problemTypeStats = stats.problem_type_stats ?? {};
+  const getProficiency = (subCoreId: string) => {
+    const ent = subCoreStats[subCoreId];
+    return ent?.proficiency ?? 1200;
   };
-}
 
-/**
- * question_pools: IndexedDB 메타데이터 캐시 우선 → 없을 때만 Firestore 1회 조회 후 캐싱
- * 이후 큐레이션은 로컬에서 0.1초 내 처리
- */
-async function fetchAllPoolQuestions(certCode: string): Promise<Question[]> {
-  const fromCache = await hasQuestionMetadataForCert(certCode);
-  if (fromCache) {
-    const records = await getQuestionMetadataByCert(certCode);
-    return metadataToQuestionStubs(records);
-  }
-
-  const q = query(
-    collectionGroup(db, 'questions'),
-    where('cert_id', '==', certCode),
-    limit(POOL_QUESTIONS_READ_LIMIT)
+  const weakTypeSet = new Set<string>(
+    Object.entries(problemTypeStats)
+      .filter(([, v]) => (v.total ?? 0) > 0)
+      .sort((a, b) => (a[1].proficiency ?? 1200) - (b[1].proficiency ?? 1200))
+      .slice(0, WEAK_TYPE_TOP_N)
+      .map(([key]) => String(key).trim())
   );
-  const snap = await getDocs(q);
-  const metaRecords: QuestionMetadataRecord[] = [];
-  const list: Question[] = [];
-  snap.docs.forEach((d) => {
-    const data = d.data() as FirestoreQuestionDoc;
-    metaRecords.push(firestoreDocToMetadata(certCode, d.id, data));
-    list.push(mapPoolDocToQuestion(d.id, data));
-  });
-  if (metaRecords.length > 0) {
-    putQuestionMetadataBulk(metaRecords).catch(() => {});
+  const isWeakType = (it: QuestionIndexItem) => {
+    const pt = it.metadata?.problem_type;
+    return typeof pt === 'string' && pt.trim() && weakTypeSet.has(pt.trim());
+  };
+
+  const weakness: QuestionIndexItem[] = [];
+  const strength: QuestionIndexItem[] = [];
+  const random: QuestionIndexItem[] = [];
+  for (const it of items) {
+    const subId = it.metadata?.sub_core_id ?? '';
+    const prof = subId ? getProficiency(subId) : 1200;
+    if (subId && prof < 1150) weakness.push(it);
+    else if (subId && prof >= 1250) strength.push(it);
+    else random.push(it);
   }
-  return list;
+
+  let nWeak = Math.round(totalCount * ZONE_RATIO_WEAKNESS);
+  let nStrong = Math.round(totalCount * ZONE_RATIO_STRENGTH);
+  let nRand = totalCount - nWeak - nStrong;
+  if (mode === 'WEAKNESS_ATTACK') {
+    nWeak = Math.min(totalCount, Math.round(totalCount * 0.5));
+    nStrong = Math.round(totalCount * 0.2);
+    nRand = totalCount - nWeak - nStrong;
+  }
+
+  const pick = (arr: QuestionIndexItem[], n: number, preferWeakType = false): string[] => {
+    let list = [...arr];
+    if (preferWeakType && weakTypeSet.size > 0) {
+      list.sort((a, b) => (isWeakType(b) ? 1 : 0) - (isWeakType(a) ? 1 : 0));
+    }
+    const sh = shuffleArray(list);
+    return sh.slice(0, n).map((x) => x.q_id);
+  };
+  const seen = new Set<string>();
+  const add = (ids: string[]): string[] => {
+    const out: string[] = [];
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  };
+
+  const w = add(pick(weakness, nWeak, true));
+  const s = add(pick(strength, nStrong, true));
+  const r = add(pick(random, nRand, true));
+  let combined = [...w, ...s, ...r];
+  if (combined.length < totalCount) {
+    const rest = items.filter((it) => !seen.has(it.q_id));
+    const extra = add(shuffleArray(rest).slice(0, totalCount - combined.length).map((x) => x.q_id));
+    combined = [...combined, ...extra];
+  }
+  combined = combined.slice(0, totalCount);
+
+  if (weakTypeSet.size > 0) {
+    const qidToItem = new Map(items.map((it) => [it.q_id, it]));
+    const weakTypeIds = new Set(
+      combined.filter((id) => {
+        const it = qidToItem.get(id);
+        return it ? isWeakType(it) : false;
+      })
+    );
+    const weakFirst = combined.filter((id) => weakTypeIds.has(id));
+    const rest = combined.filter((id) => !weakTypeIds.has(id));
+    return [...weakFirst, ...rest];
+  }
+  return combined;
+}
+
+/** index 항목의 과목 번호 (metadata.subject 또는 subject_number, 없으면 1) */
+function getSubjectFromItem(it: QuestionIndexItem): number {
+  const s = it.metadata?.subject ?? (it.metadata?.subject_number as number | undefined);
+  return typeof s === 'number' && s >= 1 ? s : 1;
 }
 
 /**
- * Round 4+ 맞춤형 시험 생성: Zone 기반 적응형 문항 배분
- * 1. Zone A (복습): 과거에 틀렸던 문제
- * 2. Zone B (도전): 한 번도 풀지 않은 신규 문제 (round 99 또는 round 1~5)
- * 3. Fallback: Zone A·B 부족 시 맞춘 문제 중 가장 오래전에 푼 문제 또는 trap_score 높은 순
- * - 과목별 question_count 엄격 유지, 고난이도 스케일링(Static 4·5 완료 시 Zone B에 difficulty_level 높은 문제 우선)
+ * 과목별 20개씩, 1→2→3→4 순서로 선발 (약점공략 모의고사 큐레이션용).
+ * 각 과목 내부는 동일 3 Zone(약점/강점/랜덤) 비율 + 취약 유형 우선.
+ */
+async function selectQuestionIdsBy3ZonesPerSubject(
+  certCode: string,
+  uid: string,
+  subjectQuotas: { subjectNumber: number; count: number }[],
+  mode?: AiMockExamMode
+): Promise<string[]> {
+  const items = await getQuestionIndexFromCache(certCode);
+  if (!items || items.length === 0) return [];
+
+  const stats = await fetchStatsForCert(uid, certCode);
+  const subCoreStats = stats.sub_core_id_stats ?? {};
+  const problemTypeStats = stats.problem_type_stats ?? {};
+  const getProficiency = (subCoreId: string) => {
+    const ent = subCoreStats[subCoreId];
+    return ent?.proficiency ?? 1200;
+  };
+  const weakTypeSet = new Set<string>(
+    Object.entries(problemTypeStats)
+      .filter(([, v]) => (v.total ?? 0) > 0)
+      .sort((a, b) => (a[1].proficiency ?? 1200) - (b[1].proficiency ?? 1200))
+      .slice(0, WEAK_TYPE_TOP_N)
+      .map(([key]) => String(key).trim())
+  );
+  const isWeakType = (it: QuestionIndexItem) => {
+    const pt = it.metadata?.problem_type;
+    return typeof pt === 'string' && pt.trim() && weakTypeSet.has(pt.trim());
+  };
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const { subjectNumber, count } of subjectQuotas) {
+    const subItems = items.filter((it) => getSubjectFromItem(it) === subjectNumber);
+    if (subItems.length === 0) continue;
+
+    const weakness: QuestionIndexItem[] = [];
+    const strength: QuestionIndexItem[] = [];
+    const random: QuestionIndexItem[] = [];
+    for (const it of subItems) {
+      if (seen.has(it.q_id)) continue;
+      const subId = it.metadata?.sub_core_id ?? '';
+      const prof = subId ? getProficiency(subId) : 1200;
+      if (subId && prof < 1150) weakness.push(it);
+      else if (subId && prof >= 1250) strength.push(it);
+      else random.push(it);
+    }
+
+    let nWeak = Math.round(count * (mode === 'WEAKNESS_ATTACK' ? 0.5 : ZONE_RATIO_WEAKNESS));
+    let nStrong = Math.round(count * (mode === 'WEAKNESS_ATTACK' ? 0.2 : ZONE_RATIO_STRENGTH));
+    let nRand = count - nWeak - nStrong;
+    if (nRand < 0) nRand = 0;
+
+    const pick = (arr: QuestionIndexItem[], n: number, preferWeakType = false): string[] => {
+      let list = arr.filter((it) => !seen.has(it.q_id));
+      if (preferWeakType && weakTypeSet.size > 0) {
+        list.sort((a, b) => (isWeakType(b) ? 1 : 0) - (isWeakType(a) ? 1 : 0));
+      }
+      const sh = shuffleArray(list);
+      return sh.slice(0, n).map((x) => x.q_id);
+    };
+    const add = (ids: string[]): string[] => {
+      const out: string[] = [];
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+      }
+      return out;
+    };
+
+    const w = add(pick(weakness, nWeak, true));
+    const s = add(pick(strength, nStrong, true));
+    const r = add(pick(random, nRand, true));
+    let combined = [...w, ...s, ...r];
+    if (combined.length < count) {
+      const rest = subItems.filter((it) => !seen.has(it.q_id));
+      const extra = add(shuffleArray(rest).slice(0, count - combined.length).map((x) => x.q_id));
+      combined = [...combined, ...extra];
+    }
+    result.push(...combined.slice(0, count));
+  }
+
+  if (weakTypeSet.size > 0) {
+    const qidToItem = new Map(items.map((it) => [it.q_id, it]));
+    const reordered: string[] = [];
+    for (const { subjectNumber, count } of subjectQuotas) {
+      const start = reordered.length;
+      const segment = result.slice(start, start + count);
+      const weakFirst = segment.filter((id) => {
+        const it = qidToItem.get(id);
+        return it ? isWeakType(it) : false;
+      });
+      const rest = segment.filter((id) => {
+        const it = qidToItem.get(id);
+        return !it || !isWeakType(it);
+      });
+      reordered.push(...weakFirst, ...rest);
+    }
+    return reordered.length ? reordered : result;
+  }
+  return result;
+}
+
+/**
+ * 선발된 q_id에 대해 question_pools/{poolId}/questions/{q_id} getDoc 병렬 조회
+ */
+async function fetchQuestionsByIdsWithGetDoc(certCode: string, qIds: string[]): Promise<Question[]> {
+  if (qIds.length === 0) return [];
+  const poolId = QUESTION_POOL_ID_BY_CERT[certCode];
+  if (!poolId) return [];
+
+  const promises = qIds.map((qId) => {
+    const ref = doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId);
+    return getDoc(ref);
+  });
+  const snaps = await Promise.all(promises);
+  const orderMap = new Map<string, Question>();
+  snaps.forEach((snap, i) => {
+    const qId = qIds[i];
+    if (snap.exists()) {
+      const data = snap.data() as FirestoreQuestionDoc;
+      orderMap.set(qId, mapPoolDocToQuestion(qId, data));
+    }
+  });
+  return qIds.map((id) => orderMap.get(id)).filter((q): q is Question => !!q);
+}
+
+/**
+ * index 기반 3 Zone 선발 후 getDoc 병렬로 본문 로드 (Round 4: 20, Round 5: 80)
+ * 80문항(약점공략) 시 과목별 20개씩 1→2→3→4 순서로 선발.
+ */
+export async function generateIndexBasedExam(
+  uid: string,
+  certCode: string,
+  totalCount: number,
+  mode?: AiMockExamMode
+): Promise<Question[]> {
+  let ids: string[];
+  if (totalCount === ROUND5_TOTAL) {
+    const certInfo = await getCertificationInfo(certCode);
+    const subjects = certInfo?.subjects ?? [];
+    const fourSubjects20 =
+      subjects.length === 4 &&
+      subjects.every((s) => (s.question_count ?? 0) >= 20) &&
+      subjects.reduce((sum, s) => sum + (s.question_count ?? 0), 0) >= 80;
+    if (fourSubjects20) {
+      const subjectQuotas = subjects
+        .slice(0, 4)
+        .sort((a, b) => (a.subject_number ?? 1) - (b.subject_number ?? 1))
+        .map((s) => ({ subjectNumber: s.subject_number ?? 1, count: 20 }));
+      ids = await selectQuestionIdsBy3ZonesPerSubject(certCode, uid, subjectQuotas, mode);
+    } else {
+      ids = await selectQuestionIdsBy3Zones(certCode, uid, totalCount, mode);
+    }
+  } else {
+    ids = await selectQuestionIdsBy3Zones(certCode, uid, totalCount, mode);
+  }
+  if (ids.length === 0) return [];
+  return fetchQuestionsByIdsWithGetDoc(certCode, ids);
+}
+
+/**
+ * Round 4+ 맞춤형 시험 생성: index 기반 3 Zone (약점/강점/랜덤) 비율 선발 후 getDoc 병렬 조회
  */
 export async function generateAdaptiveExam(
   uid: string,
   certCode: string,
-  certId: string,
-  targetExamDate: string | null,
+  _certId: string,
+  _targetExamDate: string | null,
   questionCount: number = ROUND4_TOTAL
 ): Promise<Question[]> {
   const certInfo = await getCertificationInfo(certCode);
   const totalTarget = certInfo?.subjects?.length
     ? certInfo.subjects.reduce((s, subj) => s + subj.question_count, 0)
     : questionCount;
-
-  const [answerSets, allPool, earliestDates, useHighDifficulty] = await Promise.all([
-    fetchUserExamResultAnswerSets(uid, certCode),
-    fetchAllPoolQuestions(certCode),
-    fetchCorrectQuestionEarliestDates(uid, certCode),
-    hasCompletedStatic45(uid, certId),
-  ]);
-  const { correctIds, wrongIds } = answerSets;
-
-  /** Zone B: round 99 또는 1~5인 신규(안 푼) 문제만 */
-  const isZoneBPool = (q: Question) => {
-    const r = q.round;
-    if (r == null) return true;
-    return r === 99 || (r >= 1 && r <= 5);
-  };
-
-  const bySubject = new Map<number, { zoneA: Question[]; zoneB: Question[]; fallback: Question[] }>();
-  for (const q of allPool) {
-    const subj = q.subject_number ?? 1;
-    if (!bySubject.has(subj)) bySubject.set(subj, { zoneA: [], zoneB: [], fallback: [] });
-    const bag = bySubject.get(subj)!;
-    if (wrongIds.has(q.id)) bag.zoneA.push(q);
-    else if (!correctIds.has(q.id) && isZoneBPool(q)) bag.zoneB.push(q);
-    else if (correctIds.has(q.id)) bag.fallback.push(q);
-  }
-
-  /** Fallback 정렬: 가장 오래전에 푼 문제 우선, 동일 시 trap_score 높은 순 */
-  for (const bag of bySubject.values()) {
-    bag.fallback.sort((a, b) => {
-      const ta = earliestDates.get(a.id) ?? Infinity;
-      const tb = earliestDates.get(b.id) ?? Infinity;
-      if (ta !== tb) return ta - tb;
-      return (b.trap_score ?? 0) - (a.trap_score ?? 0);
-    });
-  }
-
-  const picked: Question[] = [];
-  const subjectCounts = certInfo?.subjects ?? [{ subject_number: 1, name: '전체', question_count: totalTarget }];
-  const seen = new Set<string>();
-  const add = (q: Question) => {
-    if (seen.has(q.id)) return false;
-    seen.add(q.id);
-    picked.push(q);
-    return true;
-  };
-
-  for (const subjConfig of subjectCounts) {
-    const num = subjConfig.subject_number;
-    const need = subjConfig.question_count;
-    const bag = bySubject.get(num) ?? { zoneA: [], zoneB: [], fallback: [] };
-    const zoneA = shuffleArray([...bag.zoneA]);
-    let zoneB = shuffleArray([...bag.zoneB]);
-    if (useHighDifficulty) {
-      zoneB.sort((a, b) => (b.difficulty_level ?? 0) - (a.difficulty_level ?? 0));
-    }
-    const fallback = [...bag.fallback];
-    let n = 0;
-    for (const q of zoneA) { if (n >= need) break; if (add(q)) n++; }
-    for (const q of zoneB) { if (n >= need) break; if (add(q)) n++; }
-    for (const q of fallback) { if (n >= need) break; if (add(q)) n++; }
-  }
-
-  const pickedSlice = picked.slice(0, totalTarget);
-  const isStubs = pickedSlice.length > 0 && (!pickedSlice[0].content || pickedSlice[0].options.length === 0);
-  if (isStubs && pickedSlice.length > 0) {
-    const full = await fetchQuestionsFromPools(certCode, pickedSlice.map((q) => q.id));
-    const orderMap = new Map(full.map((q) => [q.id, q]));
-    return pickedSlice.map((q) => orderMap.get(q.id)).filter((q): q is Question => !!q);
-  }
-  return pickedSlice;
+  return generateIndexBasedExam(uid, certCode, totalTarget);
 }
 
 /**
@@ -427,18 +457,20 @@ export async function fetchAdaptiveQuestions(
   const targetExamDate = getTargetExamDate(user, certId);
 
   if (round >= 5) {
-    return generateAiMockExam(uid, certCode, targetExamDate, curationMode);
+    return generateIndexBasedExam(uid, certCode, ROUND5_TOTAL, curationMode);
   }
 
   return generateAdaptiveExam(uid, certCode, certId, targetExamDate, ROUND4_TOTAL);
 }
 
 /**
- * users/{uid}/stats/{certCode} 조회 (hierarchy_stats, tag_stats)
+ * users/{uid}/stats/{certCode} 조회 (core_concept_stats, tag_stats, problem_type_stats)
  */
 async function fetchStatsForCert(uid: string, certCode: string): Promise<{
-  hierarchy_stats?: Record<string, StatEntryLike>;
+  core_concept_stats?: Record<string, StatEntryLike>;
+  sub_core_id_stats?: Record<string, StatEntryLike>;
   tag_stats?: Record<string, StatEntryLike>;
+  problem_type_stats?: Record<string, StatEntryLike>;
   confused_qids?: string[];
 }> {
   const ref = doc(db, 'users', uid, 'stats', certCode);
@@ -463,7 +495,7 @@ export async function getTopWeakTags(uid: string, certId: string, limit: number 
 }
 
 /**
- * 오버레이 메시지용 분석 컨텍스트 생성 (Phase 2: stats.hierarchy_stats 기반)
+ * 오버레이 메시지용 분석 컨텍스트 생성 (Phase 2: stats.core_concept_stats 기반)
  */
 export async function getAnalysisContext(
   uid: string,
@@ -489,20 +521,20 @@ export async function getAnalysisContext(
 
   const plan = await generateAdaptiveExamPlan(uid, certCode, targetExamDate);
   const mode = plan.mode as AiExamMode;
-  const top1Unit = plan.plan[0]?.hierarchy ?? null;
+  const top1Unit = plan.plan[0]?.core_concept ?? null;
 
   const statsData = await fetchStatsForCert(uid, certCode);
-  const hierarchyStats = statsData.hierarchy_stats ?? {};
-  const hasData = Object.keys(hierarchyStats).length > 0;
+  const conceptStats = statsData.core_concept_stats ?? (statsData as { hierarchy_stats?: Record<string, StatEntryLike> }).hierarchy_stats ?? {};
+  const hasData = Object.keys(conceptStats).length > 0;
 
   let avgProficiency = 0;
   let top1Proficiency: number | undefined;
   let top1Misconception: number | undefined;
   if (hasData) {
-    const probs = Object.values(hierarchyStats).map((s) => s.proficiency ?? 0).filter((p) => p > 0);
+    const probs = Object.values(conceptStats).map((s) => s.proficiency ?? 0).filter((p) => p > 0);
     avgProficiency = probs.length > 0 ? probs.reduce((a, b) => a + b, 0) / probs.length : 0;
     if (top1Unit) {
-      const topStat = hierarchyStats[top1Unit];
+      const topStat = conceptStats[top1Unit];
       top1Proficiency = topStat?.proficiency;
       top1Misconception = topStat?.misconception_count;
     }

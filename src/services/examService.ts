@@ -37,8 +37,12 @@ import {
   hasQuestionMetadataForCert,
   getQuestionMetadataByCert,
   putQuestionMetadataBulk,
+  getQuestionIndexFromCache,
+  syncQuestionIndex,
   type QuestionMetadataRecord,
+  type QuestionIndexItem,
 } from './db/localCacheDB';
+import { getCertificationInfo } from './gradingService';
 
 const IN_QUERY_LIMIT = 30; // Firestore 'in' 쿼리 최대 30개 (대량 로딩 병렬화)
 
@@ -46,7 +50,7 @@ const IN_QUERY_LIMIT = 30; // Firestore 'in' 쿼리 최대 30개 (대량 로딩 
 interface QuestionRef {
   q_id: string;
   difficulty?: number;
-  hierarchy?: string;
+  core_concept?: string;
 }
 
 interface StaticExamDoc {
@@ -58,7 +62,7 @@ interface StaticExamDoc {
   timeLimit?: number;
 }
 
-/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, hierarchy/topic 등) */
+/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등) */
 interface FirestoreQuestionDoc {
   q_id?: string;
   question_text?: string;
@@ -69,8 +73,8 @@ interface FirestoreQuestionDoc {
   wrong_feedback?: Record<string, string> | string[];
   image?: string;
   difficulty_level?: number;
-  /** 통계/큐레이션 1단계 분류 (우선 참조) */
-  hierarchy?: string;
+  /** 통계/큐레이션 1단계 분류: 핵심 개념 (우선 참조) */
+  core_concept?: string;
   /** 전체 경로 3단계 - 표시/하위 호환용 */
   topic?: string;
   random_id?: number;
@@ -81,6 +85,8 @@ interface FirestoreQuestionDoc {
   problem_types?: string[];
   subject_number?: number;
   core_id?: string;
+  /** 세부 개념 ID (예: "22-2") - proficiency·대시보드 집계용 */
+  sub_core_id?: string;
   round?: number;
   /** 문제 본문 표 (HTML 또는 { headers, rows }) */
   table_data?: string | { headers: string[]; rows: string[][] } | null;
@@ -90,24 +96,28 @@ interface FirestoreQuestionDoc {
 
 export type ExamAccessResult = { allowed: boolean; reason?: string };
 
-/** hierarchy별 stat (stats.hierarchy_stats 항목 또는 약점 계획용) */
+/** core_concept별 stat (stats.core_concept_stats 항목 또는 약점 계획용) */
 interface UserWeaknessStat {
   proficiency?: number;
   misconception_count?: number;
   last_attempted_at?: { toDate: () => Date };
 }
 
-/** users/{uid}/stats/{certCode} 문서 - hierarchy_stats, tag_stats, confused_qids 등 */
+/** users/{uid}/stats/{certCode} 문서 - core_concept_stats, tag_stats, subject_stats 등 (채점 시 갱신) */
 interface UserStatsForCert {
-  hierarchy_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number }>;
+  core_concept_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number }>;
   tag_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number }>;
+  /** 과목별 이해도(Elo)·정답수 등 - 채점 시 subject_number 키로 갱신 */
+  subject_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number }>;
   confused_qids?: string[];
   problem_type_stats?: Record<string, unknown>;
+  /** 세부 개념별 통계 (취약 개념 분석 상위 3개와 동일 소스) */
+  sub_core_id_stats?: Record<string, { total?: number; proficiency?: number }>;
 }
 
-/** AI 모의고사 계획 - hierarchy별 출제 조건 */
+/** AI 모의고사 계획 - core_concept별 출제 조건 */
 export interface WeaknessPlanItem {
-  hierarchy: string;
+  core_concept: string;
   difficultyLevels: number[];
   count: number;
 }
@@ -159,7 +169,7 @@ export function extractTopicUnit(topic: string | undefined): string | null {
 }
 
 /**
- * users/{uid}/stats/{certCode}에서 hierarchy_stats 기반 약점 스탯 Fetch
+ * users/{uid}/stats/{certCode}에서 core_concept_stats 기반 약점 스탯 Fetch (구 hierarchy_stats 폴백)
  */
 async function fetchUserWeaknessStats(
   uid: string,
@@ -169,13 +179,14 @@ async function fetchUserWeaknessStats(
   const snap = await getDoc(ref);
   if (!snap.exists()) return {};
   const data = snap.data() as UserStatsForCert;
-  const hierarchyStats = data.hierarchy_stats ?? {};
+  const conceptStats = data.core_concept_stats ?? (data as { hierarchy_stats?: Record<string, unknown> }).hierarchy_stats ?? {};
   const out: Record<string, UserWeaknessStat> = {};
-  for (const [key, entry] of Object.entries(hierarchyStats)) {
+  for (const [key, entry] of Object.entries(conceptStats)) {
     if (!key) continue;
+    const e = entry as { proficiency?: number; misconception_count?: number };
     out[key] = {
-      proficiency: entry.proficiency,
-      misconception_count: entry.misconception_count,
+      proficiency: e.proficiency,
+      misconception_count: e.misconception_count,
     };
   }
   return out;
@@ -206,8 +217,8 @@ export async function generateAdaptiveExamPlan(
   const userStats = await fetchUserWeaknessStats(uid, certCode);
 
   const rankedTopics = Object.entries(userStats)
-    .map(([hierarchy, stat]) => ({
-      hierarchy,
+    .map(([core_concept, stat]) => ({
+      core_concept,
       proficiency: stat.proficiency ?? 0,
       priorityScore: calculatePriority(stat),
     }))
@@ -217,7 +228,7 @@ export async function generateAdaptiveExamPlan(
   const weaknessPlan: WeaknessPlanItem[] = rankedTopics.map((topic) => {
     const targetDifficulty = topic.proficiency < 50 ? [1, 2] : [3, 4, 5];
     return {
-      hierarchy: topic.hierarchy,
+      core_concept: topic.core_concept,
       difficultyLevels: targetDifficulty,
       count: Math.floor(weaknessQCount / 3),
     };
@@ -243,15 +254,15 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 /**
  * Firestore 문제 문서 → Question 변환 (실제 필드 규격 반영)
- * - 모든 큐레이션/통계 기준: hierarchy 우선, 없을 때만 topic에서 단원 추출
+ * - 모든 큐레이션/통계 기준: core_concept 우선, 없을 때만 topic에서 단원 추출
  */
 function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Question {
   const baseExplanation = data.explanation ?? '';
   const aiExplanation = data.ai_explanation ?? '';
   const options = Array.isArray(data.options) ? data.options : [];
   const rawAnswer = typeof data.answer === 'number' ? data.answer : 1;
-  const hierarchy =
-    (typeof data.hierarchy === 'string' && data.hierarchy.trim()) ||
+  const coreConcept =
+    (typeof data.core_concept === 'string' && data.core_concept.trim()) ||
     extractTopicUnit(data.topic) ||
     undefined;
   return {
@@ -264,7 +275,7 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
     wrongFeedback: wrongFeedbackTo1Based(data.wrong_feedback),
     imageUrl: data.image,
     topic: data.topic,
-    hierarchy: hierarchy ?? undefined,
+    core_concept: coreConcept ?? undefined,
     tags: Array.isArray(data.tags) ? data.tags : [],
     trend: data.trend ?? null,
     estimated_time_sec:
@@ -274,25 +285,49 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
     subject_number: typeof data.subject_number === 'number' ? data.subject_number : undefined,
     difficulty_level: typeof data.difficulty_level === 'number' ? data.difficulty_level : undefined,
     core_id: typeof data.core_id === 'string' ? data.core_id : undefined,
+    sub_core_id: typeof data.sub_core_id === 'string' ? data.sub_core_id : undefined,
     round: typeof data.round === 'number' ? data.round : undefined,
     tableData: data.table_data ?? undefined,
   };
 }
 
 /**
- * 계획(plan) 기반 question_pools에서 약점 문제 Fetch
- * - 분류는 hierarchy 기준 (풀 문서 ID = hierarchy). topic은 fallback용.
- * - 정규화(normalizeUnitKey)로 공백·대소문자 차이 매칭
+ * 계획(plan) 기반 약점 문제 Fetch
+ * - allPool 있으면: 풀에서 core_concept·난이도로 필터 (단일 풀 구조 대응)
+ * - 없으면: question_pools/{core_concept}/questions 쿼리 또는 collectionGroup topic 폴백
  */
 async function fetchWeaknessQuestions(
   certCode: string,
   plan: WeaknessPlanItem[],
-  normToDocId: Map<string, string>
+  normToDocId: Map<string, string>,
+  allPool?: Question[]
 ): Promise<Question[]> {
+  if (allPool && allPool.length > 0) {
+    const results: Question[] = [];
+    const used = new Set<string>();
+    for (const item of plan) {
+      if (item.count <= 0) continue;
+      const itemNorm = normalizeUnitKey(item.core_concept);
+      const bag = shuffleArray(
+        allPool.filter(
+          (q) =>
+            !used.has(q.id) &&
+            normalizeUnitKey((q.core_concept ?? '').trim() || '기타') === itemNorm &&
+            item.difficultyLevels.includes(q.difficulty_level ?? 0)
+        )
+      );
+      for (let i = 0; i < Math.min(item.count, bag.length); i++) {
+        used.add(bag[i].id);
+        results.push(bag[i]);
+      }
+    }
+    if (results.length > 0) return results;
+  }
+
   const results: Question[] = [];
   for (const item of plan) {
     if (item.count <= 0) continue;
-    const docId = normToDocId.get(normalizeUnitKey(item.hierarchy)) ?? item.hierarchy;
+    const docId = normToDocId.get(normalizeUnitKey(item.core_concept)) ?? item.core_concept;
     const qRef = collection(db, 'certifications', certCode, 'question_pools', docId, 'questions');
     const q = query(
       qRef,
@@ -306,11 +341,10 @@ async function fetchWeaknessQuestions(
   }
   if (results.length > 0) return results;
 
-  // Fallback: collectionGroup에서 hierarchy 또는 topic으로 매칭 (hierarchy 우선)
   const topicPrefix = `${certCode} > `;
   for (const item of plan) {
     if (item.count <= 0) continue;
-    const prefix = `${topicPrefix}${item.hierarchy}`;
+    const prefix = `${topicPrefix}${item.core_concept}`;
     const q = query(
       collectionGroup(db, 'questions'),
       where('cert_id', '==', certCode),
@@ -319,12 +353,12 @@ async function fetchWeaknessQuestions(
       limit(item.count * 3)
     );
     const snap = await getDocs(q);
-    const itemNorm = normalizeUnitKey(item.hierarchy);
+    const itemNorm = normalizeUnitKey(item.core_concept);
     const filtered = snap.docs
       .map((d) => ({ doc: d, data: d.data() as FirestoreQuestionDoc }))
       .filter(
         ({ data }) => {
-          const unit = data.hierarchy?.trim() || extractTopicUnit(data.topic) || '';
+          const unit = (data.core_concept ?? data.hierarchy)?.trim() || extractTopicUnit(data.topic) || '';
           return (
             normalizeUnitKey(unit) === itemNorm &&
             data.difficulty_level != null &&
@@ -565,7 +599,7 @@ function metadataToQuestionStub(r: QuestionMetadataRecord): Question {
     trap_score: r.trap_score ?? 0,
     problem_types: r.problem_types,
     subject_number: r.subject_number,
-    hierarchy: r.hierarchy,
+    core_concept: r.core_concept,
     difficulty_level: r.difficulty_level,
     round: r.round,
   };
@@ -578,7 +612,7 @@ function firestoreDocToMetadata(certCode: string, docId: string, data: Firestore
     certCode,
     q_id: data.q_id ?? docId,
     subject_number: data.subject_number,
-    hierarchy: data.hierarchy,
+    core_concept: (data.core_concept ?? (data as { hierarchy?: string }).hierarchy) ?? undefined,
     difficulty_level: data.difficulty_level,
     tags: Array.isArray(data.tags) ? data.tags : [],
     round: data.round,
@@ -590,15 +624,63 @@ function firestoreDocToMetadata(certCode: string, docId: string, data: Firestore
   };
 }
 
+/** 인덱스 항목 → 취약유형/취약개념 필터링용 Question 스텁 (BIGDATA 풀 폴백) */
+function indexItemToQuestionStub(item: QuestionIndexItem): Question {
+  const pt = item.metadata?.problem_type;
+  const difficultyRaw = item.stats?.difficulty;
+  const difficultyLevel =
+    typeof difficultyRaw === 'number'
+      ? difficultyRaw <= 0.2
+        ? 1
+        : difficultyRaw <= 0.4
+          ? 2
+          : difficultyRaw <= 0.6
+            ? 3
+            : difficultyRaw <= 0.8
+              ? 4
+              : 5
+      : undefined;
+  return {
+    id: item.q_id,
+    content: '',
+    options: [],
+    answer: 1,
+    explanation: '',
+    tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
+    trend: null,
+    estimated_time_sec: typeof item.stats?.estimated_time_sec === 'number' ? item.stats.estimated_time_sec : 0,
+    trap_score: typeof item.stats?.trap_score === 'number' ? item.stats.trap_score : 0,
+    problem_types: typeof pt === 'string' && pt.trim() ? [pt.trim()] : undefined,
+    subject_number: typeof item.metadata?.subject === 'number' ? item.metadata.subject : undefined,
+    core_concept: undefined,
+    difficulty_level: difficultyLevel,
+    sub_core_id: typeof item.metadata?.sub_core_id === 'string' ? item.metadata.sub_core_id : undefined,
+  };
+}
+
 /**
  * question_pools: IndexedDB 메타데이터 캐시 우선 → 없을 때만 Firestore 1회 조회 후 캐싱
  * (과목강화/취약유형/취약개념 등 강화 학습 호출 시 2000 read 방지)
+ * BIGDATA: 메타 캐시 미사용 → 인덱스 우선 로드(동기화 후 사용), 없거나 실패 시에만 Firestore 시도
  */
 async function fetchAllPoolQuestions(certCode: string): Promise<Question[]> {
   const fromCache = await hasQuestionMetadataForCert(certCode);
   if (fromCache) {
     const records = await getQuestionMetadataByCert(certCode);
     return records.map(metadataToQuestionStub);
+  }
+
+  if (certCode === 'BIGDATA') {
+    let indexItems = await getQuestionIndexFromCache(certCode);
+    if (!indexItems || indexItems.length === 0) {
+      await syncQuestionIndex(certCode);
+      indexItems = await getQuestionIndexFromCache(certCode);
+    }
+    if (indexItems && indexItems.length > 0) {
+      const fromIndex = indexItems.map(indexItemToQuestionStub);
+      console.log(`[fetchAllPoolQuestions] BIGDATA 인덱스 기반 풀 ${fromIndex.length}개 사용`);
+      return fromIndex;
+    }
   }
 
   const q = query(
@@ -617,12 +699,81 @@ async function fetchAllPoolQuestions(certCode: string): Promise<Question[]> {
   if (metaRecords.length > 0) {
     putQuestionMetadataBulk(metaRecords).catch(() => {});
   }
+
+  if (list.length === 0 && certCode === 'BIGDATA') {
+    let indexItems = await getQuestionIndexFromCache(certCode);
+    if (!indexItems || indexItems.length === 0) {
+      await syncQuestionIndex(certCode);
+      indexItems = await getQuestionIndexFromCache(certCode);
+    }
+    if (indexItems && indexItems.length > 0) {
+      const fromIndex = indexItems.map(indexItemToQuestionStub);
+      console.log(`[fetchAllPoolQuestions] BIGDATA Firestore 0건 → 인덱스 기반 풀 ${fromIndex.length}개 사용`);
+      return fromIndex;
+    }
+  }
+
   return list;
 }
 
 /** Firestore 필드명용 (tag_stats 키와 비교 시 사용) */
 function sanitizeTagKey(s: string): string {
   return s.replace(/[./\[\]*~]/g, '_');
+}
+
+/** Elo proficiency → 0~1 (Cold Start/데이터 없음 → 0으로 간주하여 Low 처리) */
+function eloToProficiency01(elo: number | undefined): number {
+  if (elo == null || elo <= 0) return 0;
+  return 1 / (1 + Math.pow(10, (1200 - elo) / 400));
+}
+
+/** 이해도 밴드: Low < 0.4, Mid 0.4~0.7, High >= 0.7 */
+export type ProficiencyBand = 'low' | 'mid' | 'high';
+function getProficiencyBand(proficiency01: number): ProficiencyBand {
+  if (proficiency01 < 0.4) return 'low';
+  if (proficiency01 < 0.7) return 'mid';
+  return 'high';
+}
+
+/** difficulty_level 1~5: 1=저, 2=중, 3+=고. 이해도에 따라 선호 난이도 [1,2] 또는 [2,3,4,5] */
+function getPreferredDifficultyLevels(band: ProficiencyBand): number[] {
+  return band === 'low' ? [1, 2] : [2, 3, 4, 5];
+}
+
+/** 풀에서 선호 난이도 우선 수집 후 부족분은 난이도 해제하여 50개 채움 */
+function pickByDifficultyThenFill(
+  pool: Question[],
+  preferredLevels: number[],
+  excludeIds: Set<string>,
+  target: number,
+  logPrefix: string
+): Question[] {
+  const preferred = pool.filter(
+    (q) => !excludeIds.has(q.id) && preferredLevels.includes(q.difficulty_level ?? 0)
+  );
+  const rest = pool.filter(
+    (q) => !excludeIds.has(q.id) && !preferredLevels.includes(q.difficulty_level ?? 0)
+  );
+  const shuffledPreferred = shuffleArray(preferred);
+  const shuffledRest = shuffleArray(rest);
+  const result: Question[] = [];
+  for (const q of shuffledPreferred) {
+    if (result.length >= target) break;
+    result.push(q);
+    excludeIds.add(q.id);
+  }
+  const fromPreferred = result.length;
+  if (result.length < target) {
+    console.log(`[${logPrefix}] 난이도 필터 적용: 선호 난이도 ${preferredLevels.join(',')}에서 ${fromPreferred}개, 부족분 ${target - result.length}개는 난이도 해제하여 채움`);
+    for (const q of shuffledRest) {
+      if (result.length >= target) break;
+      result.push(q);
+      excludeIds.add(q.id);
+    }
+  } else {
+    console.log(`[${logPrefix}] 난이도 필터 적용: 선호 난이도 ${preferredLevels.join(',')}에서 ${result.length}개 확보`);
+  }
+  return result;
 }
 
 /**
@@ -701,14 +852,13 @@ async function generateWeaknessAttackMode(
   uid: string,
   certCode: string
 ): Promise<Question[]> {
-  const { getCertificationInfo } = await import('./gradingService');
   const certInfo = await getCertificationInfo(certCode);
   const subjectConfigs = certInfo?.subjects ?? [{ subject_number: 1, name: '전체', question_count: 80 }];
   const totalTarget = subjectConfigs.reduce((s, c) => s + (c.question_count ?? 0), 0) || TOTAL_QUESTIONS;
 
   const stats = await fetchStatsDoc(uid, certCode);
   const confusedQids = stats.confused_qids ?? [];
-  const hierarchyStats = stats.hierarchy_stats ?? {};
+  const conceptStats = stats.core_concept_stats ?? (stats as UserStatsForCert & { hierarchy_stats?: Record<string, unknown> }).hierarchy_stats ?? {};
   const tagStats = stats.tag_stats ?? {};
 
   const [answerSets, allPool] = await Promise.all([
@@ -731,19 +881,19 @@ async function generateWeaknessAttackMode(
     if (q && !confusedQs.some((c) => c.id === q.id)) confusedQs.push(q);
   }
 
-  const hierarchyOrder = Object.entries(hierarchyStats)
-    .filter(([, v]) => (v.total ?? 0) > 0)
-    .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
-    .map(([h]) => h);
-  const zoneAByHierarchy = new Map<string, Question[]>();
+  const conceptOrder = Object.entries(conceptStats)
+    .filter(([, v]) => ((v as { total?: number }).total ?? 0) > 0)
+    .sort((a, b) => ((a[1] as { proficiency?: number }).proficiency ?? 9999) - ((b[1] as { proficiency?: number }).proficiency ?? 9999))
+    .map(([c]) => c);
+  const zoneAByConcept = new Map<string, Question[]>();
   for (const q of zoneA) {
-    const h = (q.hierarchy ?? '').trim() || '기타';
-    if (!zoneAByHierarchy.has(h)) zoneAByHierarchy.set(h, []);
-    zoneAByHierarchy.get(h)!.push(q);
+    const c = (q.core_concept ?? '').trim() || '기타';
+    if (!zoneAByConcept.has(c)) zoneAByConcept.set(c, []);
+    zoneAByConcept.get(c)!.push(q);
   }
   const wrongQs: Question[] = [];
-  for (const h of hierarchyOrder) {
-    const bag = shuffleArray(zoneAByHierarchy.get(h) ?? []);
+  for (const c of conceptOrder) {
+    const bag = shuffleArray(zoneAByConcept.get(c) ?? []);
     for (const q of bag) {
       if (wrongQs.length >= needWrong) break;
       if (!wrongQs.some((w) => w.id === q.id)) wrongQs.push(q);
@@ -798,7 +948,7 @@ async function generateWeaknessAttackMode(
  * AI 모의고사 80문제 생성
  * - mode 없음: 기존 plan 기반 약점 + 랜덤
  * - REAL_EXAM: 실전 대비형 8:2 (trend·신규 80%, 오답 복습 20%, 과목 비중 준수)
- * - WEAKNESS_ATTACK: 약점 강화형 3:3:4 (헷갈림 30%, 오답 hierarchy 30%, 취약 태그 40%)
+ * - WEAKNESS_ATTACK: 약점 강화형 3:3:4 (헷갈림 30%, 오답 core_concept 30%, 취약 태그 40%)
  */
 export async function generateAiMockExam(
   uid: string,
@@ -807,7 +957,6 @@ export async function generateAiMockExam(
   mode?: AiMockExamMode
 ): Promise<Question[]> {
   if (mode === 'REAL_EXAM') {
-    const { getCertificationInfo } = await import('./gradingService');
     const certInfo = await getCertificationInfo(certCode);
     return generateRealExamMode(uid, certCode, certInfo ?? null);
   }
@@ -822,8 +971,8 @@ export async function generateAiMockExam(
   poolSnap.docs.forEach((d) => {
     normToDocId.set(normalizeUnitKey(d.id), d.id);
   });
-
-  const weaknessQs = await fetchWeaknessQuestions(certCode, plan, normToDocId);
+  const allPool = await fetchAllPoolQuestions(certCode);
+  const weaknessQs = await fetchWeaknessQuestions(certCode, plan, normToDocId, allPool);
   const plannedWeaknessCount = plan.reduce((sum, p) => sum + p.count, 0);
   const shortfall = Math.max(0, plannedWeaknessCount - weaknessQs.length);
   const neededRandom = TOTAL_QUESTIONS - weaknessQs.length;
@@ -972,13 +1121,40 @@ function getUserGradeForCert(user: User | null, certId: string): UserGrade {
   return 'Free';
 }
 
+/** BIGDATA 문항 경로: question_pools/contents_1681/questions/{q_id} (collectionGroup 인덱스 없어도 getDoc으로 조회) */
+const BIGDATA_QUESTION_POOL_ID = 'contents_1681';
+
 /**
  * [1] 실제 DB 구조 기반 문제 가져오기 (static exam)
- * - collectionGroup('questions') + where('q_id', 'in', chunk) 사용
- * - 단일 필드 인덱스(q_id, 컬렉션 그룹) 필요 → Firebase 콘솔에서 설정
+ * - BIGDATA: 직접 경로 getDoc (인덱스 불필요, 취약유형/취약개념 집중학습 안정화)
+ * - 그 외: collectionGroup('questions') + where('q_id', 'in', chunk)
  */
 export async function fetchQuestionsFromPools(certCode: string, qIds: string[]): Promise<Question[]> {
   if (qIds.length === 0) return [];
+
+  if (certCode === 'BIGDATA') {
+    const poolId = BIGDATA_QUESTION_POOL_ID;
+    const results: Question[] = [];
+    for (let i = 0; i < qIds.length; i += IN_QUERY_LIMIT) {
+      const chunk = qIds.slice(i, i + IN_QUERY_LIMIT);
+      const snaps = await Promise.all(
+        chunk.map((qId) => getDoc(doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId)))
+      );
+      snaps.forEach((snap, j) => {
+        const qId = chunk[j];
+        if (snap.exists()) {
+          const data = snap.data() as FirestoreQuestionDoc;
+          results.push(mapPoolDocToQuestion(qId, data));
+        }
+      });
+    }
+    const orderMap = new Map(results.map((q) => [q.id, q]));
+    const ordered = qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
+    if (ordered.length < qIds.length) {
+      console.log(`[fetchQuestionsFromPools] BIGDATA 직접 경로: ${qIds.length}개 중 ${ordered.length}개 로드`);
+    }
+    return ordered;
+  }
 
   const chunks: string[][] = [];
   for (let i = 0; i < qIds.length; i += IN_QUERY_LIMIT) {
@@ -1000,6 +1176,47 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
 
   const orderMap = new Map(results.map((q) => [q.id, q]));
   return qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
+}
+
+/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용) */
+const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
+  1: 80,
+  2: 80,
+  3: 80,
+  4: 20,
+  5: 80,
+};
+
+/**
+ * index 항목을 해당 회차(round)만 필터링
+ */
+function filterIndexByRound(items: QuestionIndexItem[] | null, round: number): QuestionIndexItem[] {
+  if (!items || items.length === 0) return [];
+  return items.filter((item) => (item.metadata?.round ?? 99) === round);
+}
+
+/** metadata에서 정렬용 숫자 추출 (subject, core_id) */
+function getSubjectAndCore(item: QuestionIndexItem): { subject: number; core_id: number } {
+  const subject = item.metadata?.subject;
+  const core = item.metadata?.core_id;
+  return {
+    subject: typeof subject === 'number' ? subject : parseInt(String(subject ?? 99), 10) || 99,
+    core_id: typeof core === 'number' ? core : parseInt(String(core ?? 0), 10) || 0,
+  };
+}
+
+/**
+ * Static 회차용: 과목 순(S1→S2→S3→S4), 같은 과목 내 개념 순(core_id 오름차순)으로 정렬 후 앞에서 needCount개 q_id 반환
+ */
+function pickStaticRoundIdsInOrder(items: QuestionIndexItem[], count: number): string[] {
+  if (items.length === 0 || count <= 0) return [];
+  const sorted = [...items].sort((a, b) => {
+    const { subject: sa, core_id: ca } = getSubjectAndCore(a);
+    const { subject: sb, core_id: cb } = getSubjectAndCore(b);
+    if (sa !== sb) return sa - sb;
+    return ca - cb;
+  });
+  return sorted.slice(0, count).map((x) => x.q_id);
 }
 
 /**
@@ -1060,19 +1277,34 @@ export async function getQuestionsForRound(
   let sourceRounds: number[];
 
   if (useStatic) {
-    /** Static 1~5: static_exams에서 로드 */
-    const examRef = doc(db, 'certifications', certCode, 'static_exams', `Round_${round}`);
-    const examSnap = await getDoc(examRef);
-    if (!examSnap.exists()) {
+    /** Static 1~5: index 캐시만 사용. 회차(round)별로 index 필터 후 문항 수는 certification_info 또는 폴백 사용 */
+    let needCount = STATIC_QUESTIONS_PER_ROUND[round] ?? 80;
+    if (round <= 3) {
+      try {
+        const certInfo = await getCertificationInfo(certCode);
+        const subjects = certInfo?.subjects;
+        if (Array.isArray(subjects) && subjects.length > 0) {
+          const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
+          if (total > 0) needCount = total;
+        }
+      } catch {
+        // certInfo 실패 시 위 needCount 유지
+      }
+    }
+    let indexItems = await getQuestionIndexFromCache(certCode);
+    if (!indexItems || indexItems.length === 0) {
+      await syncQuestionIndex(certCode);
+      indexItems = await getQuestionIndexFromCache(certCode);
+    }
+    const roundFiltered = filterIndexByRound(indexItems ?? [], round);
+    if (roundFiltered.length < needCount) {
       throw new Error(
-        `해당 회차(Round_${round}) 시험 장부를 찾을 수 없습니다. ` +
-        `Firestore에 certifications/${certCode}/static_exams/Round_${round} 문서를 생성해 주세요.`
+        `Round_${round} 문제를 불러오려면 인덱스에 해당 회차 문항이 필요합니다. ` +
+        `(회차 ${round} 문항: ${roundFiltered.length}건, 필요: ${needCount}건). ` +
+        `Firebase Storage/Firestore에 index가 업로드되어 있는지 확인하고 다시 시도해 주세요.`
       );
     }
-    const data = examSnap.data() as StaticExamDoc;
-    const questionRefs = Array.isArray(data.question_refs) ? data.question_refs : [];
-    const qIds = questionRefs.map((ref) => (ref && typeof ref === 'object' && 'q_id' in ref ? ref.q_id : '')).filter(Boolean);
-    if (qIds.length === 0) throw new Error('시험 장부에 문제가 등록되어 있지 않습니다.');
+    const qIds = pickStaticRoundIdsInOrder(roundFiltered, needCount);
     questions = await fetchQuestionsFromPools(certCode, qIds);
     if (questions.length < qIds.length) throw new Error(`문제 로딩 실패: ${qIds.length}개 중 ${questions.length}개만 불러왔습니다.`);
     sourceRounds = [round];
@@ -1119,7 +1351,7 @@ export async function getQuestionsForRound(
 
 /**
  * Round 5(약점 공략) - AI 알고리즘 기반 맞춤형 80문제
- * - user 있음: generateAiMockExam (stats hierarchy_stats + D-Day 또는 실전/약점 모드)
+ * - user 있음: generateAiMockExam (stats core_concept_stats + D-Day 또는 실전/약점 모드)
  * - user 없음: static Round_5 장부 사용 (폴백)
  */
 export async function getQuestionsForWeaknessRound(
@@ -1154,13 +1386,13 @@ const WEAKNESS_RETRY_HALF = Math.floor(WEAKNESS_RETRY_MAX / 2); // 25
 
 /**
  * 오답 다시풀기 세트(50문항): '가장 최근에 틀린 문제' 50% + 'Elo 점수 가장 낮은 취약 문제' 50%
- * - orderBy 'hierarchy': 취약 50% = hierarchy_stats proficiency 낮은 순
+ * - orderBy 'core_concept': 취약 50% = core_concept_stats proficiency 낮은 순
  * - orderBy 'problem_type': 취약 50% = problem_type_stats proficiency 낮은 순
  */
 export async function fetchWeaknessRetryQuestions(
   uid: string,
   certId: string,
-  orderBy: 'hierarchy' | 'problem_type' = 'hierarchy'
+  orderBy: 'core_concept' | 'problem_type' = 'core_concept'
 ): Promise<Question[]> {
   if (!CERT_IDS_WITH_QUESTIONS.includes(certId)) return [];
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
@@ -1201,9 +1433,9 @@ export async function fetchWeaknessRetryQuestions(
       }
     }
   } else {
-    const hierarchyStats = stats.hierarchy_stats ?? {};
+    const conceptStats = stats.core_concept_stats ?? (stats as UserStatsForCert & { hierarchy_stats?: Record<string, { proficiency?: number }> }).hierarchy_stats ?? {};
     const getProficiency = (q: Question): number =>
-      hierarchyStats[(q.hierarchy ?? '').trim() || '기타']?.proficiency ?? 9999;
+      conceptStats[(q.core_concept ?? '').trim() || '기타']?.proficiency ?? 9999;
     const sorted = [...wrongQuestions].sort((a, b) => getProficiency(a) - getProficiency(b));
     for (const q of sorted) {
       if (weakHalf.length >= WEAKNESS_RETRY_HALF) break;
@@ -1300,11 +1532,14 @@ const SUBJECT_STRENGTH_50_TARGET = 50;
 
 export type SubjectStrength50Result = { questions: Question[]; insufficient: boolean };
 
+/** 과목별 배분 비율: 가장 낮은 이해도 50%, 나머지 20%, 10%, 10% (합 90%, 나머지 10%는 최저 과목에) → 50문항 기준 [30, 10, 5, 5] */
+const SUBJECT_QUOTA_PCTS = [50, 20, 10, 10];
+
 /**
  * 과목 강화 학습 (전체 4과목): 50문항 큐레이션
- * 1. 오답 우선 (전체 과목)
- * 2. 부족 시 맞춘 문제 중 이해도(proficiency) 낮은 hierarchy 개념 위주
- * 50미만이면 insufficient: true 반환 → 클라이언트에서 "데이터 부족" 팝업
+ * - 과목별 이해도(subject_stats.proficiency) 낮은 순으로 나열, 비율: 최저 50% / 그다음 20% / 10% / 10%
+ * - 각 과목 내: 오답 우선 → 맞춘 문제 중 이해도 낮은 개념 위주 → 부족분 랜덤
+ * - 과목별 이해도는 users/{uid}/stats/{certCode}.subject_stats 에 채점 시 갱신됨 (별도 필드 없이 동일 문서)
  */
 export async function fetchSubjectStrengthTraining50(
   uid: string,
@@ -1315,65 +1550,114 @@ export async function fetchSubjectStrengthTraining50(
   if (!cert) return { questions: [], insufficient: true };
   const certCode = cert.code;
 
-  const [answerSets, allPool, stats] = await Promise.all([
+  const [answerSets, allPool, stats, certInfo] = await Promise.all([
     fetchExamResultAnswerSets(uid, certCode),
     fetchAllPoolQuestions(certCode),
     fetchStatsDoc(uid, certCode),
+    getCertificationInfo(certCode),
   ]);
   const { correctIds, wrongIds } = answerSets;
-  const hierarchyStats = stats.hierarchy_stats ?? {};
+  const conceptStats = stats.core_concept_stats ?? (stats as UserStatsForCert & { hierarchy_stats?: Record<string, { total?: number; proficiency?: number }> }).hierarchy_stats ?? {};
+  const subjectStats = stats.subject_stats ?? {};
 
-  const seen = new Set<string>();
-  const result: Question[] = [];
+  const subjectNumbers = (certInfo?.subjects ?? []).map((s) => s.subject_number);
+  if (subjectNumbers.length === 0) {
+    const hasSubj = new Set(allPool.map((q) => q.subject_number ?? 1));
+    subjectNumbers.push(...Array.from(hasSubj).sort((a, b) => a - b));
+  }
+  if (subjectNumbers.length === 0) subjectNumbers.push(1);
 
-  // 1) 오답 우선 (전체 과목) - 오답 ID로 직접 조회해 풀 2000개 제한에 걸리지 않도록
+  const getSubjectProficiency = (subjNum: number): number => {
+    const ent = subjectStats[String(subjNum)];
+    return ent?.proficiency != null && Number.isFinite(ent.proficiency) ? ent.proficiency : 9999;
+  };
+  const subjectOrder = subjectNumbers.slice().sort((a, b) => getSubjectProficiency(a) - getSubjectProficiency(b));
+
+  const n = Math.min(4, subjectOrder.length);
+  const pcts = SUBJECT_QUOTA_PCTS.slice(0, n);
+  const remainder = 50 - pcts.reduce((s, p) => s + Math.round(50 * (p / 100)), 0);
+  const quotas = subjectOrder.slice(0, n).map((_, i) => {
+    let q = Math.round(50 * (pcts[i] / 100));
+    if (i === 0 && remainder > 0) q += remainder;
+    return q;
+  });
+
   const wrongPool =
-    wrongIds.size > 0
-      ? await fetchQuestionsFromPools(certCode, Array.from(wrongIds))
-      : [];
-  for (const q of shuffleArray(wrongPool)) {
-    if (result.length >= SUBJECT_STRENGTH_50_TARGET) break;
-    if (!seen.has(q.id)) {
-      seen.add(q.id);
-      result.push(q);
-    }
+    wrongIds.size > 0 ? await fetchQuestionsFromPools(certCode, Array.from(wrongIds)) : [];
+  const bySubjectWrong = new Map<number, Question[]>();
+  const bySubjectCorrect = new Map<number, Question[]>();
+  for (const q of wrongPool) {
+    const s = q.subject_number ?? 1;
+    if (!bySubjectWrong.has(s)) bySubjectWrong.set(s, []);
+    bySubjectWrong.get(s)!.push(q);
+  }
+  for (const q of allPool) {
+    if (wrongIds.has(q.id)) continue;
+    if (!correctIds.has(q.id)) continue;
+    const s = q.subject_number ?? 1;
+    if (!bySubjectCorrect.has(s)) bySubjectCorrect.set(s, []);
+    bySubjectCorrect.get(s)!.push(q);
   }
 
-  // 2) 부족분: 맞춘 문제 중 이해도(proficiency) 낮은 개념 위주
-  if (result.length < SUBJECT_STRENGTH_50_TARGET) {
-    const correctPool = allPool.filter((q) => correctIds.has(q.id) && !seen.has(q.id));
-    const hierarchyOrder = Object.entries(hierarchyStats)
-      .filter(([, v]) => (v.total ?? 0) > 0)
-      .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
-      .map(([h]) => h);
-    const byHierarchy = new Map<string, Question[]>();
-    for (const q of correctPool) {
-      const h = (q.hierarchy ?? '').trim() || '기타';
-      if (!byHierarchy.has(h)) byHierarchy.set(h, []);
-      byHierarchy.get(h)!.push(q);
+  const conceptOrder = Object.entries(conceptStats)
+    .filter(([, v]) => (v.total ?? 0) > 0)
+    .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
+    .map(([c]) => c);
+  const byConceptBySubject = new Map<number, Map<string, Question[]>>();
+  for (const [subj, list] of bySubjectCorrect) {
+    const byConcept = new Map<string, Question[]>();
+    for (const q of list) {
+      const c = (q.core_concept ?? '').trim() || '기타';
+      if (!byConcept.has(c)) byConcept.set(c, []);
+      byConcept.get(c)!.push(q);
     }
-    for (const h of hierarchyOrder) {
-      if (result.length >= SUBJECT_STRENGTH_50_TARGET) break;
-      const bag = shuffleArray(byHierarchy.get(h) ?? []);
-      for (const q of bag) {
-        if (result.length >= SUBJECT_STRENGTH_50_TARGET) break;
-        if (!seen.has(q.id)) {
-          seen.add(q.id);
-          result.push(q);
+    byConceptBySubject.set(subj, byConcept);
+  }
+
+  const seen = new Set<string>();
+  const orderedIds: string[] = [];
+
+  for (let i = 0; i < subjectOrder.length && orderedIds.length < SUBJECT_STRENGTH_50_TARGET; i++) {
+    const subj = subjectOrder[i];
+    const quota = quotas[i] ?? 0;
+    if (quota <= 0) continue;
+    const startLen = orderedIds.length;
+    const subjectCap = startLen + quota;
+
+    const wrongList = shuffleArray(bySubjectWrong.get(subj) ?? []);
+    for (const q of wrongList) {
+      if (orderedIds.length >= subjectCap || orderedIds.length >= SUBJECT_STRENGTH_50_TARGET) break;
+      if (!seen.has(q.id)) {
+        seen.add(q.id);
+        orderedIds.push(q.id);
+      }
+    }
+    const byConcept = byConceptBySubject.get(subj);
+    if (byConcept && orderedIds.length < subjectCap) {
+      for (const c of conceptOrder) {
+        if (orderedIds.length >= subjectCap) break;
+        const bag = shuffleArray(byConcept.get(c) ?? []);
+        for (const q of bag) {
+          if (orderedIds.length >= subjectCap) break;
+          if (!seen.has(q.id)) {
+            seen.add(q.id);
+            orderedIds.push(q.id);
+          }
         }
       }
     }
-    const remaining = shuffleArray(correctPool).filter((q) => !seen.has(q.id));
-    for (const q of remaining) {
-      if (result.length >= SUBJECT_STRENGTH_50_TARGET) break;
-      result.push(q);
+    const correctList = shuffleArray(bySubjectCorrect.get(subj) ?? []).filter((q) => !seen.has(q.id));
+    for (const q of correctList) {
+      if (orderedIds.length >= subjectCap || orderedIds.length >= SUBJECT_STRENGTH_50_TARGET) break;
+      orderedIds.push(q.id);
       seen.add(q.id);
     }
   }
 
-  const picked = shuffleArray(result).slice(0, SUBJECT_STRENGTH_50_TARGET);
-  const questionIds = picked.map((q) => q.id);
-  const questions = questionIds.length > 0 ? await fetchQuestionsFromPools(certCode, questionIds) : [];
+  const questionIds = orderedIds.slice(0, SUBJECT_STRENGTH_50_TARGET);
+  let questions = questionIds.length > 0 ? await fetchQuestionsFromPools(certCode, questionIds) : [];
+  const idToIndex = new Map(questionIds.map((id, idx) => [id, idx]));
+  questions = questions.slice().sort((a, b) => (idToIndex.get(a.id) ?? 999) - (idToIndex.get(b.id) ?? 999));
   return {
     questions,
     insufficient: questions.length < SUBJECT_STRENGTH_50_TARGET,
@@ -1383,9 +1667,13 @@ export async function fetchSubjectStrengthTraining50(
 const WEAK_FOCUS_50_TARGET = 50;
 export type WeakFocus50Result = { questions: Question[]; insufficient: boolean };
 
+const WEAK_TYPE_MAX_TAGS = 5;
+
 /**
- * 취약 유형 집중학습: 유형 1,2,3위( tag_stats 정답률 하위 3개) 문제만 풀에서 50문항
- * - 오답 우선, 부족 시 맞춘 문제(이해도 낮은 개념 위주) 추가. 50 미만이면 insufficient
+ * 취약 유형 집중학습 (1회 이상 모의고사 후 학습결과 기반, 부족 모달 없음)
+ * - 유형 순서: problem_type_stats 기준 이해도(proficiency) 낮은 순 → 1순위 취약, 2순위 취약, …
+ * - 각 유형 내: 1순위 틀렸던 문제 → 2순위 맞춘 문제 → 3순위 이해도 기반 난이도 스캐폴딩 (최대 50개)
+ * - 다음 유형에서 동일 방식 반복. 총 50개 또는 가용분만 반환.
  */
 export async function fetchWeakTypeFocus50(
   uid: string,
@@ -1403,74 +1691,145 @@ export async function fetchWeakTypeFocus50(
   ]);
   const { correctIds, wrongIds } = answerSets;
   const tagStats = stats.tag_stats ?? {};
-  const hierarchyStats = stats.hierarchy_stats ?? {};
+  const problemTypeStats = (stats.problem_type_stats ?? {}) as Record<string, { correct?: number; total?: number; proficiency?: number }>;
 
-  const top3WeakTags = Object.entries(tagStats)
-    .filter(([, v]) => (v.total ?? 0) > 0)
-    .sort((a, b) => (a[1].correct ?? 0) / (a[1].total ?? 1) - (b[1].correct ?? 0) / (b[1].total ?? 1))
-    .slice(0, 3)
-    .map(([t]) => sanitizeTagKey(t));
-  const top3Set = new Set(top3WeakTags);
-  const typePool = allPool.filter((q) =>
-    (q.tags ?? []).some((t) => top3Set.has(sanitizeTagKey(t)))
-  );
-  const wrongPoolById =
-    wrongIds.size > 0 ? await fetchQuestionsFromPools(certCode, Array.from(wrongIds)) : [];
-  const wrongInType = wrongPoolById.filter((q) =>
-    (q.tags ?? []).some((t) => top3Set.has(sanitizeTagKey(t)))
-  );
-  if (typePool.length === 0 && wrongInType.length === 0) return { questions: [], insufficient: true };
-
-  const seen = new Set<string>();
-  const result: Question[] = [];
-  for (const q of shuffleArray(wrongInType)) {
-    if (result.length >= WEAK_FOCUS_50_TARGET) break;
-    if (!seen.has(q.id)) {
-      seen.add(q.id);
-      result.push(q);
-    }
+  if (allPool.length === 0) {
+    console.warn('[취약유형] allPool 비어 있음');
+    return { questions: [], insufficient: false };
   }
-  if (result.length < WEAK_FOCUS_50_TARGET) {
-    const correctInType = typePool.filter((q) => correctIds.has(q.id) && !seen.has(q.id));
-    const hierarchyOrder = Object.entries(hierarchyStats)
-      .filter(([, v]) => (v.total ?? 0) > 0)
-      .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
-      .map(([h]) => h);
-    const byHierarchy = new Map<string, Question[]>();
-    for (const q of correctInType) {
-      const h = (q.hierarchy ?? '').trim() || '기타';
-      if (!byHierarchy.has(h)) byHierarchy.set(h, []);
-      byHierarchy.get(h)!.push(q);
+  console.log(`[취약유형] allPool=${allPool.length}, problem_type_stats 키 수=${Object.keys(problemTypeStats).length}`);
+
+  const norm = (s: string) => sanitizeTagKey(String(s).trim());
+
+  const tagEntries = Object.entries(tagStats)
+    .filter(([, v]) => (v.total ?? 0) > 0)
+    .sort((a, b) => (a[1].correct ?? 0) / (a[1].total ?? 1) - (b[1].correct ?? 0) / (b[1].total ?? 1));
+  const mainTag = tagEntries.length > 0 ? norm(tagEntries[0][0]) : null;
+
+  let topTagSet = new Set<string>(mainTag ? [mainTag] : []);
+  if (mainTag) {
+    const mainTagQuestions = allPool.filter((q) =>
+      (q.tags ?? []).some((t) => norm(t) === mainTag)
+    );
+    const subjectCount: Record<number, number> = {};
+    for (const q of mainTagQuestions) {
+      const s = q.subject_number ?? 1;
+      subjectCount[s] = (subjectCount[s] ?? 0) + 1;
     }
-    for (const h of hierarchyOrder) {
-      if (result.length >= WEAK_FOCUS_50_TARGET) break;
-      const bag = shuffleArray(byHierarchy.get(h) ?? []);
-      for (const q of bag) {
-        if (result.length >= WEAK_FOCUS_50_TARGET) break;
-        if (!seen.has(q.id)) {
-          seen.add(q.id);
-          result.push(q);
-        }
+    const primarySubject =
+      Object.entries(subjectCount).sort((a, b) => b[1] - a[1])[0]?.[0] != null
+        ? Number(Object.entries(subjectCount).sort((a, b) => b[1] - a[1])[0][0])
+        : 1;
+    const tagsInSubject = new Set<string>();
+    for (const q of allPool) {
+      if ((q.subject_number ?? 1) !== primarySubject) continue;
+      for (const t of q.tags ?? []) {
+        tagsInSubject.add(norm(t));
       }
     }
-    const rest = shuffleArray(correctInType).filter((q) => !seen.has(q.id));
-    for (const q of rest) {
-      if (result.length >= WEAK_FOCUS_50_TARGET) break;
-      result.push(q);
+    const otherInSubject = tagEntries
+      .map(([t]) => norm(t))
+      .filter((t) => t !== mainTag && tagsInSubject.has(t));
+    const restTags = otherInSubject.slice(0, WEAK_TYPE_MAX_TAGS - 1);
+    restTags.forEach((t) => topTagSet.add(t));
+  }
+
+  let typePool = allPool.filter((q) =>
+    (q.tags ?? []).some((t) => topTagSet.has(norm(t)))
+  );
+  let wrongPoolById =
+    wrongIds.size > 0 ? await fetchQuestionsFromPools(certCode, Array.from(wrongIds)) : [];
+  let wrongInType = wrongPoolById.filter((q) =>
+    (q.tags ?? []).some((t) => topTagSet.has(norm(t)))
+  );
+
+  let useProblemTypeFallback = false;
+  if (typePool.length === 0 && wrongInType.length === 0) {
+    const ptEntries = Object.entries(problemTypeStats)
+      .filter(([, v]) => (v.total ?? 0) > 0)
+      .sort((a, b) => (a[1].correct ?? 0) / (a[1].total ?? 1) - (b[1].correct ?? 0) / (b[1].total ?? 1));
+    const mainPt = ptEntries.length > 0 ? String(ptEntries[0][0]).trim().replace(/[./\[\]*~]/g, '_') : null;
+    if (mainPt) {
+      const ptSet = new Set<string>([mainPt]);
+      for (let i = 1; i < Math.min(WEAK_TYPE_MAX_TAGS, ptEntries.length); i++) {
+        ptSet.add(String(ptEntries[i][0]).trim().replace(/[./\[\]*~]/g, '_'));
+      }
+      typePool = allPool.filter((q) =>
+        (q.problem_types ?? []).some((pt) => ptSet.has(String(pt).trim().replace(/[./\[\]*~]/g, '_')))
+      );
+      wrongInType = wrongPoolById.filter((q) =>
+        (q.problem_types ?? []).some((pt) => ptSet.has(String(pt).trim().replace(/[./\[\]*~]/g, '_')))
+      );
+      useProblemTypeFallback = true;
+    }
+  }
+
+  const seen = new Set<string>();
+  const resultIds: string[] = [];
+  const TARGET = WEAK_FOCUS_50_TARGET;
+  const normPt = (s: string) => String(s).trim().replace(/[./\[\]*~]/g, '_');
+  const weakTypeOrder = Object.entries(problemTypeStats)
+    .filter(([, v]) => (v.total ?? 0) > 0)
+    .sort((a, b) => (a[1].proficiency ?? 1200) - (b[1].proficiency ?? 1200))
+    .map(([k]) => normPt(k));
+  if (weakTypeOrder.length === 0) {
+    for (const q of allPool) {
+      for (const pt of q.problem_types ?? []) {
+        if (String(pt).trim()) weakTypeOrder.push(normPt(pt));
+      }
+    }
+  }
+
+  for (const typeKey of [...new Set(weakTypeOrder)]) {
+    if (resultIds.length >= TARGET) break;
+    const typePool = allPool.filter((q) =>
+      (q.problem_types ?? []).some((pt) => normPt(pt) === typeKey)
+    );
+    const wrongInType = typePool.filter((q) => wrongIds.has(q.id));
+    const correctInType = typePool.filter((q) => correctIds.has(q.id));
+    for (const q of shuffleArray(wrongInType)) {
+      if (resultIds.length >= TARGET || seen.has(q.id)) continue;
+      seen.add(q.id);
+      resultIds.push(q.id);
+    }
+    if (resultIds.length >= TARGET) break;
+    for (const q of shuffleArray(correctInType)) {
+      if (resultIds.length >= TARGET || seen.has(q.id)) continue;
+      seen.add(q.id);
+      resultIds.push(q.id);
+    }
+    if (resultIds.length >= TARGET) break;
+    const typeProficiency01 = (() => {
+      const ent = Object.entries(problemTypeStats).find(([k]) => normPt(k) === typeKey);
+      if (!ent) return 0;
+      const total = ent[1].total ?? 0;
+      return total === 0 ? 0 : (ent[1].correct ?? 0) / total;
+    })();
+    const band = getProficiencyBand(typeProficiency01);
+    const preferredLevels = getPreferredDifficultyLevels(band);
+    const need = TARGET - resultIds.length;
+    const added = pickByDifficultyThenFill(typePool, preferredLevels, seen, need, `취약유형(${typeKey})`);
+    for (const q of added) {
+      resultIds.push(q.id);
       seen.add(q.id);
     }
   }
 
-  const picked = shuffleArray(result).slice(0, WEAK_FOCUS_50_TARGET);
-  const questionIds = picked.map((q) => q.id);
+  const questionIds = resultIds.slice(0, TARGET);
   const questions = questionIds.length > 0 ? await fetchQuestionsFromPools(certCode, questionIds) : [];
-  return { questions, insufficient: questions.length < WEAK_FOCUS_50_TARGET };
+  const orderMap = new Map(questions.map((q) => [q.id, q]));
+  const ordered = questionIds.map((id) => orderMap.get(id)).filter((q): q is Question => !!q);
+  const bySubject = (a: Question, b: Question) => (a.subject_number ?? 1) - (b.subject_number ?? 1);
+  const sorted = (ordered.length > 0 ? ordered : questions).slice().sort(bySubject);
+  return { questions: sorted, insufficient: false };
 }
 
 /**
- * 취약 개념 집중학습: 이해도 가장 낮은 개념 2~10개로 50문항
- * - 2개 개념만으로 풀 50개 이상이면 2개만 사용, 아니면 최대 10개까지 확장
- * - 오답 우선, 부족 시 맞춘 문제(이해도 낮은 순) 추가. 50 미만이면 insufficient
+ * 취약 개념 집중학습: 이해도 낮은 개념 2~10개 Pool, 난이도 스캐폴딩 적용
+ * - 취약 개념 분석 상위 3개와 동일한 기준으로 top3 도출 → 선정 개념에 최소 1개 포함, 해당 3개 개념 문제를 먼저 제공
+ * - 1순위: 선정 Pool 내 오답 중 top3 개념 → 나머지 오답
+ * - 2순위: top3 개념 Pool에서 난이도 매칭 → 나머지 개념에서 난이도 매칭
+ * - 3순위: 난이도 해제 후 50개 채움
  */
 export async function fetchWeakConceptFocus50(
   uid: string,
@@ -1486,72 +1845,148 @@ export async function fetchWeakConceptFocus50(
     fetchAllPoolQuestions(certCode),
     fetchStatsDoc(uid, certCode),
   ]);
-  const { correctIds, wrongIds } = answerSets;
-  const hierarchyStats = stats.hierarchy_stats ?? {};
+  const { wrongIds } = answerSets;
+  const conceptStats = stats.core_concept_stats ?? (stats as UserStatsForCert & { hierarchy_stats?: Record<string, { total?: number; proficiency?: number }> }).hierarchy_stats ?? {};
+  const subCoreIdStats = stats.sub_core_id_stats ?? {};
 
-  const hierarchyOrder = Object.entries(hierarchyStats)
+  const conceptOrder = Object.entries(conceptStats)
     .filter(([, v]) => (v.total ?? 0) > 0)
     .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
-    .map(([h]) => h);
+    .map(([c]) => c);
+
+  // 취약 개념 분석 상위 3개와 동일 로직: sub_core_id → coreId 합산 후 이해도 낮은 순 3개, 없으면 core_concept_stats 상위 3개
+  const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number }> = {};
+  for (const [subCoreId, ent] of Object.entries(subCoreIdStats)) {
+    const coreId = subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId;
+    if (!coreAggFromSubCore[coreId]) coreAggFromSubCore[coreId] = { sumProficiency: 0, total: 0 };
+    const prof = ent?.proficiency ?? 1200;
+    const total = ent?.total ?? 0;
+    coreAggFromSubCore[coreId].sumProficiency += prof * total;
+    coreAggFromSubCore[coreId].total += total;
+  }
+  let top3CoreIds: Set<string> = new Set();
+  let top3ConceptNames: Set<string> = new Set();
+  if (Object.keys(coreAggFromSubCore).length > 0) {
+    const sorted = Object.entries(coreAggFromSubCore)
+      .filter(([, agg]) => agg.total >= 3)
+      .map(([coreId, agg]) => {
+        const avgProficiency = agg.total > 0 ? agg.sumProficiency / agg.total : 1200;
+        return { coreId, avgProficiency };
+      })
+      .sort((a, b) => a.avgProficiency - b.avgProficiency)
+      .slice(0, 3);
+    top3CoreIds = new Set(sorted.map((s) => s.coreId));
+  }
+  if (top3CoreIds.size === 0 && conceptOrder.length > 0) {
+    const fromConcept = Object.entries(conceptStats)
+      .filter(([, v]) => (v.total ?? 0) >= 3 && (v.correct ?? 0) >= 1)
+      .sort((a, b) => (a[1].proficiency ?? 9999) - (b[1].proficiency ?? 9999))
+      .slice(0, 3)
+      .map(([name]) => name);
+    top3ConceptNames = new Set(fromConcept);
+  }
+  const conceptNamesFromTop3CoreIds = new Set<string>();
+  if (top3CoreIds.size > 0) {
+    for (const q of allPool) {
+      const coreId = (q.sub_core_id ?? '').split('-')[0];
+      if (coreId && top3CoreIds.has(coreId)) {
+        const name = (q.core_concept ?? '').trim() || '기타';
+        conceptNamesFromTop3CoreIds.add(name);
+      }
+    }
+  }
+  const top3AsConceptNames = top3CoreIds.size > 0 ? conceptNamesFromTop3CoreIds : top3ConceptNames;
+  const isInTop3 = (q: Question) => {
+    if (top3CoreIds.size > 0) {
+      const coreId = (q.sub_core_id ?? '').split('-')[0];
+      return coreId !== '' && top3CoreIds.has(coreId);
+    }
+    return top3ConceptNames.has((q.core_concept ?? '').trim() || '기타');
+  };
+
   const maxConcepts = 10;
-  let selectedHierarchies: string[] = hierarchyOrder.slice(0, 2);
-  for (let n = 2; n <= maxConcepts && n <= hierarchyOrder.length; n++) {
-    const set = new Set(hierarchyOrder.slice(0, n));
-    const poolSize = allPool.filter((q) => set.has((q.hierarchy ?? '').trim() || '기타')).length;
-    selectedHierarchies = hierarchyOrder.slice(0, n);
+  let selectedConcepts: string[] = [...new Set([...top3AsConceptNames, ...conceptOrder.slice(0, 2).map(([c]) => c)])];
+  for (let n = 2; n <= maxConcepts && n <= conceptOrder.length + top3AsConceptNames.size; n++) {
+    const fromOrder = conceptOrder.slice(0, n).map(([c]) => c);
+    const set = new Set([...top3AsConceptNames, ...fromOrder]);
+    selectedConcepts = [...set];
+    const poolSize = allPool.filter((q) => set.has((q.core_concept ?? '').trim() || '기타')).length;
     if (poolSize >= WEAK_FOCUS_50_TARGET) break;
   }
-  const conceptSet = new Set(selectedHierarchies);
+  const conceptSet = new Set(selectedConcepts);
   const conceptPool = allPool.filter((q) =>
-    conceptSet.has((q.hierarchy ?? '').trim() || '기타')
+    conceptSet.has((q.core_concept ?? '').trim() || '기타')
   );
   const wrongPoolById =
     wrongIds.size > 0 ? await fetchQuestionsFromPools(certCode, Array.from(wrongIds)) : [];
   const wrongInConcept = wrongPoolById.filter((q) =>
-    conceptSet.has((q.hierarchy ?? '').trim() || '기타')
+    conceptSet.has((q.core_concept ?? '').trim() || '기타')
   );
   if (conceptPool.length === 0 && wrongInConcept.length === 0) return { questions: [], insufficient: true };
 
+  console.log(`[취약개념] 선정 개념 수: ${selectedConcepts.length}개, 상위3개 개념 포함: ${top3AsConceptNames.size > 0}`);
+
   const seen = new Set<string>();
   const result: Question[] = [];
-  for (const q of shuffleArray(wrongInConcept)) {
+
+  const wrongInTop3 = wrongInConcept.filter((q) => isInTop3(q));
+  const wrongInRest = wrongInConcept.filter((q) => !isInTop3(q));
+  for (const q of shuffleArray(wrongInTop3)) {
     if (result.length >= WEAK_FOCUS_50_TARGET) break;
     if (!seen.has(q.id)) {
       seen.add(q.id);
       result.push(q);
     }
   }
+  for (const q of shuffleArray(wrongInRest)) {
+    if (result.length >= WEAK_FOCUS_50_TARGET) break;
+    if (!seen.has(q.id)) {
+      seen.add(q.id);
+      result.push(q);
+    }
+  }
+  if (result.length >= WEAK_FOCUS_50_TARGET) {
+    const questionIds = result.map((q) => q.id);
+    const questions = await fetchQuestionsFromPools(certCode, questionIds);
+    return { questions, insufficient: false };
+  }
+
+  const worstConceptName = conceptOrder[0];
+  const proficiency01 = worstConceptName
+    ? eloToProficiency01(conceptStats[worstConceptName]?.proficiency)
+    : 0;
+  const band = getProficiencyBand(proficiency01);
+  const preferredLevels = getPreferredDifficultyLevels(band);
+  console.log(`[취약개념] 이해도 밴드: ${band} (proficiency01=${proficiency01.toFixed(2)}), 선호 난이도: [${preferredLevels.join(',')}]`);
+
+  const need = WEAK_FOCUS_50_TARGET - result.length;
+  const poolTop3 = conceptPool.filter((q) => isInTop3(q));
+  const poolRest = conceptPool.filter((q) => !isInTop3(q));
+  const addedFromTop3 = pickByDifficultyThenFill(poolTop3, preferredLevels, seen, need, '취약개념(top3)');
+  result.push(...addedFromTop3);
+  const stillNeed = WEAK_FOCUS_50_TARGET - result.length;
+  if (stillNeed > 0) {
+    const addedFromRest = pickByDifficultyThenFill(poolRest, preferredLevels, seen, stillNeed, '취약개념(나머지)');
+    result.push(...addedFromRest);
+  }
+
   if (result.length < WEAK_FOCUS_50_TARGET) {
-    const correctInConcept = conceptPool.filter((q) => correctIds.has(q.id) && !seen.has(q.id));
-    const byHierarchy = new Map<string, Question[]>();
-    for (const q of correctInConcept) {
-      const h = (q.hierarchy ?? '').trim() || '기타';
-      if (!byHierarchy.has(h)) byHierarchy.set(h, []);
-      byHierarchy.get(h)!.push(q);
-    }
-    for (const h of selectedHierarchies) {
-      if (result.length >= WEAK_FOCUS_50_TARGET) break;
-      const bag = shuffleArray(byHierarchy.get(h) ?? []);
-      for (const q of bag) {
-        if (result.length >= WEAK_FOCUS_50_TARGET) break;
-        if (!seen.has(q.id)) {
-          seen.add(q.id);
-          result.push(q);
-        }
-      }
-    }
-    const rest = shuffleArray(correctInConcept).filter((q) => !seen.has(q.id));
-    for (const q of rest) {
+    const restPool = shuffleArray(conceptPool).filter((q) => !seen.has(q.id));
+    for (const q of restPool) {
       if (result.length >= WEAK_FOCUS_50_TARGET) break;
       result.push(q);
       seen.add(q.id);
     }
+    console.log(`[취약개념] 3순위 난이도 해제 후 총 ${result.length}개 확보`);
   }
 
-  const picked = shuffleArray(result).slice(0, WEAK_FOCUS_50_TARGET);
-  const questionIds = picked.map((q) => q.id);
+  const questionIds = result.slice(0, WEAK_FOCUS_50_TARGET).map((q) => q.id);
   const questions = questionIds.length > 0 ? await fetchQuestionsFromPools(certCode, questionIds) : [];
-  return { questions, insufficient: questions.length < WEAK_FOCUS_50_TARGET };
+  const bySubject = (a: Question, b: Question) => (a.subject_number ?? 1) - (b.subject_number ?? 1);
+  const sorted = questions.slice().sort(bySubject);
+  const insufficient = sorted.length < WEAK_FOCUS_50_TARGET;
+  if (insufficient) console.log(`[취약개념] 풀 부족으로 ${sorted.length}개만 반환 (insufficient=true)`);
+  return { questions: sorted, insufficient };
 }
 
 /**

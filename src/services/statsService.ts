@@ -26,6 +26,8 @@ export interface TrendDataItem {
   examId?: string;
   /** 모의고사 회차 ID (EXAM_ROUNDS와 매칭해 회차명 표시) */
   roundId?: string | null;
+  /** 집중학습 완료 시 저장된 표시 라벨 (예: "과목 강화 학습 - 3과목 강화") */
+  roundLabel?: string | null;
   totalQuestions?: number;
   correctCount?: number;
 }
@@ -47,6 +49,8 @@ export interface WeaknessItem {
   name: string;
   accuracy: number;
   count: number;
+  /** sub_core_id 기반일 때 개념 id (예: "79") — UI에서 core_concepts_by_id로 개념명·키워드 표시용 */
+  id?: string;
 }
 
 // ========== Firestore 문서 타입 ==========
@@ -61,6 +65,7 @@ interface StatEntry {
 interface ExamResultDoc {
   certCode?: string;
   roundId?: string | null;
+  roundLabel?: string | null;
   subject_scores?: Record<string, number>;
   is_passed?: boolean;
   predicted_pass_rate?: number;
@@ -85,6 +90,15 @@ function formatDateShort(date: Date): string {
   const m = date.getMonth() + 1;
   const d = date.getDate();
   return `${m.toString().padStart(2, '0')}.${d.toString().padStart(2, '0')}`;
+}
+
+/** 응시일+시각 표시용 (예: 2.27 21:08) */
+function formatDateShortWithTime(date: Date): string {
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const hh = date.getHours();
+  const mm = date.getMinutes();
+  return `${m}.${d.toString().padStart(2, '0')} ${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
 }
 
 function safeAccuracy(correct: number, total: number): number {
@@ -166,7 +180,7 @@ export async function fetchUserTrendData(
     const data = docSnap.data() as ExamResultDoc;
     const submittedAt = data.submittedAt;
     const dateObj = toDate(submittedAt);
-    const dateStr = dateObj ? formatDateShort(dateObj) : '';
+    const dateStr = dateObj ? formatDateShortWithTime(dateObj) : '';
     const scores = data.subject_scores ?? {};
     const scoreValues = Object.values(scores);
     const avgScore =
@@ -187,6 +201,7 @@ export async function fetchUserTrendData(
       isPass,
       examId: docSnap.id,
       roundId: data.roundId ?? null,
+      roundLabel: data.roundLabel ?? null,
       totalQuestions,
       correctCount,
     });
@@ -207,13 +222,13 @@ export async function fetchUserTrendData(
 export interface FetchDashboardStatsResult {
   radarData: RadarDataItem[];
   subjectScores: SubjectScore[];
-  weaknessTop2: WeaknessItem[];
+  weaknessTop3: WeaknessItem[];
 }
 
 const FULL_MARK = 100 as const;
 
 /**
- * users/{uid}/stats/{certCode} 1개 문서 조회 → 레이더 / 과목 게이지 / 약점 Top2
+ * users/{uid}/stats/{certCode} 1개 문서 조회 → 레이더 / 과목 게이지 / 약점 Top3
  */
 export async function fetchDashboardStats(
   uid: string,
@@ -227,7 +242,7 @@ export async function fetchDashboardStats(
     return {
       radarData: [],
       subjectScores: [],
-      weaknessTop2: [],
+      weaknessTop3: [],
     };
   }
 
@@ -235,14 +250,27 @@ export async function fetchDashboardStats(
     return {
       radarData: [],
       subjectScores: [],
-      weaknessTop2: [],
+      weaknessTop3: [],
     };
   }
 
   const data = snap.data() ?? {};
-  const hierarchyStats = (data.hierarchy_stats ?? {}) as Record<string, StatEntry>;
+  const conceptStats = (data.core_concept_stats ?? (data as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry>;
+  const subCoreIdStats = (data.sub_core_id_stats ?? {}) as Record<string, StatEntry>;
   const problemTypeStats = (data.problem_type_stats ?? {}) as Record<string, StatEntry>;
   const subjectStats = (data.subject_stats ?? {}) as Record<string, StatEntry>;
+
+  // 세부 개념(sub_core_id) → 대분류(Core) 합산: core_id별 평균 proficiency·총 문제 수
+  const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};
+  for (const [subCoreId, ent] of Object.entries(subCoreIdStats)) {
+    const coreId = subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId;
+    if (!coreAggFromSubCore[coreId]) coreAggFromSubCore[coreId] = { sumProficiency: 0, total: 0, count: 0 };
+    const prof = ent?.proficiency ?? 1200;
+    const total = ent?.total ?? 0;
+    coreAggFromSubCore[coreId].sumProficiency += prof * total;
+    coreAggFromSubCore[coreId].total += total;
+    coreAggFromSubCore[coreId].count += 1;
+  }
 
   // 1) Radar (problem_type_stats) — 이해도 = proficiency(Elo) 우선
   const radarData: RadarDataItem[] = Object.entries(problemTypeStats).map(
@@ -271,27 +299,38 @@ export async function fetchDashboardStats(
     }
   );
 
-  // 3) Weakness Top 2: 푼 문제 유형(hierarchy) 중에서만, 이해도(Elo 기준) 낮은 순 상위 2
-  // - total >= 3: 최소 3문제 이상 푼 개념만 (통계 의미 있음)
-  // - correct >= 1: 최소 1개라도 맞춘 개념만 (0% = 아직 학습 안 한 개념 제외)
-  const weaknessCandidates: WeaknessItem[] = Object.entries(hierarchyStats)
-    .filter(([, ent]) => {
-      const total = ent?.total ?? 0;
-      const correct = ent?.correct ?? 0;
-      return total >= 3 && correct >= 1;
-    })
-    .map(([name, ent]) => {
-      const total = ent?.total ?? 0;
-      const accuracy = understandingFromStat(ent);
-      return { name, accuracy, count: total };
-    })
-    .sort((a, b) => a.accuracy - b.accuracy);
+  // 3) Weakness Top 3: sub_core_id_stats → Core 합산 후 이해도 낮은 순 상위 3 (있으면 우선), 없으면 core_concept_stats
+  let weaknessCandidates: WeaknessItem[] = [];
+  if (Object.keys(coreAggFromSubCore).length > 0) {
+    weaknessCandidates = Object.entries(coreAggFromSubCore)
+      .filter(([, agg]) => agg.total >= 3)
+      .map(([coreId, agg]) => {
+        const avgProficiency = agg.total > 0 ? agg.sumProficiency / agg.total : 1200;
+        const accuracy = understandingFromStat({ proficiency: avgProficiency, total: agg.total });
+        return { name: `개념 ${coreId}`, id: coreId, accuracy, count: agg.total };
+      })
+      .sort((a, b) => a.accuracy - b.accuracy);
+  }
+  if (weaknessCandidates.length === 0) {
+    weaknessCandidates = Object.entries(conceptStats)
+      .filter(([, ent]) => {
+        const total = ent?.total ?? 0;
+        const correct = ent?.correct ?? 0;
+        return total >= 3 && correct >= 1;
+      })
+      .map(([name, ent]) => {
+        const total = ent?.total ?? 0;
+        const accuracy = understandingFromStat(ent);
+        return { name, accuracy, count: total };
+      })
+      .sort((a, b) => a.accuracy - b.accuracy);
+  }
 
-  const weaknessTop2 = weaknessCandidates.slice(0, 2);
+  const weaknessTop3 = weaknessCandidates.slice(0, 3);
 
   return {
     radarData,
     subjectScores,
-    weaknessTop2,
+    weaknessTop3,
   };
 }

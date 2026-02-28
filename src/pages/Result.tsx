@@ -13,6 +13,7 @@ export interface QuizAnswerRecord {
   selected: number;
   isCorrect: boolean;
   isConfused?: boolean;
+  elapsedSec?: number;
 }
 
 interface ResultProps {
@@ -123,7 +124,7 @@ function getWeakestHierarchy(
   const byHierarchy: Record<string, { correct: number; total: number }> = {};
   for (const rec of sessionHistory) {
     const q = qMap.get(rec.qid);
-    const h = (q?.hierarchy ?? '').trim() || '기타';
+    const h = (q?.core_concept ?? '').trim() || '기타';
     if (!byHierarchy[h]) byHierarchy[h] = { correct: 0, total: 0 };
     byHierarchy[h].total += 1;
     if (rec.isCorrect) byHierarchy[h].correct += 1;
@@ -208,13 +209,13 @@ export const Result: React.FC<ResultProps> = ({
 
     // 해당 과목 전체 개념을 고정 순서로, 이 회차 기준 이해도(또는 N/A) 계산
     const conceptRatesThisRound: { name: string; rate: number | null }[] = (() => {
-      const order = certInfo?.hierarchy_order?.length
-        ? certInfo.hierarchy_order
+      const order = certInfo?.core_concept_order?.length
+        ? certInfo.core_concept_order
         : (() => {
             if (!questions?.length) return [];
             const set = new Set<string>();
             questions.forEach((q) => {
-              const h = (q.hierarchy ?? '').trim() || '기타';
+              const h = (q.core_concept ?? '').trim() || '기타';
               set.add(h);
             });
             return Array.from(set).sort((a, b) => a.localeCompare(b));
@@ -225,7 +226,7 @@ export const Result: React.FC<ResultProps> = ({
       const byHierarchy: Record<string, { correct: number; total: number }> = {};
       for (const rec of sessionHistory ?? []) {
         const q = qMap.get(rec.qid);
-        const h = (q?.hierarchy ?? '').trim() || '기타';
+        const h = (q?.core_concept ?? '').trim() || '기타';
         if (!byHierarchy[h]) byHierarchy[h] = { correct: 0, total: 0 };
         byHierarchy[h].total += 1;
         if (rec.isCorrect) byHierarchy[h].correct += 1;
@@ -274,6 +275,11 @@ export const Result: React.FC<ResultProps> = ({
     : gradeCfg.guide.replace(/\[개념명\]/g, weakestConcept || '해당 개념');
   const guideWithBreaks = guideRaw.split(/\n/);
 
+  const isFocusTrainingMode =
+    roundId === '__subject_strength__' ||
+    roundId === '__weak_type_focus__' ||
+    roundId === '__weak_concept_focus__';
+
   useEffect(() => {
     if (showCouponEffect) {}
   }, [showCouponEffect]);
@@ -291,7 +297,7 @@ export const Result: React.FC<ResultProps> = ({
         </div>
       )}
 
-      <div className="max-w-3xl mx-auto px-5 py-12 pt-16 relative z-10">
+      <div className="max-w-6xl mx-auto px-5 py-12 pt-16 relative z-10">
         {/* 상단: 다시 풀기 / 학습 대시보드 */}
         <div className="flex justify-end gap-2 mb-4">
           <button
@@ -312,7 +318,9 @@ export const Result: React.FC<ResultProps> = ({
 
         <div className="text-center mb-8">
           <div className="mb-6 relative">
-            <span className="text-6xl block animate-[pop_0.4s_ease-out]">{isPass ? '🎉' : '🔥'}</span>
+            {!isFocusTrainingMode && (
+              <span className="text-6xl block animate-[pop_0.4s_ease-out]">{isPass ? '🎉' : '🔥'}</span>
+            )}
             {(roundId === 'r4' || roundId === 'r4c1' || roundId === 'r5') && (
               <span className="absolute -top-1 -right-2 text-xs font-bold px-2 py-0.5 rounded-full bg-[#99ccff] text-[#0034d3]">
                 실전 불수능
@@ -320,9 +328,9 @@ export const Result: React.FC<ResultProps> = ({
             )}
           </div>
           <h1 className="text-4xl font-black text-slate-900 mb-2">
-            {isGuest ? '수고하셨습니다!' : gradeCfg.headline}
+            {isFocusTrainingMode ? '집중 학습을 마쳤어요' : isGuest ? '수고하셨습니다!' : gradeCfg.headline}
           </h1>
-          {!isGuest && guideWithBreaks.length > 0 && (
+          {!isGuest && !isFocusTrainingMode && guideWithBreaks.length > 0 && (
             <p className="text-slate-600 mb-2 text-lg">
               {guideWithBreaks.map((line, lineIdx) => (
                 <React.Fragment key={lineIdx}>
@@ -355,7 +363,8 @@ export const Result: React.FC<ResultProps> = ({
           )}
         </div>
 
-        {/* Total Score + 과목별 (25점 환산) */}
+        {/* Total Score + 과목별 (집중학습 모드에서는 미노출) */}
+        {!isFocusTrainingMode && (
         <div className="bg-white border border-slate-200 rounded-[2rem] p-8 mb-6 shadow-xl shadow-slate-200/50">
           <div className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Total Score</div>
           <div className="flex items-baseline justify-center gap-1 mb-4">
@@ -430,6 +439,7 @@ export const Result: React.FC<ResultProps> = ({
             </div>
           )}
         </div>
+        )}
 
         {isGuest && (
           <div className="relative">
@@ -459,6 +469,8 @@ export const Result: React.FC<ResultProps> = ({
 
         {!isGuest && (
           <div className="animate-slide-up space-y-4">
+            {!isFocusTrainingMode && (
+              <>
             {showCouponEffect && !isPaidUser && (
               <div className="bg-gradient-to-br from-brand-50 to-white border-2 border-brand-200 rounded-2xl p-6 text-left relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -502,8 +514,10 @@ export const Result: React.FC<ResultProps> = ({
                 <ArrowRight size={20} /> 다음 회차
               </button>
             )}
+              </>
+            )}
 
-            {/* AI 요약 리포트 (열공모드 전용) */}
+            {/* AI 요약 리포트 (추후 구현 예정) — 주석 처리
             <div className={`rounded-2xl border overflow-hidden ${isPaidUser ? 'bg-white border-slate-200' : 'relative'}`}>
               {!isPaidUser && (
                 <div
@@ -573,6 +587,7 @@ export const Result: React.FC<ResultProps> = ({
                 )}
               </div>
             </div>
+            */}
 
             {/* 회차 메모: 풀이 중 찍어둔 메모 (오답 화면에서 다시 보기) */}
             {roundMemo && (roundMemo.freeText.trim() || roundMemo.pins.length > 0) && (

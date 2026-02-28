@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
-import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck } from 'lucide-react';
+import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
 import { fetchUserTrendData } from '../services/statsService';
 import { getQuestionsForRound } from '../services/examService';
 import { eloToPercent } from '../services/gradingService';
@@ -99,7 +99,29 @@ export const ExamList: React.FC<ExamListProps> = ({
 
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
   const certCode = cert?.code ?? null;
-  const allRounds = EXAM_ROUNDS.filter((r) => r.certId === certId);
+  /** 기본 회차 + 약점 공략 6회차 이상은 최대 20회까지 동적 확장 */
+  const MAX_CURATION_ROUND = 20;
+  const baseRounds = EXAM_ROUNDS.filter((r) => r.certId === certId);
+  const maxDefinedRound = baseRounds.length ? Math.max(...baseRounds.map((r) => r.round)) : 0;
+  const allRounds: ExamRound[] =
+    maxDefinedRound >= 6
+      ? (() => {
+          const template = baseRounds.find((r) => r.round >= 6);
+          const extended = [...baseRounds];
+          if (template) {
+            for (let n = maxDefinedRound + 1; n <= MAX_CURATION_ROUND; n++) {
+              extended.push({
+                ...template,
+                id: `r${n}${certId}`,
+                round: n,
+                title: template.title,
+                description: template.description,
+              });
+            }
+          }
+          return extended;
+        })()
+      : baseRounds;
   const round3ForCert = allRounds.find((r) => r.round === 3);
   const completedRound3 = round3ForCert ? completedRoundIds.has(round3ForCert.id) : false;
   const daysLeft: number | null = user && certId
@@ -157,11 +179,11 @@ export const ExamList: React.FC<ExamListProps> = ({
       const snap = await getDoc(ref);
       if (!cancelled) {
         const data = snap.exists() ? snap.data() : {};
-        const hierarchyStats = (data as { hierarchy_stats?: Record<string, { proficiency?: number }> }).hierarchy_stats ?? {};
-        const keys = Object.keys(hierarchyStats);
+        const conceptStats = (data as { core_concept_stats?: Record<string, { proficiency?: number }>; hierarchy_stats?: Record<string, { proficiency?: number }> }).core_concept_stats ?? (data as { hierarchy_stats?: Record<string, { proficiency?: number }> }).hierarchy_stats ?? {};
+        const keys = Object.keys(conceptStats);
         setHasCertStats(keys.length > 0);
         const percents = keys
-          .map((k) => hierarchyStats[k]?.proficiency)
+          .map((k) => conceptStats[k]?.proficiency)
           .filter((p): p is number => typeof p === 'number' && p > 0)
           .map((p) => eloToPercent(p));
         const avg = percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
@@ -251,12 +273,13 @@ export const ExamList: React.FC<ExamListProps> = ({
       return;
     }
     if (nextRound.round >= 4) {
+      const isFixedHighDifficulty = nextRound.round === 4 || nextRound.round === 5;
       autoStartAfterOverlayRef.current = {
         roundId: nextRound.id,
         mode: 'exam',
-        isStaticHighDifficulty: true,
+        isStaticHighDifficulty: isFixedHighDifficulty,
       };
-      setPreparingStaticHighDifficulty(true);
+      setPreparingStaticHighDifficulty(isFixedHighDifficulty);
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
@@ -386,9 +409,10 @@ export const ExamList: React.FC<ExamListProps> = ({
     }
     /** 4회차 이상(고정 4·5 + 맞춤형 6+): 5초 오버레이 + getQuestionsForRound( user_rounds 박제) 후 /quiz */
     if (roundNum >= 4 && user && certId) {
+      const isFixedHighDifficulty = roundNum === 4 || roundNum === 5;
       staticPreFetchedQuestionsRef.current = null;
-      setPreparingStaticHighDifficulty(true);
-      autoStartAfterOverlayRef.current = { roundId, mode, isStaticHighDifficulty: true };
+      setPreparingStaticHighDifficulty(isFixedHighDifficulty);
+      autoStartAfterOverlayRef.current = { roundId, mode, isStaticHighDifficulty: isFixedHighDifficulty };
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
@@ -400,7 +424,7 @@ export const ExamList: React.FC<ExamListProps> = ({
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-[#edf1f5]">
-    <div className="max-w-3xl mx-auto px-5 py-10 relative">
+    <div className="max-w-6xl mx-auto px-5 py-10 relative">
       <div className="text-center mb-12">
         <span className={`px-3 py-1 rounded-full text-xs font-black uppercase mb-3 inline-block ${isExpired ? 'bg-slate-200 text-slate-500' : 'bg-[#99ccff] text-[#1e56cd]'}`}>
           {isExpired ? 'Expired Subscription' : 'Certification'}
@@ -571,37 +595,81 @@ export const ExamList: React.FC<ExamListProps> = ({
       </div>
 
       {/* 4회차 이상 준비: 5초 오버레이 후 /quiz (getQuestionsForRound → user_rounds 박제) */}
-      {showPreparingOverlay && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="text-center text-white px-6">
-            {preparingPhase === 'countdown' ? (
-              <>
-                <p className="text-slate-300 text-sm mb-2">
-                  {preparingStaticHighDifficulty
-                    ? '시험 3일 전 기준, 합격 확률을 높이기 위한 고난도 문제를 큐레이션합니다...'
-                    : '맞춤형 모의고사를 준비하고 있어요'}
-                </p>
-                <p className="text-5xl font-black tabular-nums">{preparingCountdown}</p>
-              </>
-            ) : (
-              <>
-                <p className="text-xl font-bold mb-1">
-                  {preparingStaticHighDifficulty ? '고난도 모의고사가 준비되었습니다' : '맞춤형 모의고사가 준비되었습니다'}
-                </p>
-                <p className="text-slate-300 text-sm">
-                  {preparingStaticHighDifficulty ? '곧 퀴즈 화면으로 이동합니다' : '목록에서 다시 선택해 주세요'}
-                </p>
-              </>
-            )}
+      {showPreparingOverlay && (() => {
+        const qs = staticPreFetchedQuestionsRef.current;
+        const includedConcepts = qs && Array.isArray(qs)
+          ? [...new Set(qs.map((q) => q.core_concept).filter((c): c is string => Boolean(c)))]
+          : [];
+        const displayName = user?.givenName ?? user?.name ?? user?.email?.split('@')[0] ?? '회원';
+        const top2Concepts = includedConcepts.slice(0, 2);
+        const subMessage = preparingStaticHighDifficulty
+          ? '시험 3일 전 기준, 합격 확률을 높이기 위한 고난도 문항을 선별하고 있어요.'
+          : top2Concepts.length > 0
+            ? `${displayName}님의 취약개념 ${top2Concepts.join(', ')} 개념을 포함해 맞춤 문항을 제작하고 있어요.`
+            : '당신의 취약 유형·취약 개념을 반영해 맞춤 문항을 제작하고 있어요.';
+        return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden">
+            <div className="px-8 py-10 text-center">
+              {preparingPhase === 'countdown' ? (
+                <>
+                  <div className="flex justify-center mb-6">
+                    <div className="w-16 h-16 rounded-2xl bg-[#1e56cd]/20 border border-[#99ccff]/30 flex items-center justify-center">
+                      <Loader2 className="w-8 h-8 text-[#99ccff] animate-spin" strokeWidth={2.5} />
+                    </div>
+                  </div>
+                  <h3 className="text-[#e2e8f0] font-bold text-lg tracking-tight mb-3">
+                    모의고사 큐레이션 중
+                  </h3>
+                  <p className="text-slate-300 text-sm leading-relaxed mb-1">
+                    {preparingStaticHighDifficulty
+                      ? '시험 3일 전 기준, 합격 확률을 높이기 위한 고난도 문제를 큐레이션합니다.'
+                      : '학습데이터를 기반으로 모의고사를 큐레이션하는 중입니다.'}
+                  </p>
+                  <p className="text-[#99ccff] text-sm leading-relaxed font-medium mb-6">
+                    {subMessage}
+                  </p>
+                  <p className="text-slate-500 text-xs font-medium">잠시만 기다려 주세요</p>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-center mb-5">
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-emerald-300" strokeWidth={2} />
+                    </div>
+                  </div>
+                  <h3 className="text-white font-bold text-xl mb-1">
+                    {preparingStaticHighDifficulty ? '고난도 모의고사가 준비되었습니다' : '맞춤형 모의고사가 준비되었습니다'}
+                  </h3>
+                  {!preparingStaticHighDifficulty && top2Concepts.length > 0 && (
+                    <p className="text-slate-300 text-sm mb-3">
+                      {displayName}님의 취약개념 {top2Concepts.join(', ')} 개념을 포함했어요
+                    </p>
+                  )}
+                  <p className="text-slate-400 text-sm font-medium">
+                    곧 퀴즈 화면으로 이동합니다
+                  </p>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
-      {/* 모드 선택: 실전 시험 모드 / AI 학습 모드 */}
+      {/* 모드 선택: 실전 시험 모드 / AI 학습 모드 (영역 외 클릭 시 닫기) */}
       {showModeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setShowModeModal(false); setPendingRoundId(null); }} />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-5"
+          onClick={() => { setShowModeModal(false); setPendingRoundId(null); }}
+          role="presentation"
+          aria-modal="true"
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-none" aria-hidden />
+          <div
+            className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-lg font-black text-slate-900 mb-2">모의고사 모드 선택</h3>
             <p className="text-sm text-slate-500 mb-5">풀이 방식을 선택해 주세요.</p>
             <div className="flex flex-col gap-3">

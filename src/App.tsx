@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ClipboardCheck, BookOpen, X, Info } from 'lucide-react';
+import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
+import { useIsMobile } from './hooks/use-mobile';
 import { EmptyState } from './components/dashboard/empty-state';
 import { Home } from './pages/Home';
 import { LoginModal } from './components/LoginModal';
@@ -9,20 +10,26 @@ import { ExamList } from './pages/ExamList';
 import { Quiz } from './pages/Quiz';
 import { Result } from './pages/Result';
 import { Admin } from './pages/Admin';
+import { AdminCerts } from './pages/AdminCerts';
+import { AdminQuestions } from './pages/AdminQuestions';
 import { Checkout } from './pages/Checkout';
 import { AccountSettings } from './pages/AccountSettings';
 import { User, Certification } from './types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from './constants';
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
-import { invalidateMyPageCache } from './services/db/localCacheDB';
+import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
 import { ensureUserSubscription, setPaymentComplete } from './services/authService';
-import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50 } from './services/examService';
+import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
+import { logClientError } from './services/errorLogService';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './firebase';
 
-type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin';
-type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout';
+type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin' | '/admin/certs' | '/admin/questions' | '/admin/billing';
+type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
 
 const App: React.FC = () => {
+  const isMobile = useIsMobile();
   const { user, loading: authLoading, logout, updateUser, resendVerificationEmail } = useAuth();
   const [route, setRoute] = useState<Route>('/');
   const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
@@ -44,6 +51,8 @@ const App: React.FC = () => {
   const [pendingGuestContinue, setPendingGuestContinue] = useState<{ certId: string; roundId: string } | null>(null);
   const [quizStartIndex, setQuizStartIndex] = useState<number | undefined>(undefined);
   const [showGuestContinueModal, setShowGuestContinueModal] = useState(false);
+  /** 퀴즈 1~20에서 로그인 버튼으로 로그인한 경우: 성공 팝업만 띄우고 현재 문제 유지 */
+  const [showQuizLoginSuccessModal, setShowQuizLoginSuccessModal] = useState(false);
   const [showSignupSuccessModal, setShowSignupSuccessModal] = useState(false);
   /** 퀴즈에서 오답 플레이스홀더 클릭 시 게스트 → 로그인 후 결제로 보내기 */
   const [pendingCheckoutCertId, setPendingCheckoutCertId] = useState<string | null>(null);
@@ -71,6 +80,15 @@ const App: React.FC = () => {
   const [nextRoundPreparingPhase, setNextRoundPreparingPhase] = useState<'countdown' | 'ready'>('countdown');
   const [nextRoundSelectedMode, setNextRoundSelectedMode] = useState<'exam' | 'study'>('exam');
   const [nextRoundFetchedQuestions, setNextRoundFetchedQuestions] = useState<import('./types').Question[] | null>(null);
+  /** 로그아웃 완료 후 "로그아웃되었습니다" 토스트 */
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
+  /** 로그인 성공 시 "로그인되었습니다" 토스트 (하단 작게) */
+  const [showLoginToast, setShowLoginToast] = useState(false);
+  /** 마이페이지 집중학습(과목/유형/개념) 클릭 시 모드 선택 모달 → 선택 후 5초 오버레이 → 퀴즈 */
+  const [pendingFocusTraining, setPendingFocusTraining] = useState<{
+    type: 'subject_strength' | 'weak_type' | 'weak_concept';
+    certId: string;
+  } | null>(null);
 
   /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
   useEffect(() => {
@@ -118,12 +136,47 @@ const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [showNextRoundPreparing, nextRoundInfo?.id, nextRoundInfo?.round, user, selectedCertId]);
 
+  // 앱 기동 시 index.json 로컬/서버 버전 비교 후 새 버전일 때만 다운로드 (BIGDATA)
+  useEffect(() => {
+    syncQuestionIndex('BIGDATA').catch(() => {});
+  }, []);
+
+  // 전역 오류 → Firestore error_logs 기록 (대시보드 오류 로그에서 확인)
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      logClientError(event.error ?? event.message, 'window.onerror');
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      logClientError(event.reason, 'unhandledrejection');
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
+
   // 시험 결과 화면을 볼 때 마이페이지 캐시 무효화 → 이후 마이페이지 진입 시 최신 데이터 로드
   useEffect(() => {
     if (route !== '/result' || !user?.id || !selectedCertId) return;
     const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
     if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
   }, [route, user?.id, selectedCertId]);
+
+  // 로그아웃 토스트 자동 숨김
+  useEffect(() => {
+    if (!showLogoutToast) return;
+    const t = setTimeout(() => setShowLogoutToast(false), 2500);
+    return () => clearTimeout(t);
+  }, [showLogoutToast]);
+
+  // 로그인 토스트 자동 숨김
+  useEffect(() => {
+    if (!showLoginToast) return;
+    const t = setTimeout(() => setShowLoginToast(false), 2500);
+    return () => clearTimeout(t);
+  }, [showLoginToast]);
 
   // /exam-list 진입 시 selectedCertId가 비어 있으면 첫 자격증으로 설정 (흰 화면 방지)
   useEffect(() => {
@@ -146,6 +199,14 @@ const App: React.FC = () => {
     if (path !== '/login') setLoginInitialMode(null);
     const [pathname, search] = path.includes('?') ? path.split('?') : [path, ''];
     const params = new URLSearchParams(search);
+    // 로그인 클릭 시 현재 화면 유지하면서 로그인 모달만 오픈
+    if (pathname === '/login') {
+      setLoginInitialMode('login');
+      setShowLoginModal(true);
+      // 퀴즈 화면에서 로그인 버튼으로 연 경우: 로그인 성공 시 현재 문제 유지
+      setLoginModalIntent(route === '/quiz' && !user ? 'guestQuizLogin' : 'standalone');
+      return;
+    }
     if (pathname === '/exam-list') {
       const cert = params.get('cert');
       const round = params.get('round');
@@ -162,7 +223,8 @@ const App: React.FC = () => {
       return;
     }
     // Basic Auth Guard: 로그인 필요 경로 → 로그인 모달
-    if ((pathname === '/mypage' || pathname === '/admin' || pathname === '/account-settings') && !user) {
+    const needsLogin = pathname === '/mypage' || pathname === '/account-settings' || pathname.startsWith('/admin');
+    if (needsLogin && !user) {
       setLoginInitialMode('login');
       setShowLoginModal(true);
       setLoginModalIntent('standalone');
@@ -183,6 +245,7 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await logout();
+    setShowLogoutToast(true);
     setRoute('/');
   };
 
@@ -222,8 +285,10 @@ const App: React.FC = () => {
     navigate('/exam-list');
   };
 
+  /** 대시보드 "학습 시작하기" 클릭 시 → 목록만 보여주고 모달 자동 오픈 안 함 (유저가 회차 선택) */
   const handleSelectExamFromMyPage = (certId: string) => {
     setSelectedCertId(certId);
+    setSelectedRoundId(null);
     navigate('/exam-list');
   };
 
@@ -241,91 +306,94 @@ const App: React.FC = () => {
     navigate('/quiz');
   };
 
-  /** 과목 강화 학습: 5초 오버레이 → 50문항 큐레이션(오답 우선·이해도 낮은 개념) 후 퀴즈 진입, 부족 시 팝업 */
+  /** 과목 강화 학습: 모드 선택 모달 → 5초 오버레이 → 50문항 큐레이션 후 퀴즈 */
   const [showSubjectStrengthPreparing, setShowSubjectStrengthPreparing] = useState(false);
-  const handleStartSubjectStrengthTraining = async (certId: string) => {
+  const handleStartSubjectStrengthTraining = (certId: string) => {
     if (!user?.id) return;
-    setShowSubjectStrengthPreparing(true);
-    const delayMs = 3000;
-    const delayPromise = new Promise<void>((r) => setTimeout(r, delayMs));
-    try {
-      const [_, result] = await Promise.all([
-        delayPromise,
-        fetchSubjectStrengthTraining50(user.id, certId),
-      ]);
-      if (result.insufficient || result.questions.length < 50) {
-        setShowSubjectStrengthPreparing(false);
-        alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
-        return;
-      }
-      setSelectedCertId(certId);
-      setSelectedRoundId('__subject_strength__');
-      setQuizMode('study');
-      setPreFetchedQuestions(result.questions);
-      setShowSubjectStrengthPreparing(false);
-      navigate('/quiz');
-    } catch (e) {
-      console.error('[과목 강화 학습]', e);
-      setShowSubjectStrengthPreparing(false);
-      alert('문제를 불러오는 중 오류가 발생했습니다.');
-    }
+    setPendingFocusTraining({ type: 'subject_strength', certId });
   };
 
   /** 데이터 부족 시 규격화된 모달 (과목 강화 / 취약 유형 / 취약 개념) */
   const [showInsufficientDataModal, setShowInsufficientDataModal] = useState(false);
 
-  /** 취약 유형 집중학습: 5초 오버레이 → 유형 1,2,3위 50문항, 부족 시 팝업 */
+  /** 취약 유형 집중학습: 모드 선택 모달 → 5초 오버레이 → 50문항, 부족 시 팝업 */
   const [showWeakTypePreparing, setShowWeakTypePreparing] = useState(false);
-  const handleStartWeakTypeFocus = async (certId: string) => {
+  const handleStartWeakTypeFocus = (certId: string) => {
     if (!user?.id) return;
-    setShowWeakTypePreparing(true);
-    const delayMs = 3000;
-    try {
-      const [_, result] = await Promise.all([
-        new Promise<void>((r) => setTimeout(r, delayMs)),
-        fetchWeakTypeFocus50(user.id, certId),
-      ]);
-      setShowWeakTypePreparing(false);
-      if (result.insufficient || result.questions.length < 50) {
-        setShowInsufficientDataModal(true);
-        return;
-      }
-      setSelectedCertId(certId);
-      setSelectedRoundId('__weak_type_focus__');
-      setQuizMode('study');
-      setPreFetchedQuestions(result.questions);
-      navigate('/quiz');
-    } catch (e) {
-      console.error('[취약 유형 집중학습]', e);
-      setShowWeakTypePreparing(false);
-      alert('문제를 불러오는 중 오류가 발생했습니다.');
-    }
+    setPendingFocusTraining({ type: 'weak_type', certId });
   };
 
-  /** 취약 개념 집중학습: 5초 오버레이 → 이해도 하위 2~10개 개념 50문항, 부족 시 팝업 */
+  /** 취약 개념 집중학습: 모드 선택 모달 → 5초 오버레이 → 50문항, 부족 시 팝업 */
   const [showWeakConceptPreparing, setShowWeakConceptPreparing] = useState(false);
-  const handleStartWeakConceptFocus = async (certId: string) => {
+  const handleStartWeakConceptFocus = (certId: string) => {
     if (!user?.id) return;
-    setShowWeakConceptPreparing(true);
+    setPendingFocusTraining({ type: 'weak_concept', certId });
+  };
+
+  /** 집중학습 모드 선택(학습/시험) 후 실제 fetch + 퀴즈 진입 */
+  const handleFocusModeSelect = async (mode: 'study' | 'exam') => {
+    const pending = pendingFocusTraining;
+    if (!pending || !user?.id) return;
+    setPendingFocusTraining(null);
+    const { type, certId } = pending;
     const delayMs = 3000;
+    const setPreparing = (v: boolean) => {
+      if (type === 'subject_strength') setShowSubjectStrengthPreparing(v);
+      else if (type === 'weak_type') setShowWeakTypePreparing(v);
+      else setShowWeakConceptPreparing(v);
+    };
+    setPreparing(true);
     try {
-      const [_, result] = await Promise.all([
-        new Promise<void>((r) => setTimeout(r, delayMs)),
-        fetchWeakConceptFocus50(user.id, certId),
-      ]);
-      setShowWeakConceptPreparing(false);
-      if (result.insufficient || result.questions.length < 50) {
-        setShowInsufficientDataModal(true);
-        return;
+      if (type === 'subject_strength') {
+        const [_, result] = await Promise.all([
+          new Promise<void>((r) => setTimeout(r, delayMs)),
+          fetchSubjectStrengthTraining50(user.id, certId),
+        ]);
+        setPreparing(false);
+        if (result.insufficient || result.questions.length < 50) {
+          alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
+          return;
+        }
+        setSelectedCertId(certId);
+        setSelectedRoundId('__subject_strength__');
+        setQuizMode(mode);
+        setPreFetchedQuestions(result.questions);
+        navigate('/quiz');
+      } else if (type === 'weak_type') {
+        const [_, result] = await Promise.all([
+          new Promise<void>((r) => setTimeout(r, delayMs)),
+          fetchWeakTypeFocus50(user.id, certId),
+        ]);
+        setPreparing(false);
+        if (result.questions.length === 0) {
+          alert('선별된 문제가 없습니다. 모의고사를 1회 이상 응시한 뒤 이용해 주세요.');
+          return;
+        }
+        setSelectedCertId(certId);
+        setSelectedRoundId('__weak_type_focus__');
+        setQuizMode(mode);
+        setPreFetchedQuestions(result.questions);
+        navigate('/quiz');
+      } else {
+        const [_, result] = await Promise.all([
+          new Promise<void>((r) => setTimeout(r, delayMs)),
+          fetchWeakConceptFocus50(user.id, certId),
+        ]);
+        setPreparing(false);
+        if (result.insufficient || result.questions.length < 50) {
+          setShowInsufficientDataModal(true);
+          return;
+        }
+        setSelectedCertId(certId);
+        setSelectedRoundId('__weak_concept_focus__');
+        setQuizMode(mode);
+        setPreFetchedQuestions(result.questions);
+        navigate('/quiz');
       }
-      setSelectedCertId(certId);
-      setSelectedRoundId('__weak_concept_focus__');
-      setQuizMode('study');
-      setPreFetchedQuestions(result.questions);
-      navigate('/quiz');
     } catch (e) {
-      console.error('[취약 개념 집중학습]', e);
-      setShowWeakConceptPreparing(false);
+      setPreparing(false);
+      const label = type === 'subject_strength' ? '과목 강화' : type === 'weak_type' ? '취약 유형' : '취약 개념';
+      console.error(`[${label} 집중학습]`, e);
       alert('문제를 불러오는 중 오류가 발생했습니다.');
     }
   };
@@ -341,7 +409,36 @@ const App: React.FC = () => {
 
     // 로그인 회원: 학습 이력 저장 + 참여 자격증 구독 반영 (마이페이지 진입 가능)
     if (user && sessionHistory?.length && questions?.length && selectedCertId) {
-      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: selectedRoundId ?? undefined })
+      const roundLabel = (() => {
+        const rid = selectedRoundId ?? undefined;
+        if (!rid || !questions.length) return undefined;
+        if (rid === '__subject_strength__') {
+          const subjects = new Set(questions.map((q) => q.subject_number ?? 1));
+          const n = subjects.size;
+          return `과목 강화 학습 - ${n}과목 강화`;
+        }
+        if (rid === '__weak_type_focus__') {
+          const count: Record<string, number> = {};
+          for (const q of questions) {
+            for (const pt of q.problem_types ?? []) {
+              const t = String(pt).trim();
+              if (t) count[t] = (count[t] ?? 0) + 1;
+            }
+          }
+          const main = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0];
+          return main ? `취약 유형 집중 학습 - ${main} 강화` : '취약 유형 집중 학습';
+        }
+        if (rid === '__weak_concept_focus__') {
+          const concepts = [...new Set(questions.map((q) => (q.core_concept ?? '').trim()).filter(Boolean))];
+          const n = concepts.length;
+          const first = concepts[0];
+          if (n <= 0) return '취약 개념 집중 학습';
+          if (n === 1) return `취약 개념 집중 학습 - ${first} 강화`;
+          return `취약 개념 집중 학습 - ${first} 외 ${n - 1}개 개념 강화`;
+        }
+        return undefined;
+      })();
+      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: selectedRoundId ?? undefined, roundLabel })
         .then((result) => {
           if (result) {
             console.log(`[퀴즈 결과 저장 성공] examId: ${result.examId}, 문제 수: ${sessionHistory.length}`);
@@ -371,7 +468,49 @@ const App: React.FC = () => {
 
     navigate('/result');
   };
-  
+
+  /** 마이페이지 나의 학습 기록에서 "오답확인" 클릭 시 해당 시험 결과 화면으로 이동 */
+  const handleViewExamResult = async (examId: string) => {
+    if (!user?.id) return;
+    try {
+      const snap = await getDoc(doc(db, 'users', user.id, 'exam_results', examId));
+      if (!snap.exists()) {
+        alert('해당 시험 결과를 찾을 수 없습니다.');
+        return;
+      }
+      const data = snap.data();
+      const certId = data?.certId as string | undefined;
+      const certCode = data?.certCode as string | undefined;
+      const roundId = data?.roundId ?? null;
+      const answers = (data?.answers ?? []) as { qid: string; isCorrect?: boolean; isConfused?: boolean }[];
+      const totalQuestions = Number(data?.totalQuestions) || 0;
+      const correctCount = Number(data?.correctCount) || 0;
+      if (!certCode || !certId || answers.length === 0) {
+        alert('해당 시험 결과를 불러올 수 없습니다.');
+        return;
+      }
+      const questions = await fetchQuestionsFromPools(certCode, answers.map((a) => a.qid));
+      const sessionHistory = answers.map((a) => ({
+        qid: a.qid,
+        selected: 1,
+        isCorrect: a.isCorrect === true,
+        isConfused: a.isConfused === true,
+      }));
+      setSelectedCertId(certId);
+      setQuizResult({
+        score: correctCount,
+        total: totalQuestions,
+        sessionHistory,
+        questions,
+        roundMemo: null,
+      });
+      navigate('/result');
+    } catch (e) {
+      console.error('[오답확인] 결과 로드 실패', e);
+      alert('시험 결과를 불러오는 중 오류가 발생했습니다.');
+    }
+  };
+
   const handleCheckoutComplete = () => {
     if (user && selectedCertId) {
       setPaymentComplete(user.id, selectedCertId)
@@ -418,6 +557,9 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (route) {
       case '/':
+        if (user?.isAdmin) {
+          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar />;
+        }
         if (user) {
           return (
             <MyPage
@@ -436,6 +578,7 @@ const App: React.FC = () => {
               showWeakTypePreparing={showWeakTypePreparing}
               onStartWeakConceptFocus={handleStartWeakConceptFocus}
               showWeakConceptPreparing={showWeakConceptPreparing}
+              onViewExamResult={handleViewExamResult}
               onLogout={handleLogout}
             />
           );
@@ -449,11 +592,14 @@ const App: React.FC = () => {
           />
         );
       case '/mypage':
+        if (user?.isAdmin) {
+          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar />;
+        }
         return user ? (
-          <MyPage 
-            user={user} 
+          <MyPage
+            user={user}
             initialCertId={selectedCertId ?? undefined}
-            onNavigate={navigate} 
+            onNavigate={navigate}
             onSelectExam={handleSelectExamFromMyPage}
             onStartNewCert={handleStartExamFlow}
             onUpdateUser={updateUser}
@@ -467,6 +613,7 @@ const App: React.FC = () => {
             showWeakTypePreparing={showWeakTypePreparing}
             onStartWeakConceptFocus={handleStartWeakConceptFocus}
             showWeakConceptPreparing={showWeakConceptPreparing}
+            onViewExamResult={handleViewExamResult}
             onLogout={handleLogout}
           />
         ) : null;
@@ -508,6 +655,7 @@ const App: React.FC = () => {
         return selectedRoundId && selectedCertId ? (
           <>
             <Quiz 
+              key={`quiz-${selectedCertId}-${selectedRoundId}-${quizStartIndex ?? 0}`}
               roundId={selectedRoundId} 
               certId={selectedCertId}
               user={user}
@@ -560,6 +708,7 @@ const App: React.FC = () => {
             score={quizResult.score} 
             total={quizResult.total} 
             certId={selectedCertId}
+            roundId={selectedRoundId}
             user={user}
             isPaidUser={isCurrentCertPremium}
             sessionHistory={quizResult.sessionHistory}
@@ -610,7 +759,18 @@ const App: React.FC = () => {
           />
         ) : null;
       case '/admin':
-        return user?.isAdmin ? <Admin currentUser={user} /> : <div>Access Denied</div>;
+        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar /> : <div>Access Denied</div>;
+      case '/admin/certs':
+        return user?.isAdmin ? <AdminCerts /> : <div>Access Denied</div>;
+      case '/admin/questions':
+        return user?.isAdmin ? <AdminQuestions /> : <div>Access Denied</div>;
+      case '/admin/billing':
+        return user?.isAdmin ? (
+          <div className="p-6 md:p-8 max-w-4xl">
+            <h1 className="text-2xl font-black text-slate-900 mb-2">결제 관리 (쿠폰 및 정산)</h1>
+            <p className="text-slate-500">준비 중입니다.</p>
+          </div>
+        ) : <div>Access Denied</div>;
       default:
         return <div>404 Not Found</div>;
     }
@@ -630,12 +790,15 @@ const App: React.FC = () => {
     const intent = loginModalIntent;
     setShowLoginModal(false);
     setLoginModalIntent(null);
+    if (!options?.isNewUser) setShowLoginToast(true);
     if (intent === 'guestContinue' && pendingGuestContinue) {
       setSelectedCertId(pendingGuestContinue.certId);
       setSelectedRoundId(pendingGuestContinue.roundId);
       setQuizStartIndex(20);
       setShowGuestContinueModal(true);
       setPendingGuestContinue(null);
+    } else if (intent === 'guestQuizLogin') {
+      setShowQuizLoginSuccessModal(true);
     } else if (intent === 'checkout') {
       setSelectedCertId(pendingCheckoutCertId ?? selectedCertId);
       setPendingCheckoutCertId(null);
@@ -653,8 +816,8 @@ const App: React.FC = () => {
         {showLoginModal && (
           <LoginModal
             initialMode={loginInitialMode ?? 'login'}
-            persistent={loginModalIntent === 'guestContinue'}
-            onBack={loginModalIntent === 'guestContinue' ? undefined : () => { setShowLoginModal(false); setLoginModalIntent(null); }}
+            persistent={false}
+            onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
             onAuthSuccess={handleLoginModalAuthSuccess}
           />
         )}
@@ -682,15 +845,42 @@ const App: React.FC = () => {
     );
   }
 
+  if (isMobile) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#edf1f5] p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-[#99ccff] flex items-center justify-center mb-6">
+          <Monitor className="w-8 h-8 text-[#1e56cd]" />
+        </div>
+        <h1 className="text-xl font-bold text-slate-900 mb-2">MVP 버전은 PC에 최적화되었습니다</h1>
+        <p className="text-slate-600 text-sm">PC로 학습해 주세요.</p>
+      </div>
+    );
+  }
+
   return (
     <>
       {showLoginModal && (
         <LoginModal
           initialMode={loginInitialMode ?? 'login'}
-          persistent={loginModalIntent === 'guestContinue'}
-          onBack={loginModalIntent === 'guestContinue' ? undefined : () => { setShowLoginModal(false); setLoginModalIntent(null); }}
+          persistent={false}
+          onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
           onAuthSuccess={handleLoginModalAuthSuccess}
         />
+      )}
+      {showQuizLoginSuccessModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl text-center">
+            <p className="text-lg font-bold text-slate-900 mb-2">로그인 완료!</p>
+            <p className="text-slate-600 text-sm mb-6">현재 문제를 이어서 풀 수 있어요.</p>
+            <button
+              type="button"
+              onClick={() => setShowQuizLoginSuccessModal(false)}
+              className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800"
+            >
+              확인
+            </button>
+          </div>
+        </div>
       )}
       <div className="h-screen bg-[#edf1f5] flex overflow-hidden">
         <DashboardSidebar
@@ -737,6 +927,24 @@ const App: React.FC = () => {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 로그아웃되었습니다 토스트 (앱 스타일) */}
+      {showLogoutToast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-slide-up">
+          <div className="px-6 py-3.5 rounded-2xl bg-slate-800 text-white shadow-xl border border-slate-700/50 text-sm font-bold">
+            로그아웃되었습니다
+          </div>
+        </div>
+      )}
+
+      {/* 로그인되었습니다 토스트 (하단 작게) */}
+      {showLoginToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-slide-up">
+          <div className="px-4 py-2.5 rounded-xl bg-slate-800 text-white shadow-lg border border-slate-700/50 text-xs font-semibold">
+            로그인되었습니다
           </div>
         </div>
       )}
@@ -885,8 +1093,7 @@ const App: React.FC = () => {
           <div className="text-center text-white px-6">
             {nextRoundPreparingPhase === 'countdown' ? (
               <>
-                <p className="text-slate-300 text-sm mb-2">맞춤형 모의고사를 준비하고 있어요</p>
-                <p className="text-5xl font-black tabular-nums">{nextRoundPreparingCountdown}</p>
+                <p className="text-slate-300 text-sm">맞춤형 모의고사를 준비하고 있어요</p>
               </>
             ) : (
               <>
@@ -952,6 +1159,52 @@ const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowRetryModeModal(false)}
+              className="mt-4 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 마이페이지 집중학습(과목/유형/개념) → 모의고사 모드 선택 후 5초 오버레이 → 퀴즈 */}
+      {pendingFocusTraining && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPendingFocusTraining(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in">
+            <h3 className="text-lg font-black text-slate-900 mb-2">모의고사 모드 선택</h3>
+            <p className="text-sm text-slate-500 mb-5">풀이 방식을 선택해 주세요.</p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => handleFocusModeSelect('study')}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-brand-100 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-5 h-5 text-brand-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">AI 학습 모드</span>
+                  <span className="text-xs text-slate-500">해설 보면서 자유롭게 풀기</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFocusModeSelect('exam')}
+                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <ClipboardCheck className="w-5 h-5 text-slate-600" />
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">실전 시험 모드</span>
+                  <span className="text-xs text-slate-500">제한 시간 내 실전처럼 풀기</span>
+                </div>
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPendingFocusTraining(null)}
               className="mt-4 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
             >
               취소

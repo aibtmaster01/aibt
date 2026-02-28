@@ -34,20 +34,21 @@ pip install -r requirements.txt
 | 경로 | 설명 |
 |------|------|
 | `src/` | 프론트엔드 (React, 페이지/서비스/컴포넌트) |
-| `backend/` | Python 스크립트 (시드, BIGDATA 문제 업로드 등) |
+| `backend/` | Python 스크립트 (시드, 문제 업로드, AI-Gen 파이프라인) |
 | `docs/` | 설계·정책·가이드 문서 |
 
 상세 구조는 **`docs/디렉터리_구조_가이드.md`** 참고.
 
 ## 정책·설계 문서 (docs/)
 
-- **`docs/CURATION_POLICY.md`** — 모의고사 풀이 정책, 회원별 회차 제한, 큐레이션
-- **`docs/FIREBASE_READ_AUDIT.md`** — Firestore 읽기 경로 정리
-- **`docs/ToDo_List.md`** — 결제·장학금 구현 체크리스트
-- **`docs/디렉터리_구조_가이드.md`** — 디렉터리/파일 역할 설명
+문서 인덱스는 **`docs/README.md`** 참고.
+
+- **정책**: 결제·회원관리·유저플로우
+- **로직**: 모의고사 큐레이션, 채점·stats 업데이트, 집중학습, 문제 생성
+- **기타**: 오류 코드 대조표, Firestore 인덱스 가이드
 
 ## Git
 
 - 비밀값·빌드 산출물은 커밋하지 않습니다.  
-  `.gitignore`에 `node_modules/`, `dist/`, `.env*`, `**/serviceAccountKey.json`, `backend/.venv/` 등이 포함되어 있습니다.
+  `.gitignore`에 `node_modules/`, `dist/`, `.env*`, `**/serviceAccountKey.json`, `backend/.venv/`, `google-cloud-sdk/` 등이 포함되어 있습니다.
 - 푸시 전 `git status`로 추적 파일 한 번 확인 권장.

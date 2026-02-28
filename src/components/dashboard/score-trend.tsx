@@ -260,7 +260,7 @@ export function ScoreTrend({ data, onRetryRound, onWrongAnswers }: ScoreTrendPro
               onClick={(e) => e.stopPropagation()}
             >
               <p className="text-[11px] font-bold text-foreground mb-0.5">
-                {getRoundLabel(selectedData.roundId)}
+                {selectedData.roundLabel ?? getRoundLabel(selectedData.roundId)}
               </p>
               <p className="text-[11px] font-medium text-muted-foreground mb-2">
                 학습일 {selectedData.date}
@@ -349,7 +349,7 @@ export function ScoreTrend({ data, onRetryRound, onWrongAnswers }: ScoreTrendPro
                 >
                   <div className="flex flex-col items-start gap-0.5">
                     <span className="text-[13px] font-bold text-foreground">
-                      {getRoundLabel(item.roundId)}
+                      {item.roundLabel ?? getRoundLabel(item.roundId)}
                     </span>
                     <span className="text-[11px] text-muted-foreground">
                       {item.name} · {item.date}

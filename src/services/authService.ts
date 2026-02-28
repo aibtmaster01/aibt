@@ -192,7 +192,7 @@ export async function loginWithEmailPassword(email: string, password: string): P
   return firestoreDocToUser(uid, fresh);
 }
 
-/** 이메일 인증 메일 재발송 (로그인 후 발송이므로 현재 비밀번호 필요) */
+/** 이메일 인증 메일 재발송 (로그인 후 발송이므로 현재 비밀번호 필요). 메일 제목/본문은 Firebase Console 템플릿에서 설정. */
 export async function resendVerificationEmail(email: string, password: string): Promise<void> {
   const credential = await signInWithEmailAndPassword(auth, email, password);
   if (credential.user.emailVerified) {
@@ -320,6 +320,8 @@ export async function registerWithEmailAndPassword(
   const firebaseUser = auth.currentUser;
   if (firebaseUser) {
     try {
+      // 인증 메일 제목/본문은 Firebase Console → Authentication → Templates 에서 설정.
+      // 한국어·합격/인증 문구 권장: docs/FIREBASE_EMAIL_VERIFICATION_TEMPLATE.md
       await sendEmailVerification(firebaseUser);
     } catch (mailErr) {
       await signOut(auth);

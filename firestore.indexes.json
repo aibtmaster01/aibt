@@ -25,5 +25,8 @@
       ]
     }
   ],
-  "fieldOverrides": [{"collectionGroup":"questions","fieldPath":"q_id","indexes":[{"order":"ASCENDING","queryScope":"COLLECTION_GROUP"}]}]
+  "fieldOverrides": [
+    {"collectionGroup":"questions","fieldPath":"q_id","indexes":[{"order":"ASCENDING","queryScope":"COLLECTION_GROUP"}]},
+    {"collectionGroup":"questions","fieldPath":"cert_id","indexes":[{"order":"ASCENDING","queryScope":"COLLECTION_GROUP"}]}
+  ]
 }

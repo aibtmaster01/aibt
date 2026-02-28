@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
+import {
   LayoutDashboard,
   Users,
   FileQuestion,
@@ -26,6 +35,7 @@ import { useAllCertificationInfos } from '../hooks/useCertificationInfo';
 import { useAuth } from '../contexts/AuthContext';
 import {
   subscribeToUsers,
+  fetchUsersPage,
   updateUserMemberships,
   updateUserBanned,
   sendPasswordResetToUser,
@@ -33,10 +43,13 @@ import {
   fetchUserQuestionCount,
   updateUserAdminMemo,
   fetchTodayVisitorCount,
-  uploadBIGDATAExamSchedules,
+  fetchVisitorCountsForRange,
+  fetchErrorLogs,
   EXAM_SCHEDULES,
+  USERS_PAGE_SIZE,
   type AdminUser,
   type MembershipUpdateInput,
+  type ErrorLogEntry,
 } from '../services/adminService';
 
 type AdminMenu = 'dashboard' | 'users' | 'questions' | 'billing';
@@ -54,13 +67,17 @@ interface UserListRow {
 interface AdminProps {
   users?: User[];
   currentUser?: User | null;
+  /** 메인 LNB에서 진입 시 사용. 이때 어드민 전용 LNB는 숨김 */
+  initialMenu?: AdminMenu;
+  hideSidebar?: boolean;
 }
 
 type PaymentFormEntry = { checked: boolean; startDate: string; expiryDate: string; targetScheduleId: string };
 
-export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: currentUserProp }) => {
+export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: currentUserProp, initialMenu, hideSidebar }) => {
   const { user: authUser } = useAuth();
-  const [menu, setMenu] = useState<AdminMenu>('dashboard');
+  const [menu, setMenu] = useState<AdminMenu>(initialMenu ?? 'dashboard');
+  const effectiveMenu = hideSidebar ? (initialMenu ?? 'dashboard') : menu;
   const [firestoreUsers, setFirestoreUsers] = useState<AdminUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -79,6 +96,17 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   const [lastUserDoc, setLastUserDoc] = useState<DocumentSnapshot | null>(null);
   const [hasMoreUsers, setHasMoreUsers] = useState(false);
   const [usersNextLoading, setUsersNextLoading] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
+  const [trendStart, setTrendStart] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [trendEnd, setTrendEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [visitorTrend, setVisitorTrend] = useState<{ date: string; count: number }[]>([]);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([]);
+  const [errorLogsLoading, setErrorLogsLoading] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -114,13 +142,19 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   }, [firestoreUsers, usersProp]);
 
   useEffect(() => {
-    const unsub = subscribeToUsers((users, lastDoc) => {
-      setLastUserDoc(lastDoc);
-      setHasMoreUsers(users.length >= USERS_PAGE_SIZE);
-      setFirestoreUsers((prev) =>
-        prev.length <= USERS_PAGE_SIZE ? users : [...users, ...prev.slice(USERS_PAGE_SIZE)]
-      );
-    });
+    const unsub = subscribeToUsers(
+      (users, lastDoc) => {
+        setUsersLoadError(null);
+        setLastUserDoc(lastDoc);
+        setHasMoreUsers(users.length >= USERS_PAGE_SIZE);
+        setFirestoreUsers((prev) =>
+          prev.length <= USERS_PAGE_SIZE ? users : [...users, ...prev.slice(USERS_PAGE_SIZE)]
+        );
+      },
+      (err) => {
+        setUsersLoadError(err?.message || '회원 목록을 불러오지 못했습니다.');
+      }
+    );
     return () => unsub();
   }, []);
 
@@ -128,8 +162,8 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
     () =>
       users.filter(
         (u) =>
-          u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.name.toLowerCase().includes(searchQuery.toLowerCase())
+          (u.email ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (u.name ?? '').toLowerCase().includes(searchQuery.toLowerCase())
       ),
     [users, searchQuery]
   );
@@ -246,6 +280,24 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
     if (menu !== 'dashboard') return;
     fetchTodayVisitorCount(today).then(setTodayVisitors).catch(() => setTodayVisitors(0));
   }, [menu, today]);
+
+  useEffect(() => {
+    if (effectiveMenu !== 'dashboard') return;
+    setTrendLoading(true);
+    fetchVisitorCountsForRange(trendStart, trendEnd)
+      .then(setVisitorTrend)
+      .catch(() => setVisitorTrend([]))
+      .finally(() => setTrendLoading(false));
+  }, [effectiveMenu, trendStart, trendEnd]);
+
+  useEffect(() => {
+    if (effectiveMenu !== 'dashboard') return;
+    setErrorLogsLoading(true);
+    fetchErrorLogs(100)
+      .then(setErrorLogs)
+      .catch(() => setErrorLogs([]))
+      .finally(() => setErrorLogsLoading(false));
+  }, [effectiveMenu]);
 
   const effectiveUser = currentUserProp ?? authUser ?? null;
 
@@ -408,39 +460,43 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
 
   return (
     <div className="min-h-screen bg-[#edf1f5] flex">
-      <aside className="w-64 bg-white border-r border-slate-200 shrink-0 flex flex-col">
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-[#0034d3] rounded-lg flex items-center justify-center">
-              <ShieldCheck className="text-white" size={20} />
+      {!hideSidebar && (
+        <aside className="w-64 bg-white border-r border-slate-200 shrink-0 flex flex-col">
+          <div className="p-6 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 bg-[#0034d3] rounded-lg flex items-center justify-center">
+                <ShieldCheck className="text-white" size={20} />
+              </div>
+              <span className="font-black text-slate-900">Admin</span>
             </div>
-            <span className="font-black text-slate-900">Admin</span>
           </div>
-        </div>
-        <nav className="p-3 flex-1">
-          {menuItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => !item.disabled && setMenu(item.id)}
-              disabled={item.disabled}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left font-semibold transition-colors ${
-                menu === item.id && !item.disabled ? 'bg-[#0034d3]/20 text-slate-800' : item.disabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-              {item.disabled && <span className="ml-auto text-xs text-slate-400">준비중</span>}
-            </button>
-          ))}
-        </nav>
-      </aside>
+          <nav className="p-3 flex-1">
+            {menuItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => !item.disabled && setMenu(item.id)}
+                disabled={item.disabled}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left font-semibold transition-colors ${
+                  menu === item.id && !item.disabled ? 'bg-[#0034d3]/20 text-slate-800' : item.disabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+                {item.disabled && <span className="ml-auto text-xs text-slate-400">준비중</span>}
+              </button>
+            ))}
+          </nav>
+        </aside>
+      )}
 
       <main className="flex-1 overflow-auto p-6 md:p-8">
-        {menu === 'dashboard' && (
+        {effectiveMenu === 'dashboard' && (
           <>
-            <div className="max-w-4xl">
+            <div className="max-w-5xl">
               <h1 className="text-2xl font-black text-slate-900 mb-6">대시보드</h1>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+              <h2 className="text-lg font-bold text-slate-700 mb-3">회원 요약</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <p className="text-slate-500 text-sm font-bold mb-1">총 가입자 수</p>
                   <p className="text-3xl font-black text-slate-900">{stats.total}</p>
@@ -465,32 +521,148 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                   </p>
                 </div>
               </div>
-            </div>
-            <div className="mt-4 max-w-4xl">
-              <div className="bg-[#99ccff] rounded-2xl border border-[#0034d3]/30 p-4 flex items-center justify-between gap-4">
-                <p className="text-sm text-slate-900">{getCertDisplayName(CERTIFICATIONS.find((c) => c.code === 'BIGDATA') ?? null, certInfos.BIGDATA ?? null) || 'BIGDATA'} 시험회차/시험일/결과발표일을 Firestore에 업로드합니다.</p>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await uploadBIGDATAExamSchedules();
-                      setToast({ type: 'success', message: 'BIGDATA exam_schedules 업로드 완료' });
-                    } catch (e) {
-                      setToast({ type: 'error', message: (e as Error).message });
-                    }
-                  }}
-                  className="shrink-0 px-4 py-2 rounded-xl bg-[#003087] text-white font-bold text-sm hover:bg-[#003087]"
-                >
-                  시험회차 데이터 업로드 (BIGDATA)
-                </button>
+
+              <h2 className="text-lg font-bold text-slate-700 mb-3">회원수 추이 (방문자 수)</h2>
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-6">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(1);
+                      setTrendStart(d.toISOString().slice(0, 10));
+                      setTrendEnd(new Date().toISOString().slice(0, 10));
+                    }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    이번 달
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setMonth(d.getMonth() - 1);
+                      d.setDate(1);
+                      setTrendStart(d.toISOString().slice(0, 10));
+                      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+                      setTrendEnd(end.toISOString().slice(0, 10));
+                    }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    지난달
+                  </button>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <span>시작일</span>
+                    <input
+                      type="date"
+                      value={trendStart}
+                      onChange={(e) => setTrendStart(e.target.value)}
+                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <span>종료일</span>
+                    <input
+                      type="date"
+                      value={trendEnd}
+                      onChange={(e) => setTrendEnd(e.target.value)}
+                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                    />
+                  </label>
+                </div>
+                {trendLoading ? (
+                  <p className="text-slate-500 text-sm py-4">로딩 중...</p>
+                ) : visitorTrend.length === 0 ? (
+                  <p className="text-slate-500 text-sm py-4">해당 기간 데이터가 없습니다.</p>
+                ) : (
+                  <div className="w-full h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={visitorTrend} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 11, fill: '#64748b' }}
+                          tickFormatter={(v) => v.slice(5).replace('-', '/')}
+                        />
+                        <YAxis tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0' }}
+                          labelFormatter={(v) => v}
+                          formatter={(value: number) => [`${value}명`, '방문자']}
+                        />
+                        <Line type="monotone" dataKey="count" stroke="#0034d3" strokeWidth={2} dot={{ fill: '#0034d3', r: 3 }} name="방문자 수" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              <h2 className="text-lg font-bold text-slate-700 mb-3">오류 로그 (클라이언트)</h2>
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mb-6">
+                {errorLogsLoading ? (
+                  <div className="p-6 text-slate-500 text-sm">로딩 중...</div>
+                ) : errorLogs.length === 0 ? (
+                  <div className="p-6 text-slate-500 text-sm">기록된 오류가 없습니다. (Firebase Console 또는 error_logs 컬렉션)</div>
+                ) : (
+                  <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          <th className="px-4 py-3 font-bold text-slate-600 w-36">시간</th>
+                          <th className="px-4 py-3 font-bold text-slate-600 w-28">사용자</th>
+                          <th className="px-4 py-3 font-bold text-slate-600">메시지</th>
+                          <th className="px-4 py-3 font-bold text-slate-600 w-24">상세</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {errorLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{log.timestamp ? new Date(log.timestamp).toLocaleString('ko-KR') : '—'}</td>
+                            <td className="px-4 py-2 text-slate-700">{log.userEmail || log.userId || '—'}</td>
+                            <td className="px-4 py-2 text-slate-900 max-w-md truncate" title={log.message}>{log.message}</td>
+                            <td className="px-4 py-2">
+                              {log.stack || log.context ? (
+                                <details className="cursor-pointer">
+                                  <summary className="text-[#0034d3] font-medium">보기</summary>
+                                  <pre className="mt-1 p-2 bg-slate-50 rounded text-xs overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                    {log.context}
+                                    {log.stack || ''}
+                                  </pre>
+                                </details>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           </>
         )}
 
-        {menu === 'users' && (
+        {effectiveMenu === 'users' && (
           <div className="max-w-6xl">
             <h1 className="text-2xl font-black text-slate-900 mb-6">회원 관리</h1>
+            {usersLoadError && (
+              <div className="mb-4 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+                <p className="font-bold">목록 로드 오류</p>
+                <p className="mt-1">{usersLoadError}</p>
+                <p className="mt-2 text-amber-700">
+                  Firestore 규칙에서 관리자만 users 컬렉션을 읽을 수 있습니다. 로그인한 계정의 Firestore 문서에 <code className="bg-amber-100 px-1 rounded">isAdmin: true</code>가 있는지 확인하세요.
+                </p>
+              </div>
+            )}
+            {!usersLoadError && users.length === 0 && (
+              <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-sm">
+                <p className="font-bold">회원이 없거나 목록이 비어 있습니다</p>
+                <p className="mt-1">회원 목록은 <strong>Firestore → users 컬렉션</strong>을 읽습니다. Auth에만 있고 Firestore users에 문서가 없으면 안 보입니다.</p>
+                <p className="mt-1 text-slate-600">Auth 사용자를 Firestore에 동기화하려면: <code className="bg-slate-100 px-1 rounded text-xs">backend/scripts/sync_auth_to_firestore.py</code> 실행. 관리자 계정은 Firestore 문서에 <code className="bg-slate-100 px-1 rounded text-xs">isAdmin: true</code>인지 확인하세요.</p>
+              </div>
+            )}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
               <div className="p-4 border-b border-slate-100 space-y-3">
                 <div className="relative">
@@ -688,7 +860,7 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
           </div>
         )}
 
-        {(menu === 'questions' || menu === 'billing') && (
+        {(effectiveMenu === 'questions' || effectiveMenu === 'billing') && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-12 text-center text-slate-400">
             <p className="font-bold">준비 중입니다.</p>
           </div>

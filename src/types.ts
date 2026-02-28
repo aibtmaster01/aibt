@@ -87,9 +87,9 @@ export interface Question {
   aiExplanation?: string;
   wrongFeedback?: Record<string, string>; // Key: option index, Value: reason
   imageUrl?: string;
-  /** 통계·큐레이션용 1단계 분류: 개념(하이어키) 이름 (예: "데이터 탐색(EDA)") */
-  hierarchy?: string;
-  /** 전체 경로 3단계 (예: "BIGDATA > 상관분석 > 시각화") - 표시/하위 호환용 */
+  /** 통계·큐레이션용 1단계 분류: 핵심 개념 이름 (core_concept, 예: "데이터 수집") */
+  core_concept?: string;
+  /** 전체 경로 3단계 (예: "BIGDATA > 데이터 수집 > 계산 풀이형") - 표시/하위 호환용 */
   topic?: string;
   /** 문제별 핵심 키워드 (태그별 통계·태그 기반 큐레이션용) */
   tags: string[];
@@ -107,6 +107,8 @@ export interface Question {
   difficulty_level?: number;
   /** Core_ID (예: C05_3) - Dynamic Weakness Attack 큐레이션용 */
   core_id?: string;
+  /** 세부 개념 ID (예: "22-2") - proficiency·대시보드 집계용 */
+  sub_core_id?: string;
   /** round 1~5: 정규, 99: 약점 공략 풀 */
   round?: number;
   /** 문제 본문 내 표: HTML 문자열 또는 { headers, rows } (문제 화면에서 렌더) */
@@ -147,9 +149,11 @@ export interface CertificationInfo {
   /** 유형명 → 설명 (마이페이지 유형별 밸런스 툴팁용) */
   problem_type_descriptions?: Record<string, string>;
   /** 해당 과목의 전체 개념 목록 (결과 화면 등에서 고정 순서로 노출, Firestore certification_info에 설정) */
-  hierarchy_order?: string[];
+  core_concept_order?: string[];
   /** 개념명 → 키워드(태그) 배열 (마이페이지 취약 개념 분석 아래 개념별 태그 표시용) */
   core_concept_keywords?: Record<string, string[]>;
+  /** 개념 id "1"~"80" → { concept, keywords } (취약 개념 "개념79" 표시 시 개념명·키워드 조회용) */
+  core_concepts_by_id?: Record<string, { concept: string; keywords: string[] }>;
   /** 자격증 시험 표시 이름 (예: "빅데이터분석기사 필기") - UI 통일용 */
   exam_name?: string;
   /** 시험 회차별 시험일·결과발표일 */
@@ -172,6 +176,8 @@ export interface ExamAnswerEntry {
   isCorrect: boolean;
   /** 유저가 '헷갈려요'를 체크했는지 (저장 시 항상 포함) */
   isConfused?: boolean;
+  /** 문항 풀이 소요 시간(초). 스탯 보정용 */
+  elapsedSec?: number;
 }
 
 export interface ExamSession {

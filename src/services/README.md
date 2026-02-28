@@ -1,7 +1,6 @@
 # Services
 
-프론트엔드에서 사용하는 **비즈니스 로직·API·Firestore 연동**을 담당하는 서비스 모음입니다.  
-서비스를 추가하거나 수정할 때 이 문서를 함께 업데이트해 주세요.
+프론트엔드 비즈니스 로직·API·Firestore 연동 서비스.
 
 ---
 
@@ -9,34 +8,26 @@
 
 | 파일 | 목적 |
 |------|------|
-| [authService.ts](./authService.ts) | **인증·회원** — 로그인/회원가입/로그아웃, 비밀번호 변경·재설정, 기기 수 제한(MAX_DEVICES). Firebase Auth + Firestore `users` 연동, 멤버십 → subscriptions/paidCertIds/expiredCertIds 변환. |
-
-| [adminService.ts](./adminService.ts) | **관리자** — Firestore `admin_users`, `memberships` 조회·동기화, 회원 목록/상세, 비밀번호 재설정 메일, 퀴즈 완료 데이터(`exam_results`) 기준 통계 등. (Admin SDK 없이 Firestore만 사용) |
-
-| [gradingService.ts](./gradingService.ts) | **채점·통계** — 퀴즈 제출 시 `certification_info` 기반 과목별 점수·합격 판정, `exam_results` 저장, `users/{uid}/stats/{certCode}`의 hierarchy/problem_type/subject 3차원 통계(increment, confused 포함), Elo 업데이트. 레이더/과목 통계 조회. |
-
-| [examService.ts](./examService.ts) | **시험 문제 조회** — Round 1~3: `static_exams` 고정 문제. Round 4+: aiRoundCurationService 호출. Round 5(약점): `generateAiMockExam`(stats 기반·실전 대비형/약점 강화형 모드). 회원 등급별 마스킹, 약점 다시풀기(stats.problem_type_stats). |
-
-| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | **Round 4+ 맞춤 큐레이션** — `exam_results`로 맞춘 문제 제외·틀린 문제(Zone A) 우선, 전체 풀에서 과목별 배분 후 20/80문제 생성. `getAnalysisContext`·`getTopWeakTags`는 stats(hierarchy_stats, tag_stats) 기반. |
-
-| [statsService.ts](./statsService.ts) | **대시보드 통계** — `users/{uid}/stats/{certCode}` 및 `exam_results` 조회 후 UI용 포맷 변환(레이더, 과목별 점수, 약점 Top2, 최근 시험 트렌드 등). |
+| [authService.ts](./authService.ts) | 인증·회원 — 로그인/회원가입/로그아웃, 비밀번호 변경·재설정, 기기 수 제한. Firebase Auth + Firestore users 연동. |
+| [examService.ts](./examService.ts) | 시험 문제 — Round 1~3 static_exams, Round 4+ aiRoundCurationService, 집중학습(과목/유형/개념), 접근 제어, 등급별 마스킹. |
+| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | Round 4+ 맞춤 큐레이션 — Zone A/B, 과목별 배분, 20/80문제 생성. |
+| [gradingService.ts](./gradingService.ts) | 채점·통계 — 과목별 점수·합격 판정, exam_results 저장, stats 3차원 갱신, Elo 업데이트. |
+| [statsService.ts](./statsService.ts) | 대시보드 통계 — stats·exam_results 조회, 레이더·약점·트렌드 포맷 변환. |
+| [statsServiceWithCache.ts](./statsServiceWithCache.ts) | 마이페이지 캐시 래퍼 — statsService 결과 캐싱. |
+| [adminService.ts](./adminService.ts) | 관리자 — admin_users, memberships, 회원 목록/상세, 에러 로그. |
+| [adminQuestionService.ts](./adminQuestionService.ts) | 관리자 문제 CRUD — 문제 조회/수정/삭제. |
+| [errorLogService.ts](./errorLogService.ts) | 클라이언트 에러 로깅 — Firestore에 에러 기록. |
+| [db/localCacheDB.ts](./db/localCacheDB.ts) | IndexedDB 캐시 — 문제 인덱스 로컬 저장·동기화. |
 
 ---
 
 ## 데이터 흐름 요약
 
 ```
-[인증]     authService        → 로그인/회원·멤버십
-[문제 선정] examService        → 라운드별·약점·큐레이션 진입점
-[큐레이션] aiRoundCurationService → Round 4+ 문제 선정(Zone A/B, 제외)
-[채점]     gradingService     → 제출 답 채점·통계·Elo 반영
-[대시보드] statsService       → 통계 조회·포맷팅
-[관리]     adminService       → 관리자 회원/멤버십/통계
+[인증]     authService             → 로그인/회원·멤버십
+[문제 선정] examService             → 라운드별·약점·큐레이션 진입점
+[큐레이션] aiRoundCurationService   → Round 4+ 문제 선정(Zone A/B)
+[채점]     gradingService          → 제출 답 채점·통계·Elo 반영
+[대시보드] statsService            → 통계 조회·포맷팅
+[관리]     adminService            → 관리자 회원/멤버십/통계
 ```
-
----
-
-## 문서 업데이트
-
-- **새 서비스 추가 시**: 위 표에 파일명·목적 한 줄 추가.
-- **기존 서비스 역할 변경 시**: 해당 행의 목적 설명을 수정하고, 필요하면 데이터 흐름 요약도 갱신.

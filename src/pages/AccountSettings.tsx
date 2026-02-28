@@ -105,7 +105,7 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({
   };
 
   return (
-    <div className="max-w-xl mx-auto px-5 py-8">
+    <div className="max-w-6xl mx-auto px-5 py-8">
       <h1 className="text-2xl font-black text-slate-900 mb-8">계정 설정</h1>
 
       {/* 이름 (성 + 이름) */}

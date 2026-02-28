@@ -2,7 +2,7 @@
  * gradingService.ts
  * 채점 및 결과 저장
  * - certification_info 기반 과목별 점수·합격 판정·exam_results 저장
- * - users/{uid}/stats/{certCode} 하위 hierarchy_stats, problem_type_stats, subject_stats 3차원 통계
+ * - users/{uid}/stats/{certCode} 하위 core_concept_stats, problem_type_stats, subject_stats 3차원 통계
  *   - correct/total/misconception_count: increment(전체 역사 누적)
  *   - proficiency: Elo 스타일 실시간 갱신(최신 회차 가중 반영, 1200 기준 K=32)
  * - exam_results에 predicted_pass_rate 저장
@@ -78,12 +78,16 @@ export interface QuizAnswerRecord {
   selected: number;
   isCorrect: boolean;
   isConfused?: boolean;
+  /** 문항 풀이 소요 시간(초). estimated_time_sec의 절반 미만이면 찍은 것으로 간주해 proficiency 보정 */
+  elapsedSec?: number;
 }
 
 /** exam_results 문서에 저장할 옵션 */
 export interface SubmitQuizResultOptions {
   examId?: string;
   roundId?: string;
+  /** 집중학습(과목/유형/개념) 완료 시 나의 학습 기록 표시용 라벨 (예: "과목 강화 학습 - 3과목 강화") */
+  roundLabel?: string;
 }
 
 /** stats 하위 문서 내 키별 값: { correct, total, confused, proficiency? } */
@@ -95,11 +99,13 @@ export interface StatEntry {
   proficiency?: number;
 }
 
-/** users/{uid}/stats/{certCode} 문서 구조 (3차원 통계 + 태그/헷갈림) */
+/** users/{uid}/stats/{certCode} 문서 구조 (3차원 통계 + 태그/헷갈림 + 세부개념) */
 export interface UserStatsDoc {
-  hierarchy_stats?: Record<string, StatEntry>;
+  core_concept_stats?: Record<string, StatEntry>;
   problem_type_stats?: Record<string, StatEntry>;
   subject_stats?: Record<string, StatEntry>;
+  /** 세부 개념(sub_core_id) 단위 proficiency·correct·total (예: "22-2") */
+  sub_core_id_stats?: Record<string, StatEntry>;
   /** 태그별 correct, total, misconception_count (필드 키는 sanitizeKey 적용) */
   tag_stats?: Record<string, StatEntry>;
   /** '헷갈려요' 체크한 문제 ID 배열 */
@@ -147,7 +153,7 @@ function computePredictedPassRate(
 /**
  * 퀴즈 결과 제출
  * - certification_info 기반 과목별 점수·합격 판정·exam_results 저장 (predicted_pass_rate 포함)
- * - users/{uid}/stats/{certCode} 에 hierarchy_stats, problem_type_stats, subject_stats 업데이트 (increment)
+ * - users/{uid}/stats/{certCode} 에 core_concept_stats, problem_type_stats, subject_stats 업데이트 (increment)
  * - Elo 유지
  */
 export async function submitQuizResult(
@@ -218,6 +224,7 @@ export async function submitQuizResult(
     certId,
     certCode,
     roundId: options?.roundId ?? null,
+    ...(options?.roundLabel != null && options.roundLabel !== '' ? { roundLabel: options.roundLabel } : {}),
     subject_scores,
     is_passed,
     predicted_pass_rate,
@@ -227,6 +234,7 @@ export async function submitQuizResult(
       qid: r.qid,
       isCorrect: r.isCorrect,
       isConfused: r.isConfused === true,
+      ...(r.elapsedSec != null && { elapsedSec: r.elapsedSec }),
     })),
     submittedAt: Timestamp.now(),
   };
@@ -252,10 +260,11 @@ export async function submitQuizResult(
     throw err; // 상위로 에러 전파하여 App.tsx에서 catch 가능하도록
   }
 
-  // ---- 3차원 통계 + 태그 통계 집계 (hierarchy, problem_type, subject, tag_stats) ----
-  const hierarchyAgg: Record<string, { correct: number; total: number; confused: number }> = {};
+  // ---- 3차원 통계 + 태그 + 세부개념(sub_core_id) 집계 ----
+  const conceptAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const problemTypeAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const subjectAgg: Record<string, { correct: number; total: number; confused: number }> = {};
+  const subCoreIdAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const tagAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const confusedQids: string[] = [];
 
@@ -268,12 +277,21 @@ export async function submitQuizResult(
     const confused = rec.isConfused === true ? 1 : 0;
     if (rec.isConfused === true && rec.qid) confusedQids.push(rec.qid);
 
-    // 1) hierarchy_stats: 문제의 hierarchy 필드 (표준 분류 체계)
-    const hierarchyKey = (q.hierarchy ?? '').trim() || '기타';
-    if (!hierarchyAgg[hierarchyKey]) hierarchyAgg[hierarchyKey] = { correct: 0, total: 0, confused: 0 };
-    hierarchyAgg[hierarchyKey].correct += correct;
-    hierarchyAgg[hierarchyKey].total += total;
-    hierarchyAgg[hierarchyKey].confused += confused;
+    // 0) sub_core_id_stats: 세부 개념 단위 (proficiency 저장용)
+    const subCoreKey = (q.sub_core_id ?? '').trim();
+    if (subCoreKey) {
+      if (!subCoreIdAgg[subCoreKey]) subCoreIdAgg[subCoreKey] = { correct: 0, total: 0, confused: 0 };
+      subCoreIdAgg[subCoreKey].correct += correct;
+      subCoreIdAgg[subCoreKey].total += total;
+      subCoreIdAgg[subCoreKey].confused += confused;
+    }
+
+    // 1) core_concept_stats: 문제의 core_concept 필드 (표준 분류 체계)
+    const conceptKey = (q.core_concept ?? '').trim() || '기타';
+    if (!conceptAgg[conceptKey]) conceptAgg[conceptKey] = { correct: 0, total: 0, confused: 0 };
+    conceptAgg[conceptKey].correct += correct;
+    conceptAgg[conceptKey].total += total;
+    conceptAgg[conceptKey].confused += confused;
 
     // 2) problem_type_stats: problem_types 배열 순회 (1문제가 여러 유형일 수 있음)
     const types = Array.isArray(q.problem_types) ? q.problem_types : [];
@@ -311,20 +329,22 @@ export async function submitQuizResult(
   const statsSnap = await getDoc(statsRef);
   const statsData = statsSnap.exists() ? (statsSnap.data() ?? {}) : {};
 
-  const hierarchyStats = (statsData.hierarchy_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const conceptStats = (statsData.core_concept_stats ?? (statsData as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
   const problemTypeStats = (statsData.problem_type_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
   const subjectStats = (statsData.subject_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const subCoreIdStats = (statsData.sub_core_id_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
 
   const getProficiency = (entry: unknown): number => {
     const e = entry as { proficiency?: number } | undefined;
     return e?.proficiency != null && Number.isFinite(e.proficiency) ? e.proficiency : DEFAULT_ELO;
   };
 
-  const hierarchyProficiency: Record<string, number> = {};
+  const conceptProficiency: Record<string, number> = {};
   const problemTypeProficiency: Record<string, number> = {};
   const subjectProficiency: Record<string, number> = {};
-  for (const [pathKey, entry] of Object.entries(hierarchyStats)) {
-    hierarchyProficiency[pathKey] = getProficiency(entry);
+  const subCoreIdProficiency: Record<string, number> = {};
+  for (const [pathKey, entry] of Object.entries(conceptStats)) {
+    conceptProficiency[pathKey] = getProficiency(entry);
   }
   for (const [pathKey, entry] of Object.entries(problemTypeStats)) {
     problemTypeProficiency[pathKey] = getProficiency(entry);
@@ -332,15 +352,30 @@ export async function submitQuizResult(
   for (const [pathKey, entry] of Object.entries(subjectStats)) {
     subjectProficiency[pathKey] = getProficiency(entry);
   }
+  for (const [pathKey, entry] of Object.entries(subCoreIdStats)) {
+    subCoreIdProficiency[pathKey] = getProficiency(entry);
+  }
 
   for (const rec of sessionHistory) {
     const q = qMap.get(rec.qid);
     if (!q) continue;
     const outcome = rec.isCorrect ? 1 : 0;
-    const isConfused = rec.isConfused === true;
+    const estimatedSec = (q as { estimated_time_sec?: number }).estimated_time_sec;
+    const tooFast =
+      rec.elapsedSec != null &&
+      estimatedSec != null &&
+      Number.isFinite(estimatedSec) &&
+      rec.elapsedSec < estimatedSec / 2;
+    const isConfused = rec.isConfused === true || tooFast;
 
-    const hKey = sanitizeKey((q.hierarchy ?? '').trim() || '기타');
-    hierarchyProficiency[hKey] = nextProficiency(hierarchyProficiency[hKey] ?? DEFAULT_ELO, outcome, isConfused);
+    const subCoreKey = (q.sub_core_id ?? '').trim();
+    if (subCoreKey) {
+      const pathKey = sanitizeKey(subCoreKey);
+      subCoreIdProficiency[pathKey] = nextProficiency(subCoreIdProficiency[pathKey] ?? DEFAULT_ELO, outcome, isConfused);
+    }
+
+    const cKey = sanitizeKey((q.core_concept ?? '').trim() || '기타');
+    conceptProficiency[cKey] = nextProficiency(conceptProficiency[cKey] ?? DEFAULT_ELO, outcome, isConfused);
 
     for (const pt of Array.isArray(q.problem_types) ? q.problem_types : []) {
       if (!pt || typeof pt !== 'string') continue;
@@ -356,12 +391,12 @@ export async function submitQuizResult(
 
   const updates: Record<string, ReturnType<typeof increment> | number | string[]> = {};
 
-  for (const [key, agg] of Object.entries(hierarchyAgg)) {
+  for (const [key, agg] of Object.entries(conceptAgg)) {
     const pathKey = sanitizeKey(key);
-    updates[`hierarchy_stats.${pathKey}.correct`] = increment(agg.correct);
-    updates[`hierarchy_stats.${pathKey}.total`] = increment(agg.total);
-    updates[`hierarchy_stats.${pathKey}.misconception_count`] = increment(agg.confused);
-    updates[`hierarchy_stats.${pathKey}.proficiency`] = hierarchyProficiency[pathKey] ?? DEFAULT_ELO;
+    updates[`core_concept_stats.${pathKey}.correct`] = increment(agg.correct);
+    updates[`core_concept_stats.${pathKey}.total`] = increment(agg.total);
+    updates[`core_concept_stats.${pathKey}.misconception_count`] = increment(agg.confused);
+    updates[`core_concept_stats.${pathKey}.proficiency`] = conceptProficiency[pathKey] ?? DEFAULT_ELO;
   }
   for (const [key, agg] of Object.entries(problemTypeAgg)) {
     const pathKey = sanitizeKey(key);
@@ -376,6 +411,13 @@ export async function submitQuizResult(
     updates[`subject_stats.${pathKey}.total`] = increment(agg.total);
     updates[`subject_stats.${pathKey}.misconception_count`] = increment(agg.confused);
     updates[`subject_stats.${pathKey}.proficiency`] = subjectProficiency[pathKey] ?? DEFAULT_ELO;
+  }
+  for (const [key, agg] of Object.entries(subCoreIdAgg)) {
+    const pathKey = sanitizeKey(key);
+    updates[`sub_core_id_stats.${pathKey}.correct`] = increment(agg.correct);
+    updates[`sub_core_id_stats.${pathKey}.total`] = increment(agg.total);
+    updates[`sub_core_id_stats.${pathKey}.misconception_count`] = increment(agg.confused);
+    updates[`sub_core_id_stats.${pathKey}.proficiency`] = subCoreIdProficiency[pathKey] ?? DEFAULT_ELO;
   }
   for (const [tagKey, agg] of Object.entries(tagAgg)) {
     updates[`tag_stats.${tagKey}.correct`] = increment(agg.correct);

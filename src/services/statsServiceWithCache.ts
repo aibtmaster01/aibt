@@ -37,7 +37,7 @@ export async function getCachedOrFetchMyPageData(
         recentPassRate: cached.recentPassRate,
         radarData: cached.radarData,
         subjectScores: cached.subjectScores,
-        weaknessTop2: cached.weaknessTop2,
+        weaknessTop3: cached.weaknessTop3,
       };
     }
   }
@@ -56,7 +56,7 @@ export async function getCachedOrFetchMyPageData(
     recentPassRate: trendResult.recentPassRate,
     radarData: dashboardResult.radarData,
     subjectScores: dashboardResult.subjectScores,
-    weaknessTop2: dashboardResult.weaknessTop2,
+    weaknessTop3: dashboardResult.weaknessTop3,
     lastUpdated: now,
   });
 

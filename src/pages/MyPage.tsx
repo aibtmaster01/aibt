@@ -22,8 +22,9 @@ import {
   FailCouponModal,
 } from "../components/dashboard/modals";
 import { Skeleton } from "../components/ui/skeleton";
-import { Lock, ChevronRight, ChevronDown, FileX } from "lucide-react";
+import { Lock, ChevronRight, ChevronDown, FileX, HelpCircle } from "lucide-react";
 import { mockTrendData, mockDashboardStats, MY_PAGE_EMPTY_MESSAGES } from "../data/myPageMockData";
+import { BIGDATA_CORE_CONCEPTS_BY_ID } from "../data/bigdataCoreConceptsById";
 
 function formatExamDate(dateId: string | undefined): string {
   if (!dateId) return "";
@@ -40,10 +41,18 @@ function getPassRateMessage(rate: number) {
   return "기초부터 차근차근 시작해봐요";
 }
 
-function getRoundLabel(roundId: string | null | undefined): string {
+/**
+ * 나의 학습 기록·모의고사 목록과 동일한 회차 라벨
+ * - 연습/응용/실전(round 1~3): 회차 없이 제목만 (연습 모의고사, 응용 모의고사, 실전 모의고사)
+ * - 약점 공략(round 6+): "약점 공략 모의고사 1회", "2회", … (목록 순서와 동일)
+ */
+function getRoundLabel(roundId: string | null | undefined, _certId?: string): string {
   if (!roundId) return "모의고사";
   const round = EXAM_ROUNDS.find((r) => r.id === roundId);
-  return round?.title ?? `${roundId}회차`;
+  if (!round) return `${roundId}회차`;
+  if (round.round <= 3) return round.title; // 연습/응용/실전 — 회차 없음
+  if (round.round >= 6) return `약점 공략 모의고사 ${round.round - 5}회`; // 목록과 동일 (6→1회, 7→2회, …)
+  return round.title; // 4,5: 고난도 모의고사 1회/2회
 }
 
 export interface MyPageProps {
@@ -66,6 +75,8 @@ export interface MyPageProps {
   /** 취약 개념 집중학습 (이해도 하위 2~10개 개념 50문항) */
   onStartWeakConceptFocus?: (certId: string) => void;
   showWeakConceptPreparing?: boolean;
+  /** 오답확인 클릭 시 해당 시험 결과 화면으로 이동 (examId로 결과 로드 후 결과 페이지로 이동) */
+  onViewExamResult?: (examId: string) => void;
   onLogout?: () => void;
 }
 
@@ -83,6 +94,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   showWeakTypePreparing,
   onStartWeakConceptFocus,
   showWeakConceptPreparing,
+  onViewExamResult,
   onLogout,
 }) => {
   const [activeCertId, setActiveCertId] = useState<string>(
@@ -92,6 +104,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   const [isPassModalOpen, setIsPassModalOpen] = useState(false);
   const [isFailModalOpen, setIsFailModalOpen] = useState(false);
   const [showWeaknessPaymentModal, setShowWeaknessPaymentModal] = useState(false);
+  const [openKeywordPopoverIndex, setOpenKeywordPopoverIndex] = useState<number | null>(null);
   const [weaknessPaymentModalMessage, setWeaknessPaymentModalMessage] = useState(
     "해당 기능은 열공 모드 가입 후 무제한 이용하실 수 있습니다."
   );
@@ -99,6 +112,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [scheduleDropdownOpen, setScheduleDropdownOpen] = useState(false);
   const scheduleDropdownRef = useRef<HTMLDivElement>(null);
+  const weaknessCardRef = useRef<HTMLDivElement>(null);
   /** 오답확인 모달: 해당 회차 오답 문항 번호 목록 */
   const [wrongAnswersModal, setWrongAnswersModal] = useState<{
     roundLabel: string;
@@ -162,6 +176,17 @@ export const MyPage: React.FC<MyPageProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [scheduleDropdownOpen]);
 
+  useEffect(() => {
+    if (openKeywordPopoverIndex === null) return;
+    const close = (e: MouseEvent) => {
+      if (weaknessCardRef.current && !weaknessCardRef.current.contains(e.target as Node)) {
+        setOpenKeywordPopoverIndex(null);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [openKeywordPopoverIndex]);
+
   const activeCert = CERTIFICATIONS.find((c) => c.id === activeCertId);
   const isExpired = user.expiredCertIds?.includes(activeCertId);
   const purchasedSchedules = useMemo(
@@ -206,11 +231,11 @@ export const MyPage: React.FC<MyPageProps> = ({
         setCertInfo(info ?? null);
       })
       .catch(() => {
-        setTrendData({ trendData: [], recentPassRate: 0, radarData: [], subjectScores: [], weaknessTop2: [] });
+        setTrendData({ trendData: [], recentPassRate: 0, radarData: [], subjectScores: [], weaknessTop3: [] });
         setDashboardStats({
           radarData: [],
           subjectScores: [],
-          weaknessTop2: [],
+          weaknessTop3: [],
         });
       })
       .finally(() => setLoading(false));
@@ -237,7 +262,7 @@ export const MyPage: React.FC<MyPageProps> = ({
         .map((a, i) => (a.isCorrect === false ? i + 1 : null))
         .filter((n): n is number => n !== null);
       setWrongAnswersModal({
-        roundLabel: getRoundLabel(roundId),
+        roundLabel: (data as { roundLabel?: string | null }).roundLabel ?? getRoundLabel(roundId, activeCertId),
         wrongIndices,
         totalQuestions: answers.length,
       });
@@ -255,7 +280,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   const recentPassRate = trendData?.recentPassRate ?? 0;
   const radarData = dashboardStats?.radarData ?? [];
   const subjectScores = dashboardStats?.subjectScores ?? [];
-  const weaknessTop2 = dashboardStats?.weaknessTop2 ?? [];
+  const weaknessTop3 = dashboardStats?.weaknessTop3 ?? [];
 
   const effectiveDaysLeft = nearestFromCertInfo?.daysLeft ?? daysLeft;
   const dDayText =
@@ -272,7 +297,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   const displaySubjectScores = hasLearningHistory ? subjectScores : [];
   /** 학습 이력 있으면 유료 여부와 관계없이 실제 유형/취약 데이터 표시 (샘플 문구·물음표 제거) */
   const displayRadarData = hasLearningHistory ? radarData : [];
-  const displayWeaknessTop2 = hasLearningHistory ? weaknessTop2 : [];
+  const displayWeaknessTop3 = hasLearningHistory ? weaknessTop3 : [];
   /** 무료 회원용 과목별 막대(실제 데이터 있을 때만 사용) */
   const freeSubjectScoresForDisplay = (certInfo?.subjects ?? [
     { subject_number: 1, name: "과목 1", question_count: 20 },
@@ -285,11 +310,12 @@ export const MyPage: React.FC<MyPageProps> = ({
     score: subjectScores[i]?.score ?? 0,
   }));
 
-  const ITEMS_PER_PAGE = 8;
+  const ITEMS_PER_PAGE = 6;
   const totalPages = Math.max(1, Math.ceil(displayTrend.length / ITEMS_PER_PAGE));
+  const effectivePage = Math.min(learningRecordsPage, totalPages);
   const paginatedTrend = [...displayTrend].slice(
-    (learningRecordsPage - 1) * ITEMS_PER_PAGE,
-    learningRecordsPage * ITEMS_PER_PAGE
+    (effectivePage - 1) * ITEMS_PER_PAGE,
+    effectivePage * ITEMS_PER_PAGE
   );
 
   const sessionLabel = (selectedSchedule?.label ?? nearestExam?.label ?? "").includes("(")
@@ -591,18 +617,27 @@ export const MyPage: React.FC<MyPageProps> = ({
                             <PolarAngleAxis
                               dataKey="subject"
                               axisLine={false}
-                              tick={({ payload, x, y, textAnchor }) => (
-                                <text
-                                  x={x}
-                                  y={y}
-                                  textAnchor={textAnchor}
-                                  fill={payload.value === weakestSubject ? "#1e56cd" : "#374151"}
-                                  fontSize={11}
-                                  fontWeight={payload.value === weakestSubject ? 700 : 500}
-                                >
-                                  {payload.value}
-                                </text>
-                              )}
+                              tick={({ payload, x, y, textAnchor }) => {
+                                const typeName = payload?.value ?? "";
+                                const description = certInfo?.problem_type_descriptions?.[typeName] ?? "";
+                                return (
+                                  <g>
+                                    {description && (
+                                      <title>{description}</title>
+                                    )}
+                                    <text
+                                      x={x}
+                                      y={y}
+                                      textAnchor={textAnchor}
+                                      fill={payload.value === weakestSubject ? "#1e56cd" : "#374151"}
+                                      fontSize={11}
+                                      fontWeight={payload.value === weakestSubject ? 700 : 500}
+                                    >
+                                      {payload.value}
+                                    </text>
+                                  </g>
+                                );
+                              }}
                             />
                             <PolarRadiusAxis domain={[0, 100]} axisLine={false} tick={false} />
                             <Radar
@@ -640,7 +675,7 @@ export const MyPage: React.FC<MyPageProps> = ({
               </div>
 
               {/* Card 3: 취약 개념 분석 */}
-              <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
+              <div ref={weaknessCardRef} className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
                 <div className="flex justify-between items-start gap-2 mb-3">
                   <h3 className="text-[#1e56cd] text-base font-bold">취약 개념 분석</h3>
                 </div>
@@ -655,27 +690,59 @@ export const MyPage: React.FC<MyPageProps> = ({
                     <>
                       <div className="flex-grow relative min-h-0">
                         <div className="space-y-3 rounded-xl p-3">
-                          {(displayWeaknessTop2.length ? displayWeaknessTop2 : mockWeaknessTop2).length > 0 ? (
-                            (displayWeaknessTop2.length ? displayWeaknessTop2 : mockWeaknessTop2).map((w, idx) => {
-                              const conceptTags = (certInfo?.core_concept_keywords?.[w.name] ?? []) as string[];
+                          {(displayWeaknessTop3.length ? displayWeaknessTop3 : mockDashboardStats.weaknessTop3).length > 0 ? (
+                            (displayWeaknessTop3.length ? displayWeaknessTop3 : mockDashboardStats.weaknessTop3).map((w, idx) => {
+                              // 개념 id: API의 w.id 우선, 없으면 "개념 79" / "개념79"에서 숫자 추출 (캐시된 구 데이터 대응)
+                              const resolvedId =
+                                w.id ?? (typeof w.name === "string" ? (w.name.match(/^개념\s*(\d+)$/) ?? null)?.[1] : null) ?? null;
+                              const byId =
+                                resolvedId != null
+                                  ? certInfo?.core_concepts_by_id?.[resolvedId] ??
+                                    (activeCert?.code === "BIGDATA" ? BIGDATA_CORE_CONCEPTS_BY_ID[resolvedId] : null)
+                                  : null;
+                              const displayName = byId?.concept ?? w.name;
+                              // Firestore core_concept_keywords는 개념명이 키 → 표시용 개념명(displayName)으로 조회
+                              const conceptTags = (byId?.keywords?.length
+                                ? byId.keywords
+                                : certInfo?.core_concept_keywords?.[displayName] ?? certInfo?.core_concept_keywords?.[w.name]) ?? [];
                               return (
                                 <div key={idx} className="bg-[#cce5ff] p-4 rounded-xl">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-sm font-bold text-gray-700 truncate">{w.name}</span>
-                                    <span className="text-xs font-bold text-[#1e56cd] shrink-0 ml-2">보완 필요</span>
-                                  </div>
-                                  {conceptTags.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-1.5">
-                                      {conceptTags.map((tag, ti) => (
-                                        <span
-                                          key={ti}
-                                          className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/80 text-xs text-[#1e56cd] border border-[#1e56cd]/30"
-                                        >
-                                          {tag}
-                                        </span>
-                                      ))}
+                                  <div className="flex justify-between items-center gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <span className="text-sm font-bold text-gray-700 truncate cursor-default block">
+                                        {displayName}
+                                      </span>
                                     </div>
-                                  )}
+                                    <div
+                                      className="relative shrink-0"
+                                      onMouseEnter={() => setOpenKeywordPopoverIndex(idx)}
+                                      onMouseLeave={() => setOpenKeywordPopoverIndex(null)}
+                                    >
+                                      <button
+                                        type="button"
+                                        aria-label="키워드 보기"
+                                        onClick={() => setOpenKeywordPopoverIndex((prev) => (prev === idx ? null : idx))}
+                                        className="p-0.5 rounded text-[#1e56cd] hover:bg-[#99ccff]/50 focus:outline-none focus:ring-2 focus:ring-[#1e56cd]/50"
+                                      >
+                                        <HelpCircle className="w-4 h-4" />
+                                      </button>
+                                      {openKeywordPopoverIndex === idx && (
+                                        <div className="absolute right-0 top-full mt-1 z-30 w-[200px] max-h-[180px] overflow-y-auto rounded-lg bg-slate-800 text-white text-xs shadow-xl py-2 px-2">
+                                          {conceptTags.length > 0 ? (
+                                            <ul className="space-y-1">
+                                              {conceptTags.map((tag, i) => (
+                                                <li key={i} className="py-0.5 px-1 truncate" title={tag}>
+                                                  {tag}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          ) : (
+                                            <p className="text-slate-300 py-1">키워드 없음</p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
                               );
                             })
@@ -733,10 +800,10 @@ export const MyPage: React.FC<MyPageProps> = ({
                   >
                       <div className="flex items-center gap-4">
                         <span className="text-sm font-bold text-gray-700">
-                          {(learningRecordsPage - 1) * ITEMS_PER_PAGE + i + 1}
+                          {(effectivePage - 1) * ITEMS_PER_PAGE + i + 1}
                         </span>
                         <span className="text-sm font-medium text-gray-600">
-                          {getRoundLabel(item.roundId)}
+                          {item.roundLabel ?? getRoundLabel(item.roundId, activeCertId)}
                           {item.date && <span className="text-gray-400 text-xs font-normal ml-1.5">({item.date})</span>}
                         </span>
                       </div>
@@ -746,7 +813,7 @@ export const MyPage: React.FC<MyPageProps> = ({
                             isPass ? "bg-[#99ccff] text-[#1e56cd] border-[#1e56cd]/40" : "bg-gray-100 text-gray-600 border-gray-200"
                           }`}
                         >
-                          {isPass ? "✓" : "✕"} {item.score}점
+                          {isPass ? `✓ ${item.score}점` : "불합격"}
                         </span>
                         <button
                           type="button"
@@ -763,7 +830,7 @@ export const MyPage: React.FC<MyPageProps> = ({
                           type="button"
                           onClick={() =>
                             item.examId
-                              ? handleWrongAnswers(item.examId, item.roundId)
+                              ? (onViewExamResult ? onViewExamResult(item.examId) : handleWrongAnswers(item.examId, item.roundId))
                               : undefined
                           }
                           disabled={wrongAnswersLoading}
@@ -791,7 +858,7 @@ export const MyPage: React.FC<MyPageProps> = ({
                     key={p}
                     type="button"
                     onClick={() => setLearningRecordsPage(p)}
-                    className={p === learningRecordsPage ? "text-[#1e56cd] underline" : "hover:text-gray-600"}
+                    className={p === effectivePage ? "text-[#1e56cd] underline" : "hover:text-gray-600"}
                   >
                     {p}
                   </button>

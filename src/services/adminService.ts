@@ -18,6 +18,7 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { CERTIFICATIONS, EXAM_SCHEDULES, EXAM_SCHEDULE_DATES } from '../constants';
 import { User } from '../types';
+import type { ExamScheduleItem } from '../types';
 
 export interface AdminUser extends User {
   isBanned?: boolean;
@@ -154,8 +155,7 @@ export async function fetchUsersPage(
   const users: AdminUser[] = [];
   pageDocs.forEach((docSnap) => {
     const data = docSnap.data();
-    if (!data.email) return;
-    users.push(firestoreDocToAdminUser(docSnap.id, data));
+    users.push(firestoreDocToAdminUser(docSnap.id, data || {}));
   });
   const lastDoc = pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null;
   return { users, lastDoc, hasMore };
@@ -163,21 +163,28 @@ export async function fetchUsersPage(
 
 /** 실시간 구독 (최대 USERS_PAGE_SIZE명만 읽어 비용 제한). lastDoc은 '다음 페이지' 호출 시 사용 */
 export function subscribeToUsers(
-  callback: (users: AdminUser[], lastDoc: DocumentSnapshot | null) => void
+  callback: (users: AdminUser[], lastDoc: DocumentSnapshot | null) => void,
+  onError?: (err: Error) => void
 ): () => void {
   const usersRef = collection(db, 'users');
   const q = query(usersRef, orderBy(documentId()), limit(USERS_PAGE_SIZE));
-  return onSnapshot(q, (snapshot) => {
-    const users: AdminUser[] = [];
-    let last: DocumentSnapshot | null = null;
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (!data?.email) return;
-      users.push(firestoreDocToAdminUser(docSnap.id, data));
-      last = docSnap;
-    });
-    callback(users, last);
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const users: AdminUser[] = [];
+      let last: DocumentSnapshot | null = null;
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        users.push(firestoreDocToAdminUser(docSnap.id, data || {}));
+        last = docSnap;
+      });
+      callback(users, last);
+    },
+    (err) => {
+      console.error('[Admin] subscribeToUsers error:', err);
+      onError?.(err);
+    }
+  );
 }
 
 export interface MembershipUpdateInput {
@@ -263,6 +270,62 @@ export async function fetchTodayVisitorCount(date: string): Promise<number> {
   }
 }
 
+/** 기간 내 일별 방문자 수 (startDate ~ endDate, YYYY-MM-DD) */
+export async function fetchVisitorCountsForRange(
+  startDate: string,
+  endDate: string
+): Promise<{ date: string; count: number }[]> {
+  const result: { date: string; count: number }[] = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (start > end) return result;
+  const d = new Date(start);
+  while (d <= end) {
+    const dateStr = d.toISOString().slice(0, 10);
+    const count = await fetchTodayVisitorCount(dateStr);
+    result.push({ date: dateStr, count });
+    d.setDate(d.getDate() + 1);
+  }
+  return result;
+}
+
+/** 오류 로그 문서 타입 (client_errors / error_logs 등에 저장된 항목) */
+export interface ErrorLogEntry {
+  id: string;
+  message: string;
+  stack?: string;
+  userId?: string;
+  userEmail?: string;
+  url?: string;
+  context?: string;
+  timestamp: string; // ISO
+}
+
+/** Firestore error_logs 컬렉션에서 최근 오류 목록 조회 (관리자용) */
+export async function fetchErrorLogs(limitCount: number = 100): Promise<ErrorLogEntry[]> {
+  const ref = collection(db, 'error_logs');
+  const q = query(ref, orderBy('timestamp', 'desc'), limit(limitCount));
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((docSnap) => {
+      const d = docSnap.data();
+      const ts = d.timestamp;
+      return {
+        id: docSnap.id,
+        message: (d.message as string) || '',
+        stack: d.stack as string | undefined,
+        userId: d.userId as string | undefined,
+        userEmail: d.userEmail as string | undefined,
+        url: d.url as string | undefined,
+        context: d.context as string | undefined,
+        timestamp: ts?.toDate?.()?.toISOString?.() ?? (typeof ts === 'string' ? ts : ''),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 /** 로그인 유저가 앱 방문 시 호출 - daily_visits/{date}/users/{uid} 에 merge 저장 (당일 1인 1회 집계) */
 export async function recordVisit(uid: string): Promise<void> {
   const date = new Date().toISOString().slice(0, 10);
@@ -323,6 +386,87 @@ const BIGDATA_EXAM_SCHEDULES = [
 export async function uploadBIGDATAExamSchedules(): Promise<void> {
   const ref = doc(db, 'certifications', 'BIGDATA', 'certification_info', 'config');
   await setDoc(ref, { exam_schedules: BIGDATA_EXAM_SCHEDULES }, { merge: true });
+}
+
+/**
+ * 자격증별 시험일정을 Firestore certification_info/config에 저장 (merge).
+ * 경로: certifications/{certCode}/certification_info/config, 필드: exam_schedules
+ */
+export async function saveCertExamSchedules(
+  certCode: string,
+  schedules: ExamScheduleItem[]
+): Promise<void> {
+  const ref = doc(db, 'certifications', certCode, 'certification_info', 'config');
+  await setDoc(ref, { exam_schedules: schedules }, { merge: true });
+}
+
+/**
+ * 자격증 config 문서에서 exam_schedules만 조회 (자격증 관리 화면용).
+ * getCertificationInfo는 pass_criteria/subjects가 없으면 null을 반환하므로,
+ * 저장 후 config에 exam_schedules만 있어도 여기서 읽어와야 새로고침 시 반영됨.
+ */
+export async function fetchExamSchedulesFromConfig(certCode: string): Promise<ExamScheduleItem[] | null> {
+  const ref = doc(db, 'certifications', certCode, 'certification_info', 'config');
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  const list = data?.exam_schedules;
+  return Array.isArray(list) ? (list as ExamScheduleItem[]) : null;
+}
+
+const CERT_CODES_FOR_COUNTS = ['BIGDATA', 'SQLD', 'ADSP'] as const;
+const todayForCounts = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * 자격증별 현재 학습중인 학습자 수(활성화된 학습자), 결제중인 학습자 수(만료 제외), 졸업한 학습자 수(만료) 집계.
+ * 전체 회원을 페이지 단위로 읽어 집계합니다.
+ */
+export async function fetchCertLearnerCounts(): Promise<
+  Record<string, { learning: number; paying: number; graduated: number }>
+> {
+  const counts: Record<string, { learning: number; paying: number; graduated: number }> = {
+    BIGDATA: { learning: 0, paying: 0, graduated: 0 },
+    SQLD: { learning: 0, paying: 0, graduated: 0 },
+    ADSP: { learning: 0, paying: 0, graduated: 0 },
+  };
+  const today = todayForCounts();
+  let lastDoc: DocumentSnapshot | null = null;
+
+  for (;;) {
+    const { users, lastDoc: nextLast, hasMore } = await fetchUsersPage(USERS_PAGE_SIZE, lastDoc);
+    lastDoc = nextLast;
+
+    for (const u of users) {
+      for (const code of CERT_CODES_FOR_COUNTS) {
+        const cert = CERTIFICATIONS.find((c) => c.code === code);
+        if (!cert) continue;
+        const certId = cert.id;
+
+        const hasSubscription = u.subscriptions?.some((s) => s.id === certId);
+        const paid = u.paidCertIds?.includes(certId) ?? false;
+        const expired = u.expiredCertIds?.includes(certId) ?? false;
+        const raw = u.rawMemberships?.[code];
+        const rawPremium = raw?.tier === 'PREMIUM';
+        const rawExpired = raw?.expiry_date ? raw.expiry_date < today : false;
+
+        const isPaying = raw
+          ? rawPremium && !rawExpired
+          : paid && !expired;
+        const isGraduated = raw
+          ? rawPremium && rawExpired
+          : expired;
+        const isLearning = hasSubscription || isPaying;
+
+        if (isLearning) counts[code].learning += 1;
+        if (isPaying) counts[code].paying += 1;
+        if (isGraduated) counts[code].graduated += 1;
+      }
+    }
+
+    if (!hasMore || !lastDoc) break;
+  }
+
+  return counts;
 }
 
 export { EXAM_SCHEDULES, EXAM_SCHEDULE_DATES };
