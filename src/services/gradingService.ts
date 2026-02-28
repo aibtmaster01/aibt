@@ -132,11 +132,10 @@ export async function getCertificationInfo(certCode: string): Promise<Certificat
 
 /**
  * 예측 합격률 계산 (자격증 공통)
- * - 기본 점수: 과목별 점수의 평균 (0~100)
- * - 안정성 계수: 어떤 과목이라도 과락(minSubjectScore 미만, 기본 40점)이 있으면 0.8, 없으면 1.0
- * - 최종: Math.round(기본 점수 * 안정성 계수), 0~100 클램프
- * - 마이페이지/목록에 보이는 값: exam_results 중 해당 자격증 최신 시험의 predicted_pass_rate (statsService.fetchUserTrendData)
- * - 실전 모의고사(4·5회) 언락 조건: D-Day 3일 이내 AND 예측 합격률 70% 이상
+ * - 기본: 과목별 점수 평균 (0~100)
+ * - 과락 패널티: 가장 낮은 과목의 과락 마진에 비례해 연속적으로 적용
+ *   (40점 기준, 30점 과목이면 -5점, 20점이면 -10점, 0점이면 -20점)
+ * - 마이페이지/목록에 보이는 값: exam_results 중 해당 자격증 최신 시험의 predicted_pass_rate
  */
 function computePredictedPassRate(
   subject_scores: ExamResultSubjectScores,
@@ -145,9 +144,13 @@ function computePredictedPassRate(
   const scores = Object.values(subject_scores);
   if (scores.length === 0) return 0;
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const hasFail = scores.some((s) => s < minSubjectScore);
-  const stability = hasFail ? STABILITY_FACTOR_WITH_FAIL : STABILITY_FACTOR_NO_FAIL;
-  return Math.max(0, Math.min(100, Math.round(avgScore * stability)));
+  // 과락 마진 패널티: 과락선 미만 과목이 있으면 (minScore - 과목점수) / minScore × 20점 감점
+  const minScore = Math.min(...scores);
+  let penalty = 0;
+  if (minScore < minSubjectScore) {
+    penalty = ((minSubjectScore - minScore) / minSubjectScore) * 20;
+  }
+  return Math.max(0, Math.min(100, Math.round(avgScore - penalty)));
 }
 
 /**

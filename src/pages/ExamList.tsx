@@ -34,8 +34,8 @@ const ROUND_DISPLAY_BASE: Record<number, { title: string; description: string }>
   1: { title: '연습 모의고사', description: '기초 실력 점검 및 취약점 파악' },
   2: { title: '응용 모의고사', description: '실제 시험 난이도에 가까운 고정 문제' },
   3: { title: '실전 모의고사', description: '실전 형식의 고정 문제로 최종 점검' },
-  4: { title: '고난도 모의고사 1회', description: '시험 직전 최종 모의고사 (D-Day 3일 이내·예상 합격률 70% 이상 시 언락)' },
-  5: { title: '고난도 모의고사 2회', description: '시험 직전 최종 모의고사' },
+  4: { title: '맞춤형 모의고사 1회', description: 'AI 맞춤형 약점 공략 모의고사' },
+  5: { title: '맞춤형 모의고사 2회', description: 'AI 맞춤형 약점 공략 모의고사' },
 };
 
 /** 4회 이상: 약점 공략 모의고사 N회 (목록 내 차시) */
@@ -44,13 +44,13 @@ function getCurationRoundTitle(_roundNumber: number, _mode: 'REAL_EXAM' | 'WEAKN
 }
 
 function getRoundDisplayDescription(round: ExamRound, roundNumber: number): string {
-  if (roundNumber <= 5) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
+  if (roundNumber <= 3) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
   return 'AI 맞춤형으로 구성된 모의고사';
 }
 
 /**
  * 모의고사 제공 루틴 (자격증 공통)
- * - 맞춤형 모의고사는 항상 약점 강화형으로 제공. (고난도 실전은 D-Day·합격률 조건 시 별도 회차로 노출)
+ * - 1~3회차: 고정 문제. 4회차+: 맞춤형(다양-적응 알고리즘).
  */
 export const ExamList: React.FC<ExamListProps> = ({
   certId,
@@ -74,12 +74,9 @@ export const ExamList: React.FC<ExamListProps> = ({
   const autoStartAfterOverlayRef = React.useRef<{
     roundId: string;
     mode: 'exam' | 'study';
-    isStaticHighDifficulty?: boolean;
   } | null>(null);
-  /** 고정 4·5회차 5초 오버레이 시 미리 불러온 문제 (체감 속도 향상) */
+  /** 4회차+ 오버레이 시 미리 불러온 문제 (체감 속도 향상) */
   const staticPreFetchedQuestionsRef = React.useRef<import('../types').Question[] | null>(null);
-  /** 고정 4·5회차 오버레이 시 "고난도 큐레이션" 문구 표시 */
-  const [preparingStaticHighDifficulty, setPreparingStaticHighDifficulty] = useState(false);
   const [hasCertStats, setHasCertStats] = useState(false);
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
   const [showModeModal, setShowModeModal] = useState(false);
@@ -95,7 +92,6 @@ export const ExamList: React.FC<ExamListProps> = ({
   const [lockedAction, setLockedAction] = useState<'none' | 'login'>('none');
   const [showFreePaymentModal, setShowFreePaymentModal] = useState(false);
   /** 예측 합격률 0~100 (4·5회 언락 조건용) */
-  const [recentPassRate, setRecentPassRate] = useState(0);
 
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
   const certCode = cert?.code ?? null;
@@ -124,48 +120,20 @@ export const ExamList: React.FC<ExamListProps> = ({
       : baseRounds;
   const round3ForCert = allRounds.find((r) => r.round === 3);
   const completedRound3 = round3ForCert ? completedRoundIds.has(round3ForCert.id) : false;
-  const daysLeft: number | null = user && certId
-    ? (user.passesByCert?.[certId]
-        ? getDaysLeftForDate(user.passesByCert[certId].examDate)
-        : getDaysLeft(certId))
-    : null;
-  /** 실전 모의고사(4·5회) 언락: D-Day 3일 이내 AND 예측 합격률 70% 이상 */
-  const canUnlockFixed45 = daysLeft !== null && daysLeft <= 3 && recentPassRate >= 70;
+  /** 1~3회차: 항상 표시. 4회차+: 3회차 완료 후 순차 오픈 (모두 맞춤형, 고정 조건 없음) */
   let rounds = !completedRound3
     ? allRounds.filter((r) => r.round <= 3)
-    : (() => {
-        if (canUnlockFixed45) {
-          return allRounds.filter((r) => {
-            if (r.round <= 4) return true;
-            const prev = allRounds.find((pr) => pr.round === r.round - 1);
-            return prev ? completedRoundIds.has(prev.id) : false;
-          });
-        }
-        return allRounds.filter((r) => {
-          if (r.round <= 3) return true;
-          if (r.round === 4 || r.round === 5) return false;
-          if (r.round === 6) return completedRound3;
-          const prev = allRounds.find((pr) => pr.round === r.round - 1);
-          return prev ? completedRoundIds.has(prev.id) : false;
-        });
-      })();
+    : allRounds.filter((r) => {
+        if (r.round <= 3) return true;
+        if (r.round === 4) return completedRound3;
+        const prev = allRounds.find((pr) => pr.round === r.round - 1);
+        return prev ? completedRoundIds.has(prev.id) : false;
+      });
   /** 무료 유저도 3회차·4회차 이상 목록에 노출 (잠금으로 결제 유도); 1·2회차만 풀이 가능 */
   const showTeaser4 = !completedRound3;
   const nextRoundToPlay = allRounds.find((r) => !completedRoundIds.has(r.id));
   /** 목록에 보이는 회차 중 '다음으로 풀 맞춤형' = 아직 생성 전 신비 박스 스타일 적용 대상 */
   const nextVisibleCurationRound = rounds.find((r) => r.round >= 4 && !completedRoundIds.has(r.id));
-
-  useEffect(() => {
-    if (!user || !certCode) {
-      setRecentPassRate(0);
-      return;
-    }
-    let cancelled = false;
-    fetchUserTrendData(user.id, certCode).then(({ recentPassRate: rate }) => {
-      if (!cancelled) setRecentPassRate(rate);
-    });
-    return () => { cancelled = true; };
-  }, [user?.id, certCode]);
 
   useEffect(() => {
     if (!user || !certCode || !isPremiumUser) {
@@ -273,13 +241,10 @@ export const ExamList: React.FC<ExamListProps> = ({
       return;
     }
     if (nextRound.round >= 4) {
-      const isFixedHighDifficulty = nextRound.round === 4 || nextRound.round === 5;
       autoStartAfterOverlayRef.current = {
         roundId: nextRound.id,
         mode: 'exam',
-        isStaticHighDifficulty: isFixedHighDifficulty,
       };
-      setPreparingStaticHighDifficulty(isFixedHighDifficulty);
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
@@ -388,7 +353,6 @@ export const ExamList: React.FC<ExamListProps> = ({
     setShowPreparingOverlay(false);
     setPreparingPhase('countdown');
     setPreparingCountdown(5);
-    setPreparingStaticHighDifficulty(false);
     setPendingRoundId(null);
     staticPreFetchedQuestionsRef.current = null;
   };
@@ -407,12 +371,10 @@ export const ExamList: React.FC<ExamListProps> = ({
       onSelectRound(roundId, mode);
       return;
     }
-    /** 4회차 이상(고정 4·5 + 맞춤형 6+): 5초 오버레이 + getQuestionsForRound( user_rounds 박제) 후 /quiz */
+    /** 4회차+: 5초 오버레이 + getQuestionsForRound( user_rounds 박제) 후 /quiz */
     if (roundNum >= 4 && user && certId) {
-      const isFixedHighDifficulty = roundNum === 4 || roundNum === 5;
       staticPreFetchedQuestionsRef.current = null;
-      setPreparingStaticHighDifficulty(isFixedHighDifficulty);
-      autoStartAfterOverlayRef.current = { roundId, mode, isStaticHighDifficulty: isFixedHighDifficulty };
+      autoStartAfterOverlayRef.current = { roundId, mode };
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
@@ -520,11 +482,6 @@ export const ExamList: React.FC<ExamListProps> = ({
                     }`}
                   >
                     {displayTitle}
-                    {(roundNum === 4 || roundNum === 5) && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-[#1e56cd] text-white shadow-sm">
-                        고난도
-                      </span>
-                    )}
                   </h3>
                   <p
                     className={`text-xs mt-1 font-medium ${
@@ -586,7 +543,7 @@ export const ExamList: React.FC<ExamListProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-lg text-white/90">다음 회차</h3>
-                <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (약점 공략 또는 고난도 모의고사)</p>
+                <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (AI 맞춤형 모의고사)</p>
               </div>
             </div>
             <Lock className="text-white/50 w-6 h-6 shrink-0" />
@@ -602,9 +559,7 @@ export const ExamList: React.FC<ExamListProps> = ({
           : [];
         const displayName = user?.givenName ?? user?.name ?? user?.email?.split('@')[0] ?? '회원';
         const top2Concepts = includedConcepts.slice(0, 2);
-        const subMessage = preparingStaticHighDifficulty
-          ? '시험 3일 전 기준, 합격 확률을 높이기 위한 고난도 문항을 선별하고 있어요.'
-          : top2Concepts.length > 0
+        const subMessage = top2Concepts.length > 0
             ? `${displayName}님의 취약개념 ${top2Concepts.join(', ')} 개념을 포함해 맞춤 문항을 제작하고 있어요.`
             : '당신의 취약 유형·취약 개념을 반영해 맞춤 문항을 제작하고 있어요.';
         return (
@@ -622,9 +577,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                     모의고사 큐레이션 중
                   </h3>
                   <p className="text-slate-300 text-sm leading-relaxed mb-1">
-                    {preparingStaticHighDifficulty
-                      ? '시험 3일 전 기준, 합격 확률을 높이기 위한 고난도 문제를 큐레이션합니다.'
-                      : '학습데이터를 기반으로 모의고사를 큐레이션하는 중입니다.'}
+                    학습데이터를 기반으로 모의고사를 큐레이션하는 중입니다.
                   </p>
                   <p className="text-[#99ccff] text-sm leading-relaxed font-medium mb-6">
                     {subMessage}
@@ -639,9 +592,9 @@ export const ExamList: React.FC<ExamListProps> = ({
                     </div>
                   </div>
                   <h3 className="text-white font-bold text-xl mb-1">
-                    {preparingStaticHighDifficulty ? '고난도 모의고사가 준비되었습니다' : '맞춤형 모의고사가 준비되었습니다'}
+                    맞춤형 모의고사가 준비되었습니다
                   </h3>
-                  {!preparingStaticHighDifficulty && top2Concepts.length > 0 && (
+                  {top2Concepts.length > 0 && (
                     <p className="text-slate-300 text-sm mb-3">
                       {displayName}님의 취약개념 {top2Concepts.join(', ')} 개념을 포함했어요
                     </p>

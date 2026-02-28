@@ -3,7 +3,11 @@
 upload_contents_and_index.py
 - Bigdata_contents_1681.json 각 항목 → Firestore certifications/BIGDATA/question_pools/{pool_id}/questions/{q_id}
 - 문항의 q_id를 Firestore 문서 ID로 사용
-- 같은 경로의 Index.json(또는 Bigdata_Index.json) → Firebase Storage /assets/BIGDATA/index.json 업로드
+- 인덱스 파일 우선순위:
+    1. Bigdata_Index_Rebalanced.json  (새 균형 인덱스)
+    2. Bigdata_Index.json             (기존 인덱스)
+    3. Index.json                     (레거시 폴백)
+  → Storage /assets/BIGDATA/index.json 업로드 (프론트 캐시가 이 파일을 읽음)
 
 실행: cd backend && python3 Contents/Bigdata/upload_contents_and_index.py
 필요: serviceAccountKey.json 또는 GOOGLE_APPLICATION_CREDENTIALS (Storage 권한 포함)
@@ -20,6 +24,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CONTENTS_PATH = os.path.join(SCRIPT_DIR, "Bigdata_contents_1681.json")
+# 인덱스 파일 후보 (우선순위 순)
+INDEX_REBALANCED_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index_Rebalanced.json")
 INDEX_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index.json")
 INDEX_ALT_PATH = os.path.join(SCRIPT_DIR, "Index.json")
 
@@ -160,7 +166,10 @@ def build_question_doc(q_id: str, content: dict, index_entry: Optional[dict], co
 
 
 def load_contents_and_index():
-    """Bigdata_contents_1681.json + (선택) Bigdata_Index.json / Index.json 로드. 반환: (contents dict, index list)."""
+    """Bigdata_contents_1681.json + 인덱스 파일 로드.
+    인덱스 우선순위: Bigdata_Index_Rebalanced.json > Bigdata_Index.json > Index.json
+    반환: (contents dict, index list, 사용된 index 파일경로)
+    """
     if not os.path.exists(CONTENTS_PATH):
         print(f"❌ 파일 없음: {CONTENTS_PATH}")
         sys.exit(1)
@@ -171,14 +180,21 @@ def load_contents_and_index():
         sys.exit(1)
 
     index_list = []
-    if os.path.exists(INDEX_PATH):
-        with open(INDEX_PATH, "r", encoding="utf-8") as f:
-            index_list = json.load(f)
-    if not index_list and os.path.exists(INDEX_ALT_PATH):
-        with open(INDEX_ALT_PATH, "r", encoding="utf-8") as f:
-            index_list = json.load(f)
-    if not isinstance(index_list, list):
-        index_list = []
+    used_index_path = None
+    for candidate in [INDEX_REBALANCED_PATH, INDEX_PATH, INDEX_ALT_PATH]:
+        if os.path.exists(candidate):
+            with open(candidate, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and len(data) > 0:
+                index_list = data
+                used_index_path = candidate
+                break
+
+    if used_index_path:
+        print(f"   Index 파일: {os.path.basename(used_index_path)} ({len(index_list)}건)")
+    else:
+        print("   ⚠️ 인덱스 파일 없음 → q_id에서 최소 메타데이터 추정")
+
     return contents, index_list
 
 
@@ -234,32 +250,49 @@ def _q_id_to_metadata(q_id: str) -> dict:
 
 
 def get_index_payload(contents_dict: Optional[dict] = None, index_list: Optional[list] = None) -> Optional[list]:
-    """업로드할 index 배열 반환 (Storage + Firestore 공용)."""
+    """업로드할 index 배열 반환 (Storage + Firestore 공용).
+    Rebalanced > 기존 Index > contents 키 순으로 시도."""
     if index_list and isinstance(index_list, list):
         return index_list
+    # 파일 직접 읽기 시도 (우선순위 순)
+    for candidate in [INDEX_REBALANCED_PATH, INDEX_PATH, INDEX_ALT_PATH]:
+        if os.path.exists(candidate):
+            with open(candidate, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and len(data) > 0:
+                return data
+    # 폴백: contents 키에서 최소 메타데이터 생성
     if contents_dict and isinstance(contents_dict, dict):
         return [
             {"q_id": q_id, "metadata": _q_id_to_metadata(q_id), "stats": {}}
             for q_id in contents_dict.keys()
         ]
-    index_file = INDEX_PATH if os.path.exists(INDEX_PATH) else INDEX_ALT_PATH
-    if os.path.exists(index_file):
-        with open(index_file, "r", encoding="utf-8") as f:
-            return json.load(f)
     return None
 
 
 def upload_index_to_storage(payload: list) -> None:
-    """Index 배열 → Firebase Storage /assets/BIGDATA/index.json"""
+    """Index 배열 → Firebase Storage /assets/BIGDATA/index.json
+    Rebalanced 인덱스가 있으면 index_rebalanced.json 에도 동시 업로드."""
     try:
         from firebase_admin import storage
         bucket = storage.bucket()
+
+        # 항상 index.json 업로드 (프론트 캐시가 이 파일을 읽음)
         blob = bucket.blob("assets/BIGDATA/index.json")
         blob.upload_from_string(
             json.dumps(payload, ensure_ascii=False, indent=0),
             content_type="application/json",
         )
-        print(f"   => Storage /assets/BIGDATA/index.json 업로드 완료")
+        print(f"   => Storage /assets/BIGDATA/index.json 업로드 완료 ({len(payload)}건)")
+
+        # Rebalanced 인덱스를 사용한 경우 별도 경로에도 저장
+        if os.path.exists(INDEX_REBALANCED_PATH):
+            blob2 = bucket.blob("assets/BIGDATA/index_rebalanced.json")
+            blob2.upload_from_string(
+                json.dumps(payload, ensure_ascii=False, indent=0),
+                content_type="application/json",
+            )
+            print(f"   => Storage /assets/BIGDATA/index_rebalanced.json 업로드 완료")
     except Exception as e:
         print(f"⚠️ Storage 업로드 실패: {e}")
         print("   (Firebase Storage 규칙 및 서비스 계정 권한 확인)")
@@ -278,12 +311,15 @@ def upload_index_to_firestore(db, payload: list) -> None:
 
 def main():
     print("=" * 60)
-    print("🔥 Bigdata_contents_1681 + (선택) Index → Firestore & Storage")
+    print("🔥 Bigdata_contents_1681 + Index → Firestore & Storage")
     print("=" * 60)
     print(f"   Contents: {CONTENTS_PATH}")
-    print(f"   Index:    {INDEX_PATH} or {INDEX_ALT_PATH} (없으면 contents 키로 최소 인덱스 생성)")
+    print(f"   Index 우선순위:")
+    print(f"     1. {os.path.basename(INDEX_REBALANCED_PATH)} (새 균형 인덱스)")
+    print(f"     2. {os.path.basename(INDEX_PATH)} (기존 인덱스)")
+    print(f"     3. {os.path.basename(INDEX_ALT_PATH)} (레거시 폴백)")
     print(f"   Firestore: certifications/{CERT_CODE}/question_pools/{POOL_ID}/questions/{{q_id}}")
-    print(f"   Storage:  /assets/BIGDATA/index.json")
+    print(f"   Storage:   /assets/BIGDATA/index.json (+ index_rebalanced.json)")
     print()
     contents, index_list = load_contents_and_index()
     init_firebase()

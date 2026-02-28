@@ -32,7 +32,7 @@ import { Question, User, type ExamAnswerEntry, type UserRound } from '../types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
 import { getDaysLeft, getDaysLeftForDate } from '../utils/dateUtils';
 import { fetchUserTrendData } from './statsService';
-import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
+import { wrongFeedbackTo1Based } from '../utils/questionUtils';
 import {
   hasQuestionMetadataForCert,
   getQuestionMetadataByCert,
@@ -62,12 +62,13 @@ interface StaticExamDoc {
   timeLimit?: number;
 }
 
-/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등) */
+/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등). 정답은 0-based(answer_idx 또는 answer)로 저장됨 */
 interface FirestoreQuestionDoc {
   q_id?: string;
   question_text?: string;
   options?: string[];
   answer?: number;
+  answer_idx?: number;
   explanation?: string;
   ai_explanation?: string;
   wrong_feedback?: Record<string, string> | string[];
@@ -260,7 +261,10 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
   const baseExplanation = data.explanation ?? '';
   const aiExplanation = data.ai_explanation ?? '';
   const options = Array.isArray(data.options) ? data.options : [];
-  const rawAnswer = typeof data.answer === 'number' ? data.answer : 1;
+  // Firestore에는 0-based로 저장됨(관리자 저장 시 answer_idx/answer). 1-based(①=1…)로 변환
+  const raw0Based = typeof data.answer_idx === 'number' ? data.answer_idx : typeof data.answer === 'number' ? data.answer : 0;
+  const answer1Based =
+    options.length > 0 && raw0Based >= 0 && raw0Based < options.length ? raw0Based + 1 : 1;
   const coreConcept =
     (typeof data.core_concept === 'string' && data.core_concept.trim()) ||
     extractTopicUnit(data.topic) ||
@@ -269,7 +273,7 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
     id: data.q_id ?? docId,
     content: data.question_text ?? '',
     options,
-    answer: to1BasedAnswer(rawAnswer, options.length),
+    answer: answer1Based,
     explanation: aiExplanation || baseExplanation,
     aiExplanation: data.ai_explanation,
     wrongFeedback: wrongFeedbackTo1Based(data.wrong_feedback),
@@ -1178,13 +1182,11 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
   return qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
 }
 
-/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용) */
+/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용, 1~3회차만) */
 const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
   1: 80,
   2: 80,
   3: 80,
-  4: 20,
-  5: 80,
 };
 
 /**
@@ -1254,42 +1256,24 @@ export async function getQuestionsForRound(
     }
   }
 
-  /** [2] Static vs 맞춤형 판단 (round 4·5만 조건부) */
-  let useStatic = round <= 3;
-  if (round === 4 || round === 5) {
-    const daysLeft = user?.passesByCert?.[certId]
-      ? getDaysLeftForDate(user.passesByCert[certId].examDate)
-      : getDaysLeft(certId);
-    let recentPassRate = 0;
-    if (user) {
-      try {
-        const trend = await fetchUserTrendData(user.id, certCode);
-        recentPassRate = trend.recentPassRate ?? 0;
-      } catch {
-        recentPassRate = 0;
-      }
-    }
-    const canUnlockFixed45 = daysLeft != null && daysLeft <= 3 && recentPassRate >= 70;
-    useStatic = canUnlockFixed45;
-  }
+  /** [2] Static(1~3회차) vs 맞춤형(4회차+) 판단 */
+  const useStatic = round <= 3;
 
   let questions: Question[];
   let sourceRounds: number[];
 
   if (useStatic) {
-    /** Static 1~5: index 캐시만 사용. 회차(round)별로 index 필터 후 문항 수는 certification_info 또는 폴백 사용 */
+    /** Static 1~3회차: index 캐시에서 해당 round 필터 후 문항 수는 certification_info 또는 폴백 */
     let needCount = STATIC_QUESTIONS_PER_ROUND[round] ?? 80;
-    if (round <= 3) {
-      try {
-        const certInfo = await getCertificationInfo(certCode);
-        const subjects = certInfo?.subjects;
-        if (Array.isArray(subjects) && subjects.length > 0) {
-          const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
-          if (total > 0) needCount = total;
-        }
-      } catch {
-        // certInfo 실패 시 위 needCount 유지
+    try {
+      const certInfo = await getCertificationInfo(certCode);
+      const subjects = certInfo?.subjects;
+      if (Array.isArray(subjects) && subjects.length > 0) {
+        const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
+        if (total > 0) needCount = total;
       }
+    } catch {
+      // certInfo 실패 시 위 needCount 유지
     }
     let indexItems = await getQuestionIndexFromCache(certCode);
     if (!indexItems || indexItems.length === 0) {
@@ -1309,10 +1293,10 @@ export async function getQuestionsForRound(
     if (questions.length < qIds.length) throw new Error(`문제 로딩 실패: ${qIds.length}개 중 ${questions.length}개만 불러왔습니다.`);
     sourceRounds = [round];
   } else {
-    /** 맞춤형: round 4·5(조건 미달) 또는 round >= 6 → 약점 강화형 생성 후 user_rounds 저장 */
+    /** 맞춤형: round 4+ → 다양-적응 선발 (슬라이딩 윈도우, 커버리지, 트렌드 가중) */
     if (!user) throw new Error('맞춤형 모의고사는 로그인이 필요합니다.');
     const { fetchAdaptiveQuestions } = await import('./aiRoundCurationService');
-    questions = await fetchAdaptiveQuestions(user.id, certId, user, round, 'WEAKNESS_ATTACK');
+    questions = await fetchAdaptiveQuestions(user.id, certId, user, round);
     sourceRounds = [round];
   }
 
