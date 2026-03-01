@@ -32,13 +32,17 @@ export async function getCachedOrFetchMyPageData(
   if (!forceRefresh) {
     const cached = await getUserStatsCache(uid, certCode);
     if (cached && isUserStatsCacheValid(cached)) {
-      return {
-        trendData: cached.trendData,
-        recentPassRate: cached.recentPassRate,
-        radarData: cached.radarData,
-        subjectScores: cached.subjectScores,
-        weaknessTop3: cached.weaknessTop3,
-      };
+      // 이전 오류로 빈 배열이 캐시된 경우 재요청 (합격률·학습기록 등이 안 보이는 현상 방지)
+      const hasTrend = Array.isArray(cached.trendData) && cached.trendData.length > 0;
+      if (hasTrend || (Array.isArray(cached.radarData) && cached.radarData.length > 0)) {
+        return {
+          trendData: cached.trendData,
+          recentPassRate: cached.recentPassRate,
+          radarData: cached.radarData,
+          subjectScores: cached.subjectScores,
+          weaknessTop3: cached.weaknessTop3,
+        };
+      }
     }
   }
 

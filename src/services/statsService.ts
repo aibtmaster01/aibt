@@ -152,10 +152,11 @@ export async function fetchUserTrendData(
   certCode: string
 ): Promise<FetchUserTrendDataResult> {
   const examRef = collection(db, 'users', uid, 'exam_results');
+  // 복합 인덱스 없이 동작: orderBy만 사용 후 메모리에서 certCode 필터 (인덱스 오류 시 빈 화면 방지)
   const q = query(
     examRef,
-    orderBy('submittedAt', 'asc'),
-    limit(30)
+    orderBy('submittedAt', 'desc'),
+    limit(150)
   );
 
   let snapshot;
@@ -173,7 +174,7 @@ export async function fetchUserTrendData(
     if (data.roundId === 'weakness_retry') return false;
     return true;
   });
-  const docsToUse = certDocs.slice(0, 30);
+  const docsToUse = certDocs.slice(0, 30); // 해당 자격증 기준 최근 30건 (이미 desc 정렬됨)
 
   docsToUse.forEach((docSnap, index) => {
     const data = docSnap.data() as ExamResultDoc;
@@ -205,11 +206,16 @@ export async function fetchUserTrendData(
       correctCount,
     });
 
-    if (index === docsToUse.length - 1 && data.predicted_pass_rate != null) {
-      recentPassRate = Math.min(100, Math.max(0, Number(data.predicted_pass_rate)));
+    if (index === 0) {
+      if (data.predicted_pass_rate != null && Number.isFinite(Number(data.predicted_pass_rate))) {
+        recentPassRate = Math.min(100, Math.max(0, Number(data.predicted_pass_rate)));
+      } else {
+        recentPassRate = score;
+      }
     }
   });
 
+  items.reverse(); // UI는 오래된 순(시간순)으로 표시
   return {
     trendData: items,
     recentPassRate,
@@ -238,7 +244,6 @@ export async function fetchDashboardStats(
     radarData: [],
     subjectScores: [],
     weaknessTop3: [],
-    weightedPassRate: null,
   };
 
   const statsRef = doc(db, 'users', uid, 'stats', certCode);
@@ -266,6 +271,11 @@ export async function fetchDashboardStats(
   const subCoreIdStats = (data.sub_core_id_stats ?? {}) as Record<string, StatEntry>;
   const problemTypeStats = (data.problem_type_stats ?? {}) as Record<string, StatEntry>;
   const subjectStats = (data.subject_stats ?? {}) as Record<string, StatEntry>;
+
+  /** 최근 시험 문서(가중 합격률용). 미구현 시 빈 배열로 두어 오류 방지 */
+  const recentExamDocs: { predicted_pass_rate?: number }[] = [];
+  /** 과목별 최근 점수(트렌드용). 미구현 시 빈 객체로 두어 오류 방지 */
+  const subjectRecentScores: Record<string, number[]> = {};
 
   // 세부 개념(sub_core_id) → 대분류(Core) 합산: core_id별 평균 proficiency·총 문제 수
   const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};

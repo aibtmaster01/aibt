@@ -804,7 +804,10 @@ const App: React.FC = () => {
     } else if (options?.isNewUser) {
       setShowSignupSuccessModal(true);
     } else {
-      navigate('/mypage');
+      // LNB 등에서 로그인 시: navigate('/mypage')를 쓰면 이 시점에 user가 아직 갱신되지 않아
+      // needsLogin && !user로 모달이 다시 열리므로, route만 직접 바꾼다.
+      setRoute('/mypage');
+      window.scrollTo(0, 0);
     }
   };
 

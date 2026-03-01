@@ -721,6 +721,13 @@ function EditModal({
   const [explanation, setExplanation] = useState(question.explanation ?? '');
   const [wrong_feedback, setWrong_feedback] = useState<Record<string, string>>(question.wrongFeedback ?? {});
   const [imageRequired, setImageRequired] = useState<boolean>(hasImageValue);
+  const [tableData, setTableData] = useState<Question['tableData']>(question.tableData ?? null);
+  const [tableDataRaw, setTableDataRaw] = useState<string>(() => {
+    const t = question.tableData;
+    if (t == null) return '';
+    if (typeof t === 'string') return t;
+    return JSON.stringify(t, null, 2);
+  });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -730,7 +737,29 @@ function EditModal({
     setExplanation(question.explanation ?? '');
     setWrong_feedback(question.wrongFeedback ?? {});
     setImageRequired(question.imageUrl != null && question.imageUrl !== '');
+    setTableData(question.tableData ?? null);
+    const t = question.tableData;
+    setTableDataRaw(t == null ? '' : typeof t === 'string' ? t : JSON.stringify(t, null, 2));
   }, [question.id]);
+
+  const resolveTableData = (): Question['tableData'] => {
+    const raw = tableDataRaw.trim();
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { headers?: unknown }).headers) &&
+        Array.isArray((parsed as { rows?: unknown }).rows)
+      ) {
+        return parsed as { headers: string[]; rows: string[][] };
+      }
+    } catch {
+      // not JSON → treat as HTML string
+    }
+    return raw;
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -743,6 +772,7 @@ function EditModal({
         explanation,
         wrong_feedback: Object.keys(wrong_feedback).length ? wrong_feedback : undefined,
         image: imageRequired ? `${question.id}.png` : null,
+        table_data: resolveTableData(),
       });
       onSave();
     } catch (e) {
@@ -812,6 +842,26 @@ function EditModal({
               rows={3}
               className="w-full px-3 py-2 rounded-xl border border-slate-200"
             />
+          </div>
+          <div>
+            <label className="block font-bold text-slate-600 mb-1">표 (table_data)</label>
+            <p className="text-xs text-slate-500 mb-1">
+              HTML 문자열 또는 JSON 객체 <code className="bg-slate-100 px-1 rounded">&#123; &quot;headers&quot;: [...], &quot;rows&quot;: [[...], ...] &#125;</code> 형식. 비우면 표 없음.
+            </p>
+            <textarea
+              value={tableDataRaw}
+              onChange={(e) => setTableDataRaw(e.target.value)}
+              rows={6}
+              placeholder='예: {"headers":["열1","열2"],"rows":[["a","b"],["c","d"]]} 또는 <table>...</table>'
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => { setTableDataRaw(''); setTableData(null); }}
+              className="mt-1 text-sm text-slate-500 hover:text-red-600 hover:underline"
+            >
+              표 없음으로 초기화
+            </button>
           </div>
           <div>
             <label className="block font-bold text-slate-600 mb-1">이미지 필요여부</label>

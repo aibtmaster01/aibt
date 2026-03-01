@@ -54,6 +54,32 @@ function getRoundLabel(roundId: string | null | undefined, _certId?: string): st
   return `약점 공략 모의고사 ${round.round - 5}회`; // 큐레이션(6→1회, 7→2회, …)
 }
 
+/** DB problem_type_descriptions 키가 공백/표기 차이일 수 있어 유연 매칭 후, 없으면 기본 설명 반환 */
+const DEFAULT_TYPE_DESCRIPTIONS: Record<string, string> = {
+  단순암기형: "용어·정의·개념을 그대로 기억하고 재현하는 문항입니다.",
+  개념이해형: "개념의 의미와 관계를 이해하고 적용하는 문항입니다.",
+  계산풀이형: "수식·계산·도출 과정을 수행하는 문항입니다.",
+  결과독해형: "제시된 결과·표·그래프를 해석하는 문항입니다.",
+  실무적용형: "실제 업무 상황에 맞춰 판단·적용하는 문항입니다.",
+};
+
+function getProblemTypeDescription(
+  certInfo: Awaited<ReturnType<typeof getCertificationInfo>> | null,
+  label: string
+): string {
+  const map = certInfo?.problem_type_descriptions;
+  if (map && typeof map === "object") {
+    const exact = map[label];
+    if (exact && typeof exact === "string") return exact;
+    const noSpaces = label.replace(/\s+/g, "");
+    for (const [k, v] of Object.entries(map)) {
+      if (typeof v !== "string") continue;
+      if (k === label || k.replace(/\s+/g, "") === noSpaces) return v;
+    }
+  }
+  return DEFAULT_TYPE_DESCRIPTIONS[label] ?? "해당 유형에 대한 설명이 등록되지 않았습니다.";
+}
+
 export interface MyPageProps {
   user: User;
   /** URL ?cert=xxx 로 진입 시 표시할 자격증 (예: 사이드바 목록에서 자격증 선택) */
@@ -103,6 +129,8 @@ export const MyPage: React.FC<MyPageProps> = ({
   const [isFailModalOpen, setIsFailModalOpen] = useState(false);
   const [showWeaknessPaymentModal, setShowWeaknessPaymentModal] = useState(false);
   const [openKeywordPopoverIndex, setOpenKeywordPopoverIndex] = useState<number | null>(null);
+  const [hoveredTypeLabel, setHoveredTypeLabel] = useState<string | null>(null);
+  const [openSafetyDescPopover, setOpenSafetyDescPopover] = useState(false);
   const [weaknessPaymentModalMessage, setWeaknessPaymentModalMessage] = useState(
     "해당 기능은 열공 모드 가입 후 무제한 이용하실 수 있습니다."
   );
@@ -550,6 +578,29 @@ export const MyPage: React.FC<MyPageProps> = ({
               <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
                 <div className="flex justify-between items-start gap-2 mb-6">
                   <h3 className="text-[#1e56cd] text-base font-bold">과목별 안전도 분석</h3>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      aria-label="안전도 설명"
+                      onClick={() => setOpenSafetyDescPopover((v) => !v)}
+                      onBlur={() => setTimeout(() => setOpenSafetyDescPopover(false), 150)}
+                      className="p-0.5 rounded text-[#1e56cd] hover:bg-[#99ccff]/50 focus:outline-none focus:ring-2 focus:ring-[#1e56cd]/50"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                    {openSafetyDescPopover && (
+                      <div className="absolute right-0 top-full mt-1 z-30 w-[240px] max-h-[220px] overflow-y-auto rounded-lg bg-slate-800 text-white text-xs shadow-xl py-3 px-3">
+                        <p className="font-bold text-slate-200 mb-2">과목별 안전도란?</p>
+                        <p className="mb-2">각 과목의 <strong>정답률(%)</strong>을 나타냅니다. 시험 합격에는 전 과목 평균과 함께 <strong>과목별 과락선</strong>을 넘어야 합니다.</p>
+                        {certInfo?.exam_config?.pass_criteria && (
+                          <p className="text-slate-300 text-[11px] mt-2 pt-2 border-t border-slate-600">
+                            과락선: {certInfo.exam_config.pass_criteria.min_subject_score}점 미만인 과목이 있으면 불합격입니다. 평균 {certInfo.exam_config.pass_criteria.average_score}점 이상이어야 합니다.
+                          </p>
+                        )}
+                        <p className="text-slate-400 text-[11px] mt-2">안전도가 낮은 과목은 과목 강화 학습으로 보완해 보세요.</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="relative flex-1 flex flex-col min-h-0">
                   {!hasLearningHistory ? (
@@ -590,7 +641,7 @@ export const MyPage: React.FC<MyPageProps> = ({
               </div>
 
               {/* Card 2: 유형별 분석 */}
-              <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
+              <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative overflow-visible">
                 <div className="flex justify-between items-start gap-2 mb-3">
                   <h3 className="text-[#1e56cd] text-base font-bold">유형별 분석</h3>
                 </div>
@@ -614,12 +665,12 @@ export const MyPage: React.FC<MyPageProps> = ({
                               axisLine={false}
                               tick={({ payload, x, y, textAnchor }) => {
                                 const typeName = payload?.value ?? "";
-                                const description = certInfo?.problem_type_descriptions?.[typeName] ?? "";
                                 return (
-                                  <g>
-                                    {description && (
-                                      <title>{description}</title>
-                                    )}
+                                  <g
+                                    onMouseEnter={() => setHoveredTypeLabel(typeName)}
+                                    onMouseLeave={() => setHoveredTypeLabel(null)}
+                                    style={{ cursor: "pointer" }}
+                                  >
                                     <text
                                       x={x}
                                       y={y}
@@ -644,6 +695,12 @@ export const MyPage: React.FC<MyPageProps> = ({
                               strokeWidth={2}
                             />
                           </RadarChart>
+                        {hoveredTypeLabel && (
+                          <div className="absolute left-1/2 -translate-x-1/2 bottom-0 z-10 w-[280px] rounded-lg bg-slate-800 text-white text-xs shadow-xl py-2.5 px-3 border border-slate-600">
+                            <p className="font-bold text-[#99ccff] mb-1">{hoveredTypeLabel}</p>
+                            <p className="text-slate-300 leading-relaxed">{getProblemTypeDescription(certInfo, hoveredTypeLabel)}</p>
+                          </div>
+                        )}
                       </div>
                       <button
                         type="button"

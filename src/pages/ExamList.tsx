@@ -40,7 +40,7 @@ function getCurationRoundTitle(_roundNumber: number, _mode: 'REAL_EXAM' | 'WEAKN
 }
 
 function getRoundDisplayDescription(round: ExamRound, roundNumber: number): string {
-  if (roundNumber <= 5) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
+  if (roundNumber <= 3) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
   return 'AI 맞춤형으로 구성된 모의고사';
 }
 
@@ -165,13 +165,33 @@ export const ExamList: React.FC<ExamListProps> = ({
     let cancelled = false;
     (async () => {
       const examRef = collection(db, 'users', user.id, 'exam_results');
-      const q = query(examRef, orderBy('submittedAt', 'desc'), limit(150));
+      const q = query(examRef, orderBy('submittedAt', 'desc'), limit(400));
       const snap = await getDocs(q);
       if (cancelled) return;
       const ids = new Set<string>();
       snap.docs.forEach((d) => {
         const data = d.data();
-        if (data?.certId === certId && data?.roundId) ids.add(data.roundId as string);
+        if (data?.certId !== certId || data?.roundId == null) return;
+        const total = Number(data?.totalQuestions ?? 0);
+        const rawRid = data.roundId;
+        const rid = typeof rawRid === 'number'
+          ? (rawRid <= 3 ? `r${rawRid}` : `r${rawRid}${certId}`)
+          : String(rawRid);
+        const fromTable = EXAM_ROUNDS.find((r) => r.id === rid && r.certId === certId);
+        const roundNum = fromTable?.round ?? (() => {
+          const m = rid.match(/^r?(\d+)/);
+          return m ? parseInt(m[1], 10) : 0;
+        })();
+        // 결과 화면까지 본 제출만 완료로 인정. 정적 1~3회는 최소 20문항 제출 시에만 완료 처리 (이탈 시 오류 방지)
+        if (roundNum >= 1 && roundNum <= 3) {
+          if (total < 20) return;
+        } else if (total < 1) return;
+        const canonicalId = fromTable?.id ?? (() => {
+          if (/^r\d+c\d+$/.test(rid) || /^r[123]$/.test(rid)) return rid;
+          if (/^\d+$/.test(rid)) return parseInt(rid, 10) <= 3 ? `r${rid}` : `r${rid}${certId}`;
+          return rid;
+        })();
+        ids.add(canonicalId);
       });
       setCompletedRoundIds(ids);
     })();
