@@ -23,11 +23,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # backend/ (스크립트가 Contents/Bigdata/ 안에 있으므로 상위 두 단계)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-CONTENTS_PATH = os.path.join(SCRIPT_DIR, "Bigdata_contents_1681.json")
+CONTENTS_PATH = os.path.join(SCRIPT_DIR, "Final_Bigdata_Contents.json")
 # 인덱스 파일 후보 (우선순위 순)
-INDEX_REBALANCED_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index_Rebalanced.json")
-INDEX_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index.json")
-INDEX_ALT_PATH = os.path.join(SCRIPT_DIR, "Index.json")
+INDEX_PATH = os.path.join(SCRIPT_DIR, "Final_Bigdata_Index.json")
+INDEX_ALT_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index.json")
 
 # Firestore: certifications/BIGDATA/question_pools/{POOL_ID}/questions/{q_id}
 CERT_CODE = "BIGDATA"
@@ -110,8 +109,12 @@ def build_question_doc(q_id: str, content: dict, index_entry: Optional[dict], co
     else:
         subject_num = 1
 
-    core_id = meta.get("core_id")
-    if isinstance(core_id, int) and 1 <= core_id <= len(core_concepts_list):
+    core_id_raw = meta.get("core_id")
+    try:
+        core_id = int(core_id_raw) if core_id_raw is not None else None
+    except (ValueError, TypeError):
+        core_id = None
+    if core_id is not None and 1 <= core_id <= len(core_concepts_list):
         core_concept = core_concepts_list[core_id - 1]
     else:
         core_concept = (meta.get("core_concept") or "").strip() or "공통 및 기타 개념"
@@ -181,7 +184,7 @@ def load_contents_and_index():
 
     index_list = []
     used_index_path = None
-    for candidate in [INDEX_REBALANCED_PATH, INDEX_PATH, INDEX_ALT_PATH]:
+    for candidate in [INDEX_PATH, INDEX_PATH, INDEX_ALT_PATH]:
         if os.path.exists(candidate):
             with open(candidate, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -255,7 +258,7 @@ def get_index_payload(contents_dict: Optional[dict] = None, index_list: Optional
     if index_list and isinstance(index_list, list):
         return index_list
     # 파일 직접 읽기 시도 (우선순위 순)
-    for candidate in [INDEX_REBALANCED_PATH, INDEX_PATH, INDEX_ALT_PATH]:
+    for candidate in [INDEX_PATH, INDEX_PATH, INDEX_ALT_PATH]:
         if os.path.exists(candidate):
             with open(candidate, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -286,7 +289,7 @@ def upload_index_to_storage(payload: list) -> None:
         print(f"   => Storage /assets/BIGDATA/index.json 업로드 완료 ({len(payload)}건)")
 
         # Rebalanced 인덱스를 사용한 경우 별도 경로에도 저장
-        if os.path.exists(INDEX_REBALANCED_PATH):
+        if os.path.exists(INDEX_PATH):
             blob2 = bucket.blob("assets/BIGDATA/index_rebalanced.json")
             blob2.upload_from_string(
                 json.dumps(payload, ensure_ascii=False, indent=0),
@@ -315,7 +318,7 @@ def main():
     print("=" * 60)
     print(f"   Contents: {CONTENTS_PATH}")
     print(f"   Index 우선순위:")
-    print(f"     1. {os.path.basename(INDEX_REBALANCED_PATH)} (새 균형 인덱스)")
+    print(f"     1. {os.path.basename(INDEX_PATH)} (새 균형 인덱스)")
     print(f"     2. {os.path.basename(INDEX_PATH)} (기존 인덱스)")
     print(f"     3. {os.path.basename(INDEX_ALT_PATH)} (레거시 폴백)")
     print(f"   Firestore: certifications/{CERT_CODE}/question_pools/{POOL_ID}/questions/{{q_id}}")

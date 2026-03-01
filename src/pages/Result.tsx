@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Home, RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, Sparkles, StickyNote } from 'lucide-react';
+import { RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, StickyNote } from 'lucide-react';
 import { User } from '../types';
 import type { CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { RichText } from '../components/RichText';
@@ -511,78 +511,6 @@ export const Result: React.FC<ResultProps> = ({
             )}
               </>
             )}
-
-            {/* AI 요약 리포트 (추후 구현 예정) — 주석 처리
-            <div className={`rounded-2xl border overflow-hidden ${isPaidUser ? 'bg-white border-slate-200' : 'relative'}`}>
-              {!isPaidUser && (
-                <div
-                  className="absolute inset-0 bg-slate-900/40 z-10 flex flex-col items-center justify-center cursor-pointer"
-                  onClick={onGoToCheckout}
-                >
-                  <Sparkles className="text-white/90 mb-2" size={32} />
-                  <p className="text-white font-bold text-center px-4">열공모드 전용입니다</p>
-                </div>
-              )}
-              <div className={`p-6 ${!isPaidUser ? 'opacity-60 select-none' : ''}`}>
-                <h3 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
-                  <Sparkles size={18} className="text-brand-500" /> AI 요약 리포트
-                </h3>
-                {isPaidUser ? (
-                  <div className="text-sm text-slate-600 space-y-3">
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">개념별 이해도 (이 회차)</span>
-                      <p className="mt-2 text-xs text-slate-500">미학습 개념은 N/A로 표시됩니다.</p>
-                      {conceptRatesThisRound.length > 0 ? (
-                        <ul className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
-                          {conceptRatesThisRound.map(({ name, rate }, idx) => (
-                            <li key={idx} className="flex justify-between items-center gap-2 text-slate-700">
-                              <span className="truncate flex-1">{name}</span>
-                              <span className={rate === null ? 'text-slate-400 font-medium' : 'font-semibold'}>
-                                {rate === null ? 'N/A' : `${rate}%`}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-1 text-slate-500">이 회차에 출제된 개념이 없습니다.</p>
-                      )}
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">고민이 깊었던 문제</span>
-                      <p className="mt-1">해당 회차에서는 기록되지 않았습니다.</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">찍은 것 같은 문제</span>
-                      <p className="mt-1">해당 회차에서는 기록되지 않았습니다.</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">다른 학습자 대비</span>
-                      <p className="mt-1">상위 % (준비 중)</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-sm text-slate-600 space-y-3">
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">개념별 이해도 (이 회차)</span>
-                      <p className="mt-1 text-slate-500">해당 과목 전체 개념을 고정 순서로 보여주며, 미학습 개념은 N/A로 표시됩니다.</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">고민이 깊었던 문제</span>
-                      <p className="mt-1 text-slate-500">풀이 시간이 길었던 문제를 정리합니다.</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">찍은 것 같은 문제</span>
-                      <p className="mt-1 text-slate-500">확신 없이 선택한 문제를 확인할 수 있습니다.</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                      <span className="font-bold text-slate-700">다른 학습자 대비</span>
-                      <p className="mt-1 text-slate-500">상위 몇 %인지 비교해 볼 수 있습니다.</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            */}
 
             {/* 회차 메모: 풀이 중 찍어둔 메모 (오답 화면에서 다시 보기) */}
             {roundMemo && (roundMemo.freeText.trim() || roundMemo.pins.length > 0) && (
