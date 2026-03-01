@@ -34,6 +34,9 @@ export const PROBLEM_TYPE_LABELS: string[] = [
   '실무적용형',
 ];
 
+// Helper to get cert by code
+const getCert = (code: string) => CERTIFICATIONS.find(c => c.code === code)!;
+
 export const EXAM_SCHEDULES: Record<string, { id: string, label: string, dDay: string }[]> = {
   'BIGDATA': [
     { id: 'bd1', label: '2026년 1회 (4월 8일)', dDay: 'D-35' },

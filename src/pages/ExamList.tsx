@@ -40,7 +40,7 @@ function getCurationRoundTitle(_roundNumber: number, _mode: 'REAL_EXAM' | 'WEAKN
 }
 
 function getRoundDisplayDescription(round: ExamRound, roundNumber: number): string {
-  if (roundNumber <= 3) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
+  if (roundNumber <= 5) return ROUND_DISPLAY_BASE[roundNumber]?.description ?? round.description;
   return 'AI 맞춤형으로 구성된 모의고사';
 }
 
@@ -119,7 +119,6 @@ export const ExamList: React.FC<ExamListProps> = ({
     ? allRounds.filter((r) => r.round <= 3)
     : allRounds.filter((r) => {
         if (r.round <= 3) return true;
-        if (r.round === 4 || r.round === 5) return false;
         if (r.round === 6) return completedRound3;
         const prev = allRounds.find((pr) => pr.round === r.round - 1);
         return prev ? completedRoundIds.has(prev.id) : false;

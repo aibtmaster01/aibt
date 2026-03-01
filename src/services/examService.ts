@@ -1861,7 +1861,6 @@ export async function fetchWeakConceptFocus50(
   );
   if (conceptPool.length === 0 && wrongInConcept.length === 0) return { questions: [], insufficient: true };
 
-  console.log(`[취약개념] 선정 개념 수: ${selectedConcepts.length}개, 상위3개 개념 포함: ${top3AsConceptNames.size > 0}`);
 
   const seen = new Set<string>();
   const result: Question[] = [];
@@ -1913,7 +1912,6 @@ export async function fetchWeakConceptFocus50(
       result.push(q);
       seen.add(q.id);
     }
-    console.log(`[취약개념] 3순위 난이도 해제 후 총 ${result.length}개 확보`);
   }
 
   const questionIds = result.slice(0, WEAK_FOCUS_50_TARGET).map((q) => q.id);

@@ -3,7 +3,6 @@ import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
 import { EmptyState } from './components/dashboard/empty-state';
-import { Home } from './pages/Home';
 import { LoginModal } from './components/LoginModal';
 import { MyPage } from './pages/MyPage';
 import { ExamList } from './pages/ExamList';
@@ -14,7 +13,7 @@ import { AdminCerts } from './pages/AdminCerts';
 import { AdminQuestions } from './pages/AdminQuestions';
 import { Checkout } from './pages/Checkout';
 import { AccountSettings } from './pages/AccountSettings';
-import { User, Certification } from './types';
+import { User } from './types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from './constants';
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
@@ -572,7 +571,9 @@ const App: React.FC = () => {
                 navigate('/exam-list');
               }}
               onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
+              showSubjectStrengthPreparing={showSubjectStrengthPreparing}
               onStartWeakTypeFocus={handleStartWeakTypeFocus}
+              showWeakTypePreparing={showWeakTypePreparing}
               onStartWeakConceptFocus={handleStartWeakConceptFocus}
               showWeakConceptPreparing={showWeakConceptPreparing}
               onViewExamResult={handleViewExamResult}
@@ -605,7 +606,9 @@ const App: React.FC = () => {
               navigate('/exam-list');
             }}
             onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
+            showSubjectStrengthPreparing={showSubjectStrengthPreparing}
             onStartWeakTypeFocus={handleStartWeakTypeFocus}
+            showWeakTypePreparing={showWeakTypePreparing}
             onStartWeakConceptFocus={handleStartWeakConceptFocus}
             showWeakConceptPreparing={showWeakConceptPreparing}
             onViewExamResult={handleViewExamResult}
@@ -738,17 +741,6 @@ const App: React.FC = () => {
                 navigate('/exam-list');
                 return;
               }
-              const access = checkExamAccess({
-                user,
-                certId: selectedCertId,
-                round: nextRound.round,
-                isWeaknessRound: nextRound.round >= 6,
-                weaknessTrialUsed: user?.weaknessTrialUsedByCert?.[selectedCertId] ?? false,
-              });
-              if (!access.allowed) {
-                setShowNextRoundPaymentModal(true);
-                return;
-              }
               setNextRoundInfo({ id: nextRound.id, round: nextRound.round, type: nextRound.type ?? 'practice' });
               setShowNextRoundModeModal(true);
             }}
@@ -758,17 +750,8 @@ const App: React.FC = () => {
               else navigate('/'); 
             }}
             onContinueLearning={() => {
-              if (!selectedCertId) {
-                navigate('/');
-                return;
-              }
-              const currentRound = EXAM_ROUNDS.find((r) => r.id === selectedRoundId && r.certId === selectedCertId)?.round;
-              if (!isCurrentCertPremium && currentRound === 2) {
-                setShowNextRoundPaymentModal(true);
-                return;
-              }
-              setSelectedRoundId(null);
-              navigate('/exam-list');
+              if (selectedCertId) navigate('/exam-list');
+              else navigate('/');
             }}
             showCouponEffect={showCouponEffect}
           />
@@ -1120,52 +1103,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 집중학습(과목/유형/개념) 5초 딤+팝업 — 맞춤형 모의고사와 동일 스타일 */}
-      {focusPreparingType && (() => {
-        const titles = {
-          subject_strength: { countdown: '과목 강화 학습 큐레이션 중', ready: '과목 강화 학습이 준비되었습니다' },
-          weak_type: { countdown: '취약 유형 집중 학습 큐레이션 중', ready: '취약 유형 집중 학습이 준비되었습니다' },
-          weak_concept: { countdown: '취약 개념 집중 학습 큐레이션 중', ready: '취약 개념 집중 학습이 준비되었습니다' },
-        };
-        const subMessages = {
-          subject_strength: '선택한 과목의 문항을 선별하고 있어요.',
-          weak_type: '내 취약 유형 문제를 선별하고 있어요.',
-          weak_concept: '내 취약 개념 문제를 선별하고 있어요.',
-        };
-        const t = titles[focusPreparingType];
-        const sub = subMessages[focusPreparingType];
-        return (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-4">
-            <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden">
-              <div className="px-8 py-10 text-center">
-                {focusPreparingPhase === 'countdown' ? (
-                  <>
-                    <div className="flex justify-center mb-6">
-                      <div className="w-16 h-16 rounded-2xl bg-[#1e56cd]/20 border border-[#99ccff]/30 flex items-center justify-center">
-                        <Loader2 className="w-8 h-8 text-[#99ccff] animate-spin" strokeWidth={2.5} />
-                      </div>
-                    </div>
-                    <h3 className="text-[#e2e8f0] font-bold text-lg tracking-tight mb-3">{t.countdown}</h3>
-                    <p className="text-slate-300 text-sm leading-relaxed mb-1">{sub}</p>
-                    <p className="text-[#99ccff] text-sm leading-relaxed font-medium mb-6">잠시만 기다려 주세요</p>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex justify-center mb-5">
-                      <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center">
-                        <Sparkles className="w-8 h-8 text-emerald-300" strokeWidth={2} />
-                      </div>
-                    </div>
-                    <h3 className="text-white font-bold text-xl mb-1">{t.ready}</h3>
-                    <p className="text-slate-400 text-sm font-medium">곧 퀴즈 화면으로 이동합니다</p>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
       {/* 결과 화면 "다시 풀기" → AI 학습 모드 / 실전 모드 선택 후 바로 퀴즈 시작 */}
       {showRetryModeModal && selectedRoundId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
@@ -1294,7 +1231,7 @@ const App: React.FC = () => {
                 setShowNextRoundPaymentModal(false);
                 if (selectedCertId) navigate('/checkout');
               }}
-              className="w-full py-3.5 rounded-xl bg-brand-500 text-white font-bold text-sm hover:bg-brand-400"
+              className="w-full py-3.5 rounded-xl bg-brand-500 text-slate-900 font-bold text-sm hover:bg-brand-400"
             >
               결제하러 가기
             </button>
