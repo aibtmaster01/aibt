@@ -9,9 +9,10 @@ export interface GuestQuizProgress {
   currentIndex: number;
 }
 
+/** localStorage 사용: 이메일 인증 등으로 탭 전환/새로고침 후 복귀해도 1~20번 세션 유지 */
 export function saveGuestQuizProgress(data: GuestQuizProgress): void {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch {
     // ignore
   }
@@ -19,12 +20,21 @@ export function saveGuestQuizProgress(data: GuestQuizProgress): void {
 
 export function loadGuestQuizProgress(): GuestQuizProgress | null {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as unknown;
     if (!data || typeof data !== 'object' || !('certId' in data) || !('roundId' in data)) return null;
     return data as GuestQuizProgress;
   } catch {
     return null;
+  }
+}
+
+/** 이어하기 완료 후 호출해 저장된 게스트 진행 삭제 */
+export function clearGuestQuizProgress(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
   }
 }

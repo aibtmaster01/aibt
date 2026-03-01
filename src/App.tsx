@@ -18,6 +18,7 @@ import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from './constant
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
+import { clearGuestQuizProgress } from './utils/guestQuizStorage';
 import { ensureUserSubscription, setPaymentComplete } from './services/authService';
 import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
 import { logClientError } from './services/errorLogService';
@@ -48,6 +49,13 @@ const App: React.FC = () => {
   const [showCouponEffect, setShowCouponEffect] = useState(false);
   /** 게스트 20번까지 풀고 로그인한 경우: 로그인 후 팝업 띄우고 21번부터 이어가기 */
   const [pendingGuestContinue, setPendingGuestContinue] = useState<{ certId: string; roundId: string } | null>(null);
+  /** 게스트 1~20번 세션+문제 (인증 후 이어하기 시 점수/과목 반영용, 제출 후 삭제) */
+  const [pendingGuestSession, setPendingGuestSession] = useState<{
+    certId: string;
+    roundId: string;
+    sessionHistory: import('./pages/Quiz').QuizAnswerRecord[];
+    questions: import('./types').Question[];
+  } | null>(null);
   const [quizStartIndex, setQuizStartIndex] = useState<number | undefined>(undefined);
   const [showGuestContinueModal, setShowGuestContinueModal] = useState(false);
   /** 퀴즈 1~20에서 로그인 버튼으로 로그인한 경우: 성공 팝업만 띄우고 현재 문제 유지 */
@@ -298,6 +306,8 @@ const App: React.FC = () => {
     setSelectedRoundId(roundId);
     setQuizMode(mode ?? 'study');
     setPreFetchedQuestions(null);
+    setQuizStartIndex(undefined);
+    setPendingGuestSession(null);
     navigate('/quiz');
   };
 
@@ -305,6 +315,8 @@ const App: React.FC = () => {
     setSelectedRoundId(roundId);
     setQuizMode(mode ?? 'study');
     setPreFetchedQuestions(questions);
+    setQuizStartIndex(undefined);
+    setPendingGuestSession(null);
     navigate('/quiz');
   };
 
@@ -360,6 +372,8 @@ const App: React.FC = () => {
         setSelectedRoundId('__subject_strength__');
         setQuizMode(mode);
         setPreFetchedQuestions(result.questions);
+        setQuizStartIndex(undefined);
+        setPendingGuestSession(null);
         navigate('/quiz');
       } else if (type === 'weak_type') {
         const [_, result] = await Promise.all([
@@ -375,6 +389,8 @@ const App: React.FC = () => {
         setSelectedRoundId('__weak_type_focus__');
         setQuizMode(mode);
         setPreFetchedQuestions(result.questions);
+        setQuizStartIndex(undefined);
+        setPendingGuestSession(null);
         navigate('/quiz');
       } else {
         const [_, result] = await Promise.all([
@@ -390,6 +406,8 @@ const App: React.FC = () => {
         setSelectedRoundId('__weak_concept_focus__');
         setQuizMode(mode);
         setPreFetchedQuestions(result.questions);
+        setQuizStartIndex(undefined);
+        setPendingGuestSession(null);
         navigate('/quiz');
       }
     } catch (e) {
@@ -465,6 +483,8 @@ const App: React.FC = () => {
           updateUser((u) => ({ ...u, subscriptions: [...u.subscriptions, newCert] }));
         }
       }
+      setPendingGuestSession(null);
+      clearGuestQuizProgress();
     }
 
     navigate('/result');
@@ -645,13 +665,19 @@ const App: React.FC = () => {
               mode={quizMode}
               preFetchedQuestions={preFetchedQuestions}
               startIndex={quizStartIndex}
+              initialSessionHistory={
+                pendingGuestSession?.certId === selectedCertId && pendingGuestSession?.roundId === selectedRoundId
+                  ? pendingGuestSession.sessionHistory
+                  : undefined
+              }
               onFinish={handleQuizFinish} 
               onExit={() => {
                 setPreFetchedQuestions(null);
                 setQuizStartIndex(undefined);
                 navigate(user ? '/mypage' : '/');
               }}
-              onGuestLimitReached={({ certId, roundId }) => {
+              onGuestLimitReached={({ certId, roundId, sessionHistory, questions }) => {
+                setPendingGuestSession({ certId, roundId, sessionHistory, questions });
                 setPendingGuestContinue({ certId, roundId });
                 setLoginInitialMode('signup');
                 setShowLoginModal(true);
@@ -779,6 +805,7 @@ const App: React.FC = () => {
       setSelectedCertId(pendingGuestContinue.certId);
       setSelectedRoundId(pendingGuestContinue.roundId);
       setQuizStartIndex(20);
+      setPreFetchedQuestions(pendingGuestSession?.questions ?? null);
       setShowGuestContinueModal(true);
       setPendingGuestContinue(null);
     } else if (intent === 'guestQuizLogin') {

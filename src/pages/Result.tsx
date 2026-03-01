@@ -4,7 +4,7 @@ import { User } from '../types';
 import type { CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { RichText } from '../components/RichText';
 import { to1BasedAnswer } from '../utils/questionUtils';
-import { getCertificationInfo } from '../services/gradingService';
+import { getCertificationInfo, buildIndexToSubject } from '../services/gradingService';
 import { CERTIFICATIONS, EXAM_ROUNDS } from '../constants';
 import type { RoundMemo } from './Quiz';
 
@@ -87,14 +87,22 @@ function computeSubjectScores(
   subjects: SubjectConfig[]
 ): ExamResultSubjectScores {
   const qMap = new Map(questions.map((q) => [q.id, q]));
+  const indexToSubject = buildIndexToSubject(questions, subjects);
   const subjectCorrectTotal: Record<string, { correct: number; total: number }> = {};
-  for (const rec of sessionHistory) {
+  sessionHistory.forEach((rec, i) => {
     const q = qMap.get(rec.qid);
-    const key = q?.subject_number != null ? String(q.subject_number) : '0';
+    let key: string;
+    if (q?.subject_number != null) {
+      key = String(q.subject_number);
+    } else if (indexToSubject && i < indexToSubject.length) {
+      key = String(indexToSubject[i]);
+    } else {
+      key = '0';
+    }
     if (!subjectCorrectTotal[key]) subjectCorrectTotal[key] = { correct: 0, total: 0 };
     subjectCorrectTotal[key].total += 1;
     if (rec.isCorrect) subjectCorrectTotal[key].correct += 1;
-  }
+  });
   const scorePerQ = subjects[0]?.score_per_question ?? 5;
   const out: ExamResultSubjectScores = {};
   for (const subj of subjects) {
@@ -185,13 +193,17 @@ export const Result: React.FC<ResultProps> = ({
     if (sessionHistory?.length && questions?.length && subjects.length) {
       subjScores = computeSubjectScores(sessionHistory, questions, subjects);
       const qMap = new Map<string, import('../types').Question>(questions.map((q) => [q.id, q]));
-      for (const rec of sessionHistory) {
+      const indexToSubject = buildIndexToSubject(questions, subjects);
+      sessionHistory.forEach((rec, i) => {
         const q = qMap.get(rec.qid);
-        const key = q?.subject_number != null ? String(q.subject_number) : '0';
+        let key: string;
+        if (q?.subject_number != null) key = String(q.subject_number);
+        else if (indexToSubject && i < indexToSubject.length) key = String(indexToSubject[i]);
+        else key = '0';
         if (!details[key]) details[key] = { correct: 0, total: 0 };
         details[key].total += 1;
         if (rec.isCorrect) details[key].correct += 1;
-      }
+      });
     }
     const totalScore100 =
       Object.keys(subjScores).length > 0

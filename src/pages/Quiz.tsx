@@ -48,9 +48,11 @@ interface QuizProps {
   onFinish: (score: number, total: number, sessionHistory?: QuizAnswerRecord[], questions?: Question[], roundMemo?: RoundMemo) => void;
   onExit: () => void;
   onWeaknessRetrySave?: (score: number, total: number, sessionHistory: QuizAnswerRecord[], questions: Question[]) => void;
-  onGuestLimitReached?: (params: { certId: string; roundId: string }) => void;
+  onGuestLimitReached?: (params: { certId: string; roundId: string; sessionHistory: QuizAnswerRecord[]; questions: Question[] }) => void;
   onRequestCheckout?: () => void;
   onUpdateUser?: (updater: (prev: User) => User) => void;
+  /** 게스트 20번 후 가입·인증하고 이어할 때 1~20번 답안 (점수/과목 반영용) */
+  initialSessionHistory?: QuizAnswerRecord[];
 }
 
 export const Quiz: React.FC<QuizProps> = ({
@@ -66,6 +68,7 @@ export const Quiz: React.FC<QuizProps> = ({
   onGuestLimitReached,
   onRequestCheckout,
   onUpdateUser,
+  initialSessionHistory,
 }) => {
   const [questions, setQuestions] = useState<Question[]>(preFetchedQuestions ?? []);
   const [loading, setLoading] = useState(!(preFetchedQuestions && preFetchedQuestions.length > 0));
@@ -195,10 +198,16 @@ export const Quiz: React.FC<QuizProps> = ({
           }
           if (qs.length > 0 && roundInfo && round === 1) {
             if (user && startIndex != null && startIndex > 0) {
-              const saved = loadGuestQuizProgress();
-              if (saved?.certId === certId && saved?.roundId === roundId && saved.answers?.length >= startIndex) {
-                setSessionHistory(saved.answers.slice(0, startIndex));
+              // App에서 넘긴 1~20번 세션이 있으면 우선 사용 (인증 후 이어하기 시 1과목 이력 유지)
+              if (initialSessionHistory && initialSessionHistory.length >= startIndex) {
+                setSessionHistory(initialSessionHistory.slice(0, startIndex));
                 setCurrentQIndex(startIndex);
+              } else {
+                const saved = loadGuestQuizProgress();
+                if (saved?.certId === certId && saved?.roundId === roundId && saved.answers?.length >= startIndex) {
+                  setSessionHistory(saved.answers.slice(0, startIndex));
+                  setCurrentQIndex(startIndex);
+                }
               }
             } else if (!user && (startIndex == null || startIndex === 0)) {
               saveGuestQuizProgress({
@@ -230,16 +239,21 @@ export const Quiz: React.FC<QuizProps> = ({
       }
     })();
     return () => { cancelled = true; };
-  }, [certId, roundId, round, isWeaknessRound, user, onUpdateUser, preFetchedQuestions, startIndex]);
+  }, [certId, roundId, round, isWeaknessRound, user, onUpdateUser, preFetchedQuestions, startIndex, initialSessionHistory]);
 
   useEffect(() => {
     if (questions.length === 0 || !user || startIndex == null || startIndex <= 0 || round !== 1) return;
+    if (initialSessionHistory && initialSessionHistory.length >= startIndex) {
+      setSessionHistory(initialSessionHistory.slice(0, startIndex));
+      setCurrentQIndex(startIndex);
+      return;
+    }
     const saved = loadGuestQuizProgress();
     if (saved?.certId === certId && saved?.roundId === roundId && saved.answers?.length >= startIndex) {
       setSessionHistory(saved.answers.slice(0, startIndex));
       setCurrentQIndex(startIndex);
     }
-  }, [questions.length, user, startIndex, certId, roundId, round]);
+  }, [questions.length, user, startIndex, certId, roundId, round, initialSessionHistory]);
 
   useEffect(() => {
     if (mode === 'study' && isSubmitted && explanationBoxRef.current) {
@@ -282,7 +296,7 @@ export const Quiz: React.FC<QuizProps> = ({
         answers: nextHistory,
         currentIndex: GUEST_QUESTION_LIMIT,
       });
-      onGuestLimitReached({ certId, roundId });
+      onGuestLimitReached({ certId, roundId, sessionHistory: nextHistory, questions });
       return;
     }
 

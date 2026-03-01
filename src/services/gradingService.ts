@@ -12,7 +12,7 @@
 import { doc, getDoc, setDoc, updateDoc, Timestamp, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question } from '../types';
-import type { Certification, CertificationInfo, ExamResultSubjectScores } from '../types';
+import type { Certification, CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { CERTIFICATIONS } from '../constants';
 
 /** 자격증 표시 이름: certification_info.exam_name 우선, 없으면 constants cert.name */
@@ -155,6 +155,33 @@ function computePredictedPassRate(
 }
 
 /**
+ * 시험 문항이 과목 순(1과목→2과목→…)으로 정렬되어 있을 때, 인덱스별 과목 번호 배열 생성.
+ * 문제에 subject_number가 없는 경우(예: round2 풀) 채점 시 과목 추정 폴백으로 사용.
+ */
+export function buildIndexToSubject(
+  questions: Question[],
+  subjects: SubjectConfig[] | undefined
+): number[] | null {
+  if (!subjects?.length || questions.length === 0) return null;
+  const counts = subjects.map((s) => s.question_count ?? 0).filter((c) => c > 0);
+  if (counts.length === 0) return null;
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (total < 1) return null;
+  const result: number[] = [];
+  let cum = 0;
+  let subjIndex = 0;
+  for (let i = 0; i < questions.length; i++) {
+    while (subjIndex < subjects.length && i >= cum + (counts[subjIndex] ?? 0)) {
+      cum += counts[subjIndex] ?? 0;
+      subjIndex++;
+    }
+    const subj = subjects[subjIndex];
+    result.push(subj ? subj.subject_number : 1);
+  }
+  return result;
+}
+
+/**
  * 퀴즈 결과 제출
  * - certification_info 기반 과목별 점수·합격 판정·exam_results 저장 (predicted_pass_rate 포함)
  * - users/{uid}/stats/{certCode} 에 core_concept_stats, problem_type_stats, subject_stats 업데이트 (increment)
@@ -172,12 +199,22 @@ export async function submitQuizResult(
 
   const certInfo = await getCertificationInfo(certCode);
   const qMap = new Map(questions.map((q) => [q.id, q]));
+  /** 문제 순서(인덱스) → 과목 번호. subject_number가 없는 문제(예: round2 풀)에 대한 폴백용 */
+  const indexToSubject = buildIndexToSubject(questions, certInfo?.subjects);
 
-  // ---- 과목별 점수 계산 (subject_number 기준) ----
+  // ---- 과목별 점수 계산 (subject_number 기준, 없으면 시험 순서로 추정) ----
   const subjectCorrectTotal: Record<string, { correct: number; total: number }> = {};
-  for (const rec of sessionHistory) {
+  for (let i = 0; i < sessionHistory.length; i++) {
+    const rec = sessionHistory[i];
     const q = qMap.get(rec.qid);
-    const subjKey = q?.subject_number != null ? String(q.subject_number) : '0';
+    let subjKey: string;
+    if (q?.subject_number != null) {
+      subjKey = String(q.subject_number);
+    } else if (indexToSubject && i < indexToSubject.length) {
+      subjKey = String(indexToSubject[i]);
+    } else {
+      subjKey = '0';
+    }
     if (!subjectCorrectTotal[subjKey]) subjectCorrectTotal[subjKey] = { correct: 0, total: 0 };
     subjectCorrectTotal[subjKey].total += 1;
     if (rec.isCorrect) subjectCorrectTotal[subjKey].correct += 1;

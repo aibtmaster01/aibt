@@ -59,30 +59,24 @@ def set_admin02_firestore(db, uid):
     now = datetime.utcnow().isoformat() + "Z"
     user_ref = db.collection("users").document(uid)
     snap = user_ref.get()
+    doc_data = {
+        "email": ADMIN02_EMAIL,
+        "name": ADMIN02_DISPLAY_NAME,
+        "familyName": "관리",
+        "givenName": "자02",
+        "isAdmin": True,
+        "adminRole": "normal",
+        "isBanned": False,
+        "is_verified": True,
+        "registered_devices": [],
+        "memberships": {},
+        "created_at": now,
+    }
     if snap.exists:
-        user_ref.update({
-            "email": ADMIN02_EMAIL,
-            "name": ADMIN02_DISPLAY_NAME,
-            "isAdmin": True,
-            "adminRole": "normal",
-            "isBanned": False,
-            "is_verified": True,
-        })
+        user_ref.update(doc_data)
         print("[Firestore] users/%s 업데이트 (isAdmin=True, adminRole=normal)" % uid)
     else:
-        user_ref.set({
-            "email": ADMIN02_EMAIL,
-            "name": ADMIN02_DISPLAY_NAME,
-            "familyName": "관리",
-            "givenName": "자02",
-            "isAdmin": True,
-            "adminRole": "normal",
-            "isBanned": False,
-            "is_verified": True,
-            "registered_devices": [],
-            "memberships": {},
-            "created_at": now,
-        })
+        user_ref.set(doc_data)
         print("[Firestore] users/%s 생성 (관리자 일반권한)" % uid)
 
 

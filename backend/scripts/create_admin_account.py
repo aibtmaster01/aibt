@@ -65,32 +65,27 @@ def get_or_create_admin_auth() -> auth.UserRecord:
 
 
 def set_admin_firestore(db, uid: str) -> None:
-    """Firestore users/{uid} 에 관리자 문서 설정 (기존 문서가 있으면 isAdmin 등만 보정)."""
+    """Firestore users/{uid} 에 관리자 문서 설정. 앱에서 쓰는 필드만 사용."""
     now = datetime.utcnow().isoformat() + "Z"
     user_ref = db.collection("users").document(uid)
     snap = user_ref.get()
+    doc_data = {
+        "email": ADMIN_EMAIL,
+        "name": ADMIN_DISPLAY_NAME,
+        "familyName": "관리",
+        "givenName": "자",
+        "isAdmin": True,
+        "isBanned": False,
+        "is_verified": True,
+        "registered_devices": [],
+        "memberships": {},
+        "created_at": now,
+    }
     if snap.exists:
-        user_ref.update({
-            "email": ADMIN_EMAIL,
-            "name": ADMIN_DISPLAY_NAME,
-            "isAdmin": True,
-            "isBanned": False,
-            "is_verified": True,
-        })
+        user_ref.update(doc_data)
         print(f"  [Firestore] users/{uid} 업데이트 (isAdmin=True)")
     else:
-        user_ref.set({
-            "email": ADMIN_EMAIL,
-            "name": ADMIN_DISPLAY_NAME,
-            "isAdmin": True,
-            "isBanned": False,
-            "is_verified": True,
-            "registered_devices": [],
-            "memberships": {},
-            "created_at": now,
-            "history": [],
-            "user_problem_type_stats": {},
-        })
+        user_ref.set(doc_data)
         print(f"  [Firestore] users/{uid} 생성 (관리자)")
 
 
