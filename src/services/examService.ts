@@ -30,9 +30,7 @@ import {
 import { db } from '../firebase';
 import { Question, User, type ExamAnswerEntry, type UserRound } from '../types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
-import { getDaysLeft, getDaysLeftForDate } from '../utils/dateUtils';
-import { fetchUserTrendData } from './statsService';
-import { wrongFeedbackTo1Based } from '../utils/questionUtils';
+import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
 import {
   hasQuestionMetadataForCert,
   getQuestionMetadataByCert,
@@ -62,8 +60,8 @@ interface StaticExamDoc {
   timeLimit?: number;
 }
 
-/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등). 정답은 0-based(answer_idx 또는 answer)로 저장됨 */
-interface FirestoreQuestionDoc {
+/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등) */
+export interface FirestoreQuestionDoc {
   q_id?: string;
   question_text?: string;
   options?: string[];
@@ -194,7 +192,7 @@ async function fetchUserWeaknessStats(
 }
 
 /**
- * 5회차 AI 모의고사 계획 생성 (D-Day 기반 비율 조절)
+ * AI 모의고사 계획 생성 (D-Day 기반 비율 조절)
  */
 export async function generateAdaptiveExamPlan(
   uid: string,
@@ -257,19 +255,11 @@ function shuffleArray<T>(arr: T[]): T[] {
  * Firestore 문제 문서 → Question 변환 (실제 필드 규격 반영)
  * - 모든 큐레이션/통계 기준: core_concept 우선, 없을 때만 topic에서 단원 추출
  */
-function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Question {
+export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Question {
   const baseExplanation = data.explanation ?? '';
   const aiExplanation = data.ai_explanation ?? '';
   const options = Array.isArray(data.options) ? data.options : [];
-  // answer_idx 있으면 0-based 저장(관리자 저장), 없고 answer만 있으면 레거시 1-based(1~4) 가능. 항상 1-based(1~4)로 통일
-  const hasAnswerIdx = typeof data.answer_idx === 'number';
-  const raw = hasAnswerIdx ? data.answer_idx : typeof data.answer === 'number' ? data.answer : 0;
-  const answer1Based =
-    options.length > 0
-      ? hasAnswerIdx
-        ? (raw >= 0 && raw < options.length ? raw + 1 : 1)
-        : (raw >= 1 && raw <= options.length ? raw : raw >= 0 && raw < options.length ? raw + 1 : 1)
-      : 1;
+  const rawAnswer = typeof data.answer === 'number' ? data.answer : 1;
   const coreConcept =
     (typeof data.core_concept === 'string' && data.core_concept.trim()) ||
     extractTopicUnit(data.topic) ||
@@ -687,7 +677,6 @@ async function fetchAllPoolQuestions(certCode: string): Promise<Question[]> {
     }
     if (indexItems && indexItems.length > 0) {
       const fromIndex = indexItems.map(indexItemToQuestionStub);
-      console.log(`[fetchAllPoolQuestions] BIGDATA 인덱스 기반 풀 ${fromIndex.length}개 사용`);
       return fromIndex;
     }
   }
@@ -717,7 +706,6 @@ async function fetchAllPoolQuestions(certCode: string): Promise<Question[]> {
     }
     if (indexItems && indexItems.length > 0) {
       const fromIndex = indexItems.map(indexItemToQuestionStub);
-      console.log(`[fetchAllPoolQuestions] BIGDATA Firestore 0건 → 인덱스 기반 풀 ${fromIndex.length}개 사용`);
       return fromIndex;
     }
   }
@@ -773,14 +761,11 @@ function pickByDifficultyThenFill(
   }
   const fromPreferred = result.length;
   if (result.length < target) {
-    console.log(`[${logPrefix}] 난이도 필터 적용: 선호 난이도 ${preferredLevels.join(',')}에서 ${fromPreferred}개, 부족분 ${target - result.length}개는 난이도 해제하여 채움`);
     for (const q of shuffledRest) {
       if (result.length >= target) break;
       result.push(q);
       excludeIds.add(q.id);
     }
-  } else {
-    console.log(`[${logPrefix}] 난이도 필터 적용: 선호 난이도 ${preferredLevels.join(',')}에서 ${result.length}개 확보`);
   }
   return result;
 }
@@ -1018,17 +1003,15 @@ type UserGrade = 'Guest' | 'Free' | 'Premium' | 'Expired';
 /**
  * [2] 회원 등급별 권한 체크 (개편 정책)
  * - Guest: Round 1만 (UI에서 20문제 제한)
- * - Free: Round 1, 2만. Round 3+ 및 약점 공략(Round 5) 접근 불가
- * - Premium/Admin: Round 1~3(고정형), Round 4+(맞춤형) 모두 무제한
+ * - Free: Round 1, 2만. Round 3+ 접근 불가
+ * - Premium/Admin: Round 1~3(고정형), Round 6+(맞춤형) 모두 무제한
  */
 export function checkExamAccess(params: {
   user: User | null;
   certId: string;
   round: number;
-  isWeaknessRound?: boolean; // round 5 = 약점 공략
-  weaknessTrialUsed?: boolean;
 }): ExamAccessResult {
-  const { user, certId, round, isWeaknessRound } = params;
+  const { user, certId, round } = params;
 
   // Admin: 전체 유료 기능 사용 가능
   if (user?.isAdmin) {
@@ -1078,10 +1061,10 @@ export function checkExamAccess(params: {
 
   // === Premium 시나리오 (유료, 유효) ===
   if (isPaid && !isExpired) {
-    return { allowed: true }; // Round 1~4+ 모두 접근 가능
+    return { allowed: true }; // Round 1~3, Round 6+ 모두 접근 가능
   }
 
-  // === Free 시나리오 (무료 회원): Round 1, 2만. 약점 공략 1회 체험 제거 ===
+  // === Free 시나리오 (무료 회원): Round 1, 2만 ===
   if (round <= 2) {
     return { allowed: true };
   }
@@ -1159,9 +1142,6 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
     }
     const orderMap = new Map(results.map((q) => [q.id, q]));
     const ordered = qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
-    if (ordered.length < qIds.length) {
-      console.log(`[fetchQuestionsFromPools] BIGDATA 직접 경로: ${qIds.length}개 중 ${ordered.length}개 로드`);
-    }
     return ordered;
   }
 
@@ -1187,7 +1167,7 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
   return qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
 }
 
-/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용, 1~3회차만) */
+/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용) */
 const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
   1: 80,
   2: 80,
@@ -1229,7 +1209,7 @@ function pickStaticRoundIdsInOrder(items: QuestionIndexItem[], count: number): s
 /**
  * getQuestionsForRound (UserRound 기반 박제 흐름)
  * 1. user_rounds/{round} 존재 시 → 고정된 questionIds로 즉시 반환
- * 2. 없으면: Static(1~5) vs 맞춤형(Zone 기반) 판단 후 생성
+ * 2. 없으면: Static(1~3) vs 맞춤형(round >= 6, Zone 기반) 판단 후 생성
  * 3. UserRound 저장(트랜잭션으로 중복 방지) 후 반환
  */
 export async function getQuestionsForRound(
@@ -1261,24 +1241,26 @@ export async function getQuestionsForRound(
     }
   }
 
-  /** [2] Static(1~3회차) vs 맞춤형(4회차+) 판단 */
+  /** [2] Static(1~3) vs 맞춤형(6+) 판단 */
   const useStatic = round <= 3;
 
   let questions: Question[];
   let sourceRounds: number[];
 
   if (useStatic) {
-    /** Static 1~3회차: index 캐시에서 해당 round 필터 후 문항 수는 certification_info 또는 폴백 */
+    /** Static 1~3: index 캐시만 사용. 회차(round)별로 index 필터 후 문항 수는 certification_info 또는 폴백 사용 */
     let needCount = STATIC_QUESTIONS_PER_ROUND[round] ?? 80;
-    try {
-      const certInfo = await getCertificationInfo(certCode);
-      const subjects = certInfo?.subjects;
-      if (Array.isArray(subjects) && subjects.length > 0) {
-        const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
-        if (total > 0) needCount = total;
+    if (round <= 3) {
+      try {
+        const certInfo = await getCertificationInfo(certCode);
+        const subjects = certInfo?.subjects;
+        if (Array.isArray(subjects) && subjects.length > 0) {
+          const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
+          if (total > 0) needCount = total;
+        }
+      } catch {
+        // certInfo 실패 시 위 needCount 유지
       }
-    } catch {
-      // certInfo 실패 시 위 needCount 유지
     }
     let indexItems = await getQuestionIndexFromCache(certCode);
     if (!indexItems || indexItems.length === 0) {
@@ -1298,7 +1280,7 @@ export async function getQuestionsForRound(
     if (questions.length < qIds.length) throw new Error(`문제 로딩 실패: ${qIds.length}개 중 ${questions.length}개만 불러왔습니다.`);
     sourceRounds = [round];
   } else {
-    /** 맞춤형: round 4+ → 다양-적응 선발 (슬라이딩 윈도우, 커버리지, 트렌드 가중) */
+    /** 맞춤형: round >= 6 → 큐레이션 기반 생성 후 user_rounds 저장 */
     if (!user) throw new Error('맞춤형 모의고사는 로그인이 필요합니다.');
     const { fetchAdaptiveQuestions } = await import('./aiRoundCurationService');
     questions = await fetchAdaptiveQuestions(user.id, certId, user, round);
@@ -1336,38 +1318,6 @@ export async function getQuestionsForRound(
   }
 
   return maskQuestionData(questions, grade);
-}
-
-/**
- * Round 5(약점 공략) - AI 알고리즘 기반 맞춤형 80문제
- * - user 있음: generateAiMockExam (stats core_concept_stats + D-Day 또는 실전/약점 모드)
- * - user 없음: static Round_5 장부 사용 (폴백)
- */
-export async function getQuestionsForWeaknessRound(
-  certId: string,
-  user: User | null
-): Promise<Question[]> {
-  if (!CERT_IDS_WITH_QUESTIONS.includes(certId)) {
-    throw new Error('해당 과목은 현재 준비중입니다.');
-  }
-
-  const cert = CERTIFICATIONS.find((c) => c.id === certId);
-  if (!cert) throw new Error('해당 자격증을 찾을 수 없습니다.');
-  const certCode = cert.code;
-
-  if (user) {
-    try {
-      const targetExamDate = user.passesByCert?.[certId]?.examDate ?? user.targetExamDateByCert?.[certId] ?? null;
-      const questions = await generateAiMockExam(user.id, certCode, targetExamDate);
-      if (questions.length > 0) {
-        return questions;
-      }
-    } catch {
-      // AI 생성 실패 시 static 폴백
-    }
-  }
-
-  return getQuestionsForRound(certId, 5, user);
 }
 
 const WEAKNESS_RETRY_MAX = 50;
@@ -1683,10 +1633,8 @@ export async function fetchWeakTypeFocus50(
   const problemTypeStats = (stats.problem_type_stats ?? {}) as Record<string, { correct?: number; total?: number; proficiency?: number }>;
 
   if (allPool.length === 0) {
-    console.warn('[취약유형] allPool 비어 있음');
     return { questions: [], insufficient: false };
   }
-  console.log(`[취약유형] allPool=${allPool.length}, problem_type_stats 키 수=${Object.keys(problemTypeStats).length}`);
 
   const norm = (s: string) => sanitizeTagKey(String(s).trim());
 
@@ -1946,7 +1894,6 @@ export async function fetchWeakConceptFocus50(
     : 0;
   const band = getProficiencyBand(proficiency01);
   const preferredLevels = getPreferredDifficultyLevels(band);
-  console.log(`[취약개념] 이해도 밴드: ${band} (proficiency01=${proficiency01.toFixed(2)}), 선호 난이도: [${preferredLevels.join(',')}]`);
 
   const need = WEAK_FOCUS_50_TARGET - result.length;
   const poolTop3 = conceptPool.filter((q) => isInTop3(q));
@@ -1974,7 +1921,6 @@ export async function fetchWeakConceptFocus50(
   const bySubject = (a: Question, b: Question) => (a.subject_number ?? 1) - (b.subject_number ?? 1);
   const sorted = questions.slice().sort(bySubject);
   const insufficient = sorted.length < WEAK_FOCUS_50_TARGET;
-  if (insufficient) console.log(`[취약개념] 풀 부족으로 ${sorted.length}개만 반환 (insufficient=true)`);
   return { questions: sorted, insufficient };
 }
 

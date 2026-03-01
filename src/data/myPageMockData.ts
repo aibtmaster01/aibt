@@ -19,7 +19,6 @@ export const mockTrendData: FetchUserTrendDataResult = {
     { name: "1회", score: 55, date: "01.15", isPass: false, examId: "mock-1", roundId: "r1", totalQuestions: 20, correctCount: 11 },
     { name: "2회", score: 58, date: "01.18", isPass: false, examId: "mock-2", roundId: "r2", totalQuestions: 20, correctCount: 12 },
     { name: "3회", score: 65, date: "01.22", isPass: true, examId: "mock-3", roundId: "r3", totalQuestions: 20, correctCount: 13 },
-    { name: "4회", score: 62, date: "01.25", isPass: true, examId: "mock-4", roundId: "r4", totalQuestions: 20, correctCount: 12 },
   ] as TrendDataItem[],
 };
 

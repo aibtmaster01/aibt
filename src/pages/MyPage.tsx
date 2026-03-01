@@ -51,8 +51,7 @@ function getRoundLabel(roundId: string | null | undefined, _certId?: string): st
   const round = EXAM_ROUNDS.find((r) => r.id === roundId);
   if (!round) return `${roundId}회차`;
   if (round.round <= 3) return round.title; // 연습/응용/실전 — 회차 없음
-  if (round.round >= 6) return `약점 공략 모의고사 ${round.round - 5}회`; // 목록과 동일 (6→1회, 7→2회, …)
-  return round.title; // 4,5: 고난도 모의고사 1회/2회
+  return `약점 공략 모의고사 ${round.round - 5}회`; // 큐레이션(6→1회, 7→2회, …)
 }
 
 export interface MyPageProps {
@@ -71,6 +70,7 @@ export interface MyPageProps {
   onStartWeakTypeFocus?: (certId: string) => void;
   /** 취약 개념 집중학습 (이해도 하위 2~10개 개념 50문항) */
   onStartWeakConceptFocus?: (certId: string) => void;
+  showWeakConceptPreparing?: boolean;
   /** 오답확인 클릭 시 해당 시험 결과 화면으로 이동 (examId로 결과 로드 후 결과 페이지로 이동) */
   onViewExamResult?: (examId: string) => void;
   onLogout?: () => void;
@@ -87,6 +87,7 @@ export const MyPage: React.FC<MyPageProps> = ({
   onStartSubjectStrengthTraining,
   onStartWeakTypeFocus,
   onStartWeakConceptFocus,
+  showWeakConceptPreparing,
   onViewExamResult,
   onLogout,
 }) => {
@@ -274,8 +275,6 @@ export const MyPage: React.FC<MyPageProps> = ({
   const radarData = dashboardStats?.radarData ?? [];
   const subjectScores = dashboardStats?.subjectScores ?? [];
   const weaknessTop3 = dashboardStats?.weaknessTop3 ?? [];
-  /** 최근 3회 가중 이동 평균 합격률 (있으면 우선 표시, 없으면 기존 recentPassRate 사용) */
-  const weightedPassRate = (dashboardStats as import('../services/statsService').FetchDashboardStatsResult | null)?.weightedPassRate ?? null;
 
   const effectiveDaysLeft = nearestFromCertInfo?.daysLeft ?? daysLeft;
   const dDayText =

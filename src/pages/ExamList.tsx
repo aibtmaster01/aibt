@@ -3,11 +3,9 @@ import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebas
 import { db } from '../firebase';
 import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
 import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
-import { fetchUserTrendData } from '../services/statsService';
 import { getQuestionsForRound } from '../services/examService';
 import { eloToPercent } from '../services/gradingService';
 import { User } from '../types';
-import { getDaysLeft, getDaysLeftForDate } from '../utils/dateUtils';
 import type { ExamRound } from '../types';
 interface ExamListProps {
   certId: string;
@@ -29,13 +27,11 @@ interface ExamListProps {
   onRequestLogin?: () => void;
 }
 
-/** 1~5회 자격증 공통 명칭 (기초 점검 1~3 / 실전 언락 4~5) */
+/** 1~3회 자격증 공통 명칭 (기초 점검) */
 const ROUND_DISPLAY_BASE: Record<number, { title: string; description: string }> = {
   1: { title: '연습 모의고사', description: '기초 실력 점검 및 취약점 파악' },
   2: { title: '응용 모의고사', description: '실제 시험 난이도에 가까운 고정 문제' },
   3: { title: '실전 모의고사', description: '실전 형식의 고정 문제로 최종 점검' },
-  4: { title: '맞춤형 모의고사 1회', description: 'AI 맞춤형 약점 공략 모의고사' },
-  5: { title: '맞춤형 모의고사 2회', description: 'AI 맞춤형 약점 공략 모의고사' },
 };
 
 /** 4회 이상: 약점 공략 모의고사 N회 (목록 내 차시) */
@@ -50,7 +46,7 @@ function getRoundDisplayDescription(round: ExamRound, roundNumber: number): stri
 
 /**
  * 모의고사 제공 루틴 (자격증 공통)
- * - 1~3회차: 고정 문제. 4회차+: 맞춤형(다양-적응 알고리즘).
+ * - 맞춤형 모의고사는 항상 약점 강화형으로 제공.
  */
 export const ExamList: React.FC<ExamListProps> = ({
   certId,
@@ -75,7 +71,7 @@ export const ExamList: React.FC<ExamListProps> = ({
     roundId: string;
     mode: 'exam' | 'study';
   } | null>(null);
-  /** 4회차+ 오버레이 시 미리 불러온 문제 (체감 속도 향상) */
+  /** 4회차 이상 오버레이 시 미리 불러온 문제 (체감 속도 향상) */
   const staticPreFetchedQuestionsRef = React.useRef<import('../types').Question[] | null>(null);
   const [hasCertStats, setHasCertStats] = useState(false);
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
@@ -91,7 +87,6 @@ export const ExamList: React.FC<ExamListProps> = ({
   const [lockedMessage, setLockedMessage] = useState('');
   const [lockedAction, setLockedAction] = useState<'none' | 'login'>('none');
   const [showFreePaymentModal, setShowFreePaymentModal] = useState(false);
-  /** 예측 합격률 0~100 (4·5회 언락 조건용) */
 
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
   const certCode = cert?.code ?? null;
@@ -120,12 +115,12 @@ export const ExamList: React.FC<ExamListProps> = ({
       : baseRounds;
   const round3ForCert = allRounds.find((r) => r.round === 3);
   const completedRound3 = round3ForCert ? completedRoundIds.has(round3ForCert.id) : false;
-  /** 1~3회차: 항상 표시. 4회차+: 3회차 완료 후 순차 오픈 (모두 맞춤형, 고정 조건 없음) */
   let rounds = !completedRound3
     ? allRounds.filter((r) => r.round <= 3)
     : allRounds.filter((r) => {
         if (r.round <= 3) return true;
-        if (r.round === 4) return completedRound3;
+        if (r.round === 4 || r.round === 5) return false;
+        if (r.round === 6) return completedRound3;
         const prev = allRounds.find((pr) => pr.round === r.round - 1);
         return prev ? completedRoundIds.has(prev.id) : false;
       });
@@ -371,7 +366,7 @@ export const ExamList: React.FC<ExamListProps> = ({
       onSelectRound(roundId, mode);
       return;
     }
-    /** 4회차+: 5초 오버레이 + getQuestionsForRound( user_rounds 박제) 후 /quiz */
+    /** 4회차 이상(맞춤형): 5초 오버레이 + getQuestionsForRound 후 /quiz */
     if (roundNum >= 4 && user && certId) {
       staticPreFetchedQuestionsRef.current = null;
       autoStartAfterOverlayRef.current = { roundId, mode };
@@ -543,7 +538,7 @@ export const ExamList: React.FC<ExamListProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-lg text-white/90">다음 회차</h3>
-                <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (AI 맞춤형 모의고사)</p>
+                <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (약점 공략 모의고사)</p>
               </div>
             </div>
             <Lock className="text-white/50 w-6 h-6 shrink-0" />

@@ -321,11 +321,6 @@ export const Result: React.FC<ResultProps> = ({
             {!isFocusTrainingMode && (
               <span className="text-6xl block animate-[pop_0.4s_ease-out]">{isPass ? '🎉' : '🔥'}</span>
             )}
-            {(roundId === 'r4' || roundId === 'r4c1' || roundId === 'r5') && (
-              <span className="absolute -top-1 -right-2 text-xs font-bold px-2 py-0.5 rounded-full bg-[#99ccff] text-[#0034d3]">
-                실전 불수능
-              </span>
-            )}
           </div>
           <h1 className="text-4xl font-black text-slate-900 mb-2">
             {isFocusTrainingMode ? '집중 학습을 마쳤어요' : isGuest ? '수고하셨습니다!' : gradeCfg.headline}

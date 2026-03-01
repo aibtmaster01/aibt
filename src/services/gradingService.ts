@@ -132,10 +132,11 @@ export async function getCertificationInfo(certCode: string): Promise<Certificat
 
 /**
  * 예측 합격률 계산 (자격증 공통)
- * - 기본: 과목별 점수 평균 (0~100)
- * - 과락 패널티: 가장 낮은 과목의 과락 마진에 비례해 연속적으로 적용
- *   (40점 기준, 30점 과목이면 -5점, 20점이면 -10점, 0점이면 -20점)
- * - 마이페이지/목록에 보이는 값: exam_results 중 해당 자격증 최신 시험의 predicted_pass_rate
+ * - 기본 점수: 과목별 점수의 평균 (0~100)
+ * - 안정성 계수: 어떤 과목이라도 과락(minSubjectScore 미만, 기본 40점)이 있으면 0.8, 없으면 1.0
+ * - 최종: Math.round(기본 점수 * 안정성 계수), 0~100 클램프
+ * - 마이페이지/목록에 보이는 값: exam_results 중 해당 자격증 최신 시험의 predicted_pass_rate (statsService.fetchUserTrendData)
+ * - 큐레이션 모의고사(6회+) 언락 조건: D-Day 3일 이내 AND 예측 합격률 70% 이상
  */
 function computePredictedPassRate(
   subject_scores: ExamResultSubjectScores,
@@ -249,9 +250,6 @@ export async function submitQuizResult(
       throw new Error(`exam_results 문서 저장 실패: ${examId}`);
     }
     const savedData = verifySnap.data();
-    if (savedData.totalQuestions !== sessionHistory.length) {
-      console.warn(`[gradingService] totalQuestions 불일치: 저장된 값=${savedData.totalQuestions}, 예상 값=${sessionHistory.length}`);
-    }
   } catch (err) {
     console.error('[gradingService] exam_results 저장 실패:', {
       examId,

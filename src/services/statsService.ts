@@ -13,6 +13,7 @@ import {
   limit,
   Timestamp,
 } from 'firebase/firestore';
+import { eloToPercent } from './gradingService';
 import { db } from '../firebase';
 
 // ========== v0 UI 호환 인터페이스 ==========
@@ -111,12 +112,6 @@ function safeAccuracy(correct: number, total: number): number {
   return Math.min(100, Math.max(0, v));
 }
 
-/** Elo proficiency → 0~100% (문제 난이도 1200 기준, gradingService와 동일) */
-function eloToPercent(proficiency: number): number {
-  const p = Math.max(100, Math.min(2500, proficiency));
-  const expected = 1 / (1 + Math.pow(10, (1200 - p) / 400));
-  return Math.max(0, Math.min(100, Math.round(expected * 100)));
-}
 
 /** StatEntry에서 이해도 값 반환: proficiency 우선(Elo%), 없으면 correct/total 누적% */
 function understandingFromStat(ent: StatEntry): number {
@@ -227,36 +222,13 @@ export interface FetchDashboardStatsResult {
   radarData: RadarDataItem[];
   subjectScores: SubjectScore[];
   weaknessTop3: WeaknessItem[];
-  /** 최근 3회 가중 이동 평균 합격률 (최신 0.5·직전 0.3·2회전 0.2) */
-  weightedPassRate: number | null;
 }
 
 const FULL_MARK = 100 as const;
 const PASS_LINE = 40; // 과락 기준점
 
 /**
- * 최근 N회 exam_results에서 과목별 점수 추이 계산 → 트렌드 방향(up/down/stable) 반환
- */
-function calcSubjectTrend(scores: number[]): 'up' | 'down' | 'stable' {
-  if (scores.length < 2) return 'stable';
-  // 선형 회귀 기울기 (최소제곱법)
-  const n = scores.length;
-  const xMean = (n - 1) / 2;
-  const yMean = scores.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (i - xMean) * (scores[i] - yMean);
-    den += (i - xMean) ** 2;
-  }
-  const slope = den > 0 ? num / den : 0;
-  if (slope >= 2) return 'up';
-  if (slope <= -2) return 'down';
-  return 'stable';
-}
-
-/**
- * users/{uid}/stats/{certCode} + 최근 3회 exam_results 조회
- * → 레이더 / 과목 게이지(트렌드 방향·안전 마진 포함) / 약점 Top3 / 가중 합격률
+ * users/{uid}/stats/{certCode} 1개 문서 조회 → 레이더 / 과목 게이지 / 약점 Top3
  */
 export async function fetchDashboardStats(
   uid: string,
@@ -274,10 +246,20 @@ export async function fetchDashboardStats(
   try {
     snap = await getDoc(statsRef);
   } catch {
-    return empty;
+    return {
+      radarData: [],
+      subjectScores: [],
+      weaknessTop3: [],
+    };
   }
 
-  if (!snap.exists()) return empty;
+  if (!snap.exists()) {
+    return {
+      radarData: [],
+      subjectScores: [],
+      weaknessTop3: [],
+    };
+  }
 
   const data = snap.data() ?? {};
   const conceptStats = (data.core_concept_stats ?? (data as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry>;
@@ -285,28 +267,27 @@ export async function fetchDashboardStats(
   const problemTypeStats = (data.problem_type_stats ?? {}) as Record<string, StatEntry>;
   const subjectStats = (data.subject_stats ?? {}) as Record<string, StatEntry>;
 
-  // ─── 최근 3회 exam_results 조회 (과목별 트렌드·가중 합격률용) ───
-  let recentExamDocs: ExamResultDoc[] = [];
-  try {
-    const examRef = collection(db, 'users', uid, 'exam_results');
-    const q = query(examRef, orderBy('submittedAt', 'desc'), limit(5));
-    const qSnap = await getDocs(q);
-    recentExamDocs = qSnap.docs
-      .map((d) => d.data() as ExamResultDoc)
-      .filter((d) => d.certCode === certCode && d.roundId !== 'weakness_retry')
-      .slice(0, 3)
-      .reverse(); // 오래된 것 → 최신 순 정렬
-  } catch {
-    // exam_results 조회 실패 시 트렌드 없이 진행
+  // 세부 개념(sub_core_id) → 대분류(Core) 합산: core_id별 평균 proficiency·총 문제 수
+  const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};
+  for (const [subCoreId, ent] of Object.entries(subCoreIdStats)) {
+    const coreId = subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId;
+    if (!coreAggFromSubCore[coreId]) coreAggFromSubCore[coreId] = { sumProficiency: 0, total: 0, count: 0 };
+    const prof = ent?.proficiency ?? 1200;
+    const total = ent?.total ?? 0;
+    coreAggFromSubCore[coreId].sumProficiency += prof * total;
+    coreAggFromSubCore[coreId].total += total;
+    coreAggFromSubCore[coreId].count += 1;
   }
 
-  // ─── 과목별 최근 3회 점수 수집 ───
-  const subjectRecentScores: Record<string, number[]> = {};
-  for (const examDoc of recentExamDocs) {
-    const scores = examDoc.subject_scores ?? {};
-    for (const [k, v] of Object.entries(scores)) {
-      if (!subjectRecentScores[k]) subjectRecentScores[k] = [];
-      subjectRecentScores[k].push(v as number);
+  // 1) Radar (problem_type_stats) — 이해도 = proficiency(Elo) 우선
+  const radarData: RadarDataItem[] = Object.entries(problemTypeStats).map(
+    ([subject, ent]) => {
+      const A = understandingFromStat(ent);
+      return {
+        subject,
+        A,
+        fullMark: FULL_MARK,
+      };
     }
   }
 
@@ -361,7 +342,7 @@ export async function fetchDashboardStats(
     }
   );
 
-  // 3) Weakness Top 3
+  // 3) Weakness Top 3: sub_core_id_stats → Core 합산 후 이해도 낮은 순 상위 3 (있으면 우선), 없으면 core_concept_stats
   let weaknessCandidates: WeaknessItem[] = [];
   if (Object.keys(coreAggFromSubCore).length > 0) {
     weaknessCandidates = Object.entries(coreAggFromSubCore)
@@ -375,15 +356,24 @@ export async function fetchDashboardStats(
   }
   if (weaknessCandidates.length === 0) {
     weaknessCandidates = Object.entries(conceptStats)
-      .filter(([, ent]) => (ent?.total ?? 0) >= 3 && (ent?.correct ?? 0) >= 1)
-      .map(([name, ent]) => ({ name, accuracy: understandingFromStat(ent), count: ent?.total ?? 0 }))
+      .filter(([, ent]) => {
+        const total = ent?.total ?? 0;
+        const correct = ent?.correct ?? 0;
+        return total >= 3 && correct >= 1;
+      })
+      .map(([name, ent]) => {
+        const total = ent?.total ?? 0;
+        const accuracy = understandingFromStat(ent);
+        return { name, accuracy, count: total };
+      })
       .sort((a, b) => a.accuracy - b.accuracy);
   }
+
+  const weaknessTop3 = weaknessCandidates.slice(0, 3);
 
   return {
     radarData,
     subjectScores,
-    weaknessTop3: weaknessCandidates.slice(0, 3),
-    weightedPassRate,
+    weaknessTop3,
   };
 }

@@ -91,7 +91,7 @@ export const Quiz: React.FC<QuizProps> = ({
 
   const roundInfo = EXAM_ROUNDS.find((r) => r.id === roundId);
   const round = roundInfo?.round ?? 1;
-  const isWeaknessRound = round === 5;
+  const isWeaknessRound = round >= 6;
   const weaknessRetryMode = roundId === '__weakness_retry__' || roundId === '__subject_retry__';
   const isPremium = !!(user && certId && isPremiumUnlocked(user, certId));
 

@@ -53,3 +53,6 @@ google-cloud-sdk/
 *.njsproj
 *.sln
 *.sw?
+
+# Google Cloud SDK (로컬 설치, 저장소 미포함)
+google-cloud-sdk/

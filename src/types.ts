@@ -12,7 +12,7 @@ export interface User {
   subscriptions: Certification[];
   paidCertIds?: string[]; // IDs of certifications the user has paid for
   expiredCertIds?: string[]; // IDs of certifications that have expired
-  /** 약점 공략(round 5) 1회 체험 사용 여부 - certId별 */
+  /** 약점 공략(round 6+) 1회 체험 사용 여부 - certId별 */
   weaknessTrialUsedByCert?: Record<string, boolean>;
   /** 목표 시험일 (certId → YYYY-MM-DD) - D-Day 모드용 */
   targetExamDateByCert?: Record<string, string>;

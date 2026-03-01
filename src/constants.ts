@@ -57,21 +57,18 @@ export const EXAM_SCHEDULE_DATES: Record<string, string> = {
   ad1: '2026-02-24', ad2: '2026-05-20',
 };
 
-/** 자격증 공통 모의고사 명칭: 기초(1~3 고정) → 약점 공략(AI) → 실전 언락(4,5 고정) → 고난도 맞춤(AI) */
+/** 자격증 공통 모의고사 명칭: 기초(1~3 고정) → 약점 공략(6+ AI 맞춤형) */
 export const EXAM_ROUNDS: ExamRound[] = [
   { id: 'r1', certId: 'c1', round: 1, title: '연습 모의고사', description: '기초 실력 점검 및 취약점 파악', isPremium: false, questionCount: 80, type: 'diagnostic' },
   { id: 'r2', certId: 'c1', round: 2, title: '응용 모의고사', description: '실제 시험 난이도에 가까운 고정 문제', isPremium: false, questionCount: 80, type: 'practice' },
   { id: 'r3', certId: 'c1', round: 3, title: '실전 모의고사', description: '실전 형식의 고정 문제로 최종 점검', isPremium: true, questionCount: 80, type: 'practice' },
-  { id: 'r4', certId: 'c1', round: 4, title: '맞춤형 모의고사 1회', description: 'AI 맞춤형 약점 공략 모의고사', isPremium: true, questionCount: 80, type: 'ai-generated' },
-  { id: 'r5', certId: 'c1', round: 5, title: '맞춤형 모의고사 2회', description: 'AI 맞춤형 약점 공략 모의고사', isPremium: true, questionCount: 80, type: 'ai-generated' },
   { id: 'r6c1', certId: 'c1', round: 6, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r7c1', certId: 'c1', round: 7, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r8c1', certId: 'c1', round: 8, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
-  { id: 'r9c1', certId: 'c1', round: 9, title: '약점 공략 모의고사', description: '고난이도 위주 AI 맞춤형', isPremium: true, questionCount: 80, type: 'practice' },
-  { id: 'r10c1', certId: 'c1', round: 10, title: '약점 공략 모의고사', description: '고난이도 위주 AI 맞춤형', isPremium: true, questionCount: 80, type: 'practice' },
+  { id: 'r9c1', certId: 'c1', round: 9, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
+  { id: 'r10c1', certId: 'c1', round: 10, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r6', certId: 'c2', round: 1, title: '연습 모의고사', description: 'SQLD 합격 가능성 진단', isPremium: false, questionCount: 5, type: 'diagnostic' },
   { id: 'r2c2', certId: 'c2', round: 2, title: '응용 모의고사', description: '실제 시험 난이도에 가까운 구성', isPremium: false, questionCount: 20, type: 'practice' },
   { id: 'r3c2', certId: 'c2', round: 3, title: '실전 모의고사', description: '실전 대비 고정 문제', isPremium: true, questionCount: 20, type: 'practice' },
-  { id: 'r4c2', certId: 'c2', round: 4, title: '맞춤형 모의고사 1회', description: 'AI 맞춤형 약점 공략 모의고사', isPremium: true, questionCount: 80, type: 'ai-generated' },
   { id: 'r7', certId: 'c3', round: 1, title: '연습 모의고사', description: 'ADsP 기초 실력 점검', isPremium: false, questionCount: 5, type: 'diagnostic' },
 ];

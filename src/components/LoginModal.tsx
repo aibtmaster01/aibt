@@ -52,10 +52,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     try {
       if (mode === 'login') {
         await login(email, password);
-        (onAuthSuccess ?? onBack)?.();
+        setTimeout(() => (onAuthSuccess ?? onBack)?.(), 0);
       } else {
         await register(email, password, familyName, givenName);
-        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+        setTimeout(() => (onAuthSuccess ?? onBack)?.({ isNewUser: true }), 0);
       }
     } catch (err) {
       if (timeoutId != null) clearTimeout(timeoutId);
@@ -80,7 +80,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setLoading(true);
     try {
       await loginWithGoogle();
-      (onAuthSuccess ?? onBack)?.();
+      setTimeout(() => (onAuthSuccess ?? onBack)?.(), 0);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google 로그인에 실패했습니다.';
       setError(msg);
