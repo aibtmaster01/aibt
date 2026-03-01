@@ -54,10 +54,10 @@ export function ScoreTrend({ data, onRetryRound, onWrongAnswers }: ScoreTrendPro
     if (scrollMode || !containerRef.current) return;
     const el = containerRef.current;
     const observer = new ResizeObserver(() => {
-      if (el) setContainerWidth(el.offsetWidth);
+      if (el) setContainerWidth(Math.max(200, el.offsetWidth));
     });
     observer.observe(el);
-    setContainerWidth(el.offsetWidth);
+    setContainerWidth(Math.max(200, el.offsetWidth));
     return () => observer.disconnect();
   }, [scrollMode, data.length]);
 

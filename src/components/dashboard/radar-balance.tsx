@@ -36,7 +36,7 @@ export function RadarBalance({
           </button>
         </div>
         <div className="h-64 w-full opacity-30 pointer-events-none">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
             <RadarChart data={chartData.length ? chartData : [{ subject: "-", A: 0, fullMark: 100 }]}>
               <PolarGrid stroke="hsl(var(--border))" strokeOpacity={0.6} />
               <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} axisLine={false} />
@@ -63,7 +63,7 @@ export function RadarBalance({
     <div className="min-h-[280px] rounded-2xl border border-border bg-card p-4">
       <h3 className="text-sm font-semibold text-foreground mb-3">유형별 밸런스</h3>
       <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
           <RadarChart data={chartData}>
             <PolarGrid stroke="hsl(var(--border))" strokeOpacity={0.6} />
             <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} axisLine={false} />
