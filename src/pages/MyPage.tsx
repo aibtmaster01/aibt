@@ -9,7 +9,7 @@ import {
 } from "../services/statsService";
 import { getCachedOrFetchMyPageData } from "../services/statsServiceWithCache";
 import { getCertificationInfo, getCertDisplayName } from "../services/gradingService";
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from "recharts";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 import { EmptyState } from "../components/dashboard/empty-state";
 import {
   PostExamBanner,
@@ -603,9 +603,8 @@ export const MyPage: React.FC<MyPageProps> = ({
                     </div>
                   ) : (
                     <>
-                      <div className="relative w-full h-48 md:h-52 flex-shrink-0 overflow-visible">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
-                          <RadarChart
+                      <div className="relative w-full flex-shrink-0 overflow-visible flex items-center justify-center" style={{ height: 208 }}>
+                        <RadarChart width={280} height={208}
                             data={radarChartData}
                             margin={{ top: 20, right: 32, bottom: 20, left: 32 }}
                           >
@@ -645,7 +644,6 @@ export const MyPage: React.FC<MyPageProps> = ({
                               strokeWidth={2}
                             />
                           </RadarChart>
-                        </ResponsiveContainer>
                       </div>
                       <button
                         type="button"

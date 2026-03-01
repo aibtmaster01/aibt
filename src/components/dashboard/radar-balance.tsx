@@ -1,5 +1,5 @@
 import React from "react";
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from "recharts";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 import { Lock } from "lucide-react";
 import type { RadarDataItem } from "../../services/statsService";
 
@@ -35,15 +35,13 @@ export function RadarBalance({
             열공 모드 알아보기
           </button>
         </div>
-        <div className="h-64 w-full opacity-30 pointer-events-none">
-          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
-            <RadarChart data={chartData.length ? chartData : [{ subject: "-", A: 0, fullMark: 100 }]}>
+        <div className="w-full opacity-30 pointer-events-none flex items-center justify-center" style={{ height: 256 }}>
+            <RadarChart width={280} height={250} data={chartData.length ? chartData : [{ subject: "-", A: 0, fullMark: 100 }]}>
               <PolarGrid stroke="hsl(var(--border))" strokeOpacity={0.6} />
               <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} axisLine={false} />
               <PolarRadiusAxis angle={90} domain={[0, 100]} axisLine={false} tick={false} />
               <Radar name="정답률" dataKey="A" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.4} />
             </RadarChart>
-          </ResponsiveContainer>
         </div>
       </div>
     );
@@ -62,15 +60,13 @@ export function RadarBalance({
   return (
     <div className="min-h-[280px] rounded-2xl border border-border bg-card p-4">
       <h3 className="text-sm font-semibold text-foreground mb-3">유형별 밸런스</h3>
-      <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
-          <RadarChart data={chartData}>
+      <div className="flex items-center justify-center" style={{ height: 256 }}>
+          <RadarChart width={280} height={250} data={chartData}>
             <PolarGrid stroke="hsl(var(--border))" strokeOpacity={0.6} />
             <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} axisLine={false} />
             <PolarRadiusAxis angle={90} domain={[0, 100]} axisLine={false} tick={false} />
             <Radar name="정답률" dataKey="A" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.4} />
           </RadarChart>
-        </ResponsiveContainer>
       </div>
     </div>
   );
