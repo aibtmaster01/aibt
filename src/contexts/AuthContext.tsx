@@ -2,17 +2,20 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { auth } from '../firebase';
 import { User } from '../types';
-import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, resendVerificationEmail } from '../services/authService';
+import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail } from '../services/authService';
 
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** 로그인 성공 시 해당 User 반환 (guestContinue 플로우에서 is_verified 확인용) */
+  login: (email: string, password: string) => Promise<User>;
   register: (email: string, password: string, familyName: string, givenName: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   resendVerificationEmail: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (updater: (prev: User) => User) => void;
+  /** Firestore에서 현재 유저 정보 재조회 (결제 완료 등 상태 반영용) */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -21,9 +24,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<User> => {
     const appUser = await loginWithEmailPassword(email, password);
     setUser(appUser);
+    return appUser;
   };
 
   const register = async (email: string, password: string, familyName: string, givenName: string) => {
@@ -31,9 +35,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
-  const loginWithGoogleHandler = async () => {
-    const appUser = await loginWithGoogle();
-    setUser(appUser);
+  const loginWithGoogleHandler = () => {
+    loginWithGoogle(); // 리다이렉트 발생 → 복귀 시 getGoogleRedirectUser로 처리
   };
 
   const resendVerification = async (email: string, password: string) => {
@@ -46,6 +49,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    getGoogleRedirectUser()
+      .then((appUser) => {
+        if (cancelled) return;
+        if (appUser) {
+          setUser(appUser);
+          setLoading(false);
+        }
+      })
+      .catch(() => {});
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (!firebaseUser) {
         setUser(null);
@@ -56,10 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const appUser = await getSessionForCurrentAuth(firebaseUser.uid);
         setUser(appUser);
-        // 세션이 없어도 즉시 로그아웃하지 않음 — 회원가입 직후 setDoc 전에 여기 올 수 있어, 로그아웃하면 setDoc 권한 오류 발생
-        if (!appUser) {
-          setUser(null);
-        }
+        if (!appUser) setUser(null);
       } catch {
         setUser(null);
       } finally {
@@ -67,11 +79,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const updateUser = (updater: (prev: User) => User) => {
     setUser((prev) => (prev ? updater(prev) : null));
+  };
+
+  const refreshUser = async () => {
+    const fb = auth.currentUser;
+    if (!fb) return;
+    try {
+      const appUser = await getSessionForCurrentAuth(fb.uid);
+      if (appUser) setUser(appUser);
+    } catch {
+      // 유지
+    }
   };
 
   const value: AuthContextValue = {
@@ -83,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resendVerificationEmail: resendVerification,
     logout,
     updateUser,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

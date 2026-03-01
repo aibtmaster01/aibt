@@ -5,7 +5,7 @@ import type { CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '
 import { RichText } from '../components/RichText';
 import { to1BasedAnswer } from '../utils/questionUtils';
 import { getCertificationInfo } from '../services/gradingService';
-import { CERTIFICATIONS } from '../constants';
+import { CERTIFICATIONS, EXAM_ROUNDS } from '../constants';
 import type { RoundMemo } from './Quiz';
 
 export interface QuizAnswerRecord {
@@ -36,6 +36,8 @@ interface ResultProps {
   onGoToCheckout: () => void;
   /** 무료 회원이 2회차까지 이어서 학습할 때 (결제 화면이 아닌 모의고사 목록으로) */
   onContinueLearning?: () => void;
+  /** 무료 회원이 2회차 결과에서 "다음 학습" 클릭 시 → 결제 모달 열기 */
+  onNextRoundPaymentRequest?: () => void;
   showCouponEffect: boolean;
 }
 
@@ -164,9 +166,17 @@ export const Result: React.FC<ResultProps> = ({
   onLogin,
   onGoToCheckout,
   onContinueLearning,
+  onNextRoundPaymentRequest,
   showCouponEffect,
 }) => {
   const [certInfo, setCertInfo] = useState<CertificationInfo | null>(null);
+  const currentRoundNum = EXAM_ROUNDS.find((r) => r.id === roundId && r.certId === certId)?.round ?? 0;
+  /** 무료 회원이 2회차 결과 화면인지 (다음 학습 클릭 시 결제 모달 열기용). roundId 직접 매칭 보강 */
+  const isRound2Result =
+    currentRoundNum === 2 ||
+    roundId === 'r2' ||
+    roundId === 'r2c2';
+  const isRound2FreeUser = !isPaidUser && isRound2Result;
 
   const { subject_scores, subjectDetails, totalScore100, gradeBand, weakestConcept, conceptRatesThisRound, failedSubjectNames } = useMemo(() => {
     const subjects = certInfo?.subjects ?? [];
@@ -495,10 +505,17 @@ export const Result: React.FC<ResultProps> = ({
             )}
             {showCouponCta && gradeBand !== 'very_stable' && (
               <button
-                onClick={onContinueLearning ?? onHome}
+                type="button"
+                onClick={() => {
+                  if (isRound2FreeUser && onNextRoundPaymentRequest) {
+                    onNextRoundPaymentRequest();
+                  } else {
+                    (onContinueLearning ?? onHome)();
+                  }
+                }}
                 className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 flex items-center justify-center gap-2"
               >
-                <ArrowRight size={20} /> 계속해서 학습하기
+                <ArrowRight size={20} /> {isRound2FreeUser ? '다음 학습' : '계속해서 학습하기'}
               </button>
             )}
             {isPaidUser && !showCouponCta && (

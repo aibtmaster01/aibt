@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor } from 'lucide-react';
+import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
 import { EmptyState } from './components/dashboard/empty-state';
@@ -25,11 +25,11 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin' | '/admin/certs' | '/admin/questions' | '/admin/billing';
-type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
+type LoginModalIntent = import('./components/LoginModal').LoginModalIntent;
 
 const App: React.FC = () => {
   const isMobile = useIsMobile();
-  const { user, loading: authLoading, logout, updateUser, resendVerificationEmail } = useAuth();
+  const { user, loading: authLoading, logout, updateUser, resendVerificationEmail, refreshUser } = useAuth();
   const [route, setRoute] = useState<Route>('/');
   const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
@@ -57,6 +57,9 @@ const App: React.FC = () => {
   const [pendingCheckoutCertId, setPendingCheckoutCertId] = useState<string | null>(null);
   /** 결제 화면: 페이지 대신 대형 모달로 표시 (문제 풀이 중 이탈 없이 결제 가능) */
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  /** 결제 완료 후 서비스 디자인 맞춤 성공 모달 */
+  const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
+  const [paymentSuccessError, setPaymentSuccessError] = useState<string | null>(null);
   /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
@@ -349,8 +352,8 @@ const App: React.FC = () => {
           fetchSubjectStrengthTraining50(user.id, certId),
         ]);
         setPreparing(false);
-        if (result.insufficient || result.questions.length < 50) {
-          alert('아직 충분한 데이터가 쌓이지 않았어요.\n조금 더 학습을 진행해주세요.');
+        if (result.questions.length < 20) {
+          alert('아직 충분한 데이터가 쌓이지 않았어요.\n모의고사 1회 이상 풀어주신 뒤 이용해 주세요.');
           return;
         }
         setSelectedCertId(certId);
@@ -509,41 +512,23 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCheckoutComplete = () => {
+  const handleCheckoutComplete = async () => {
+    setPaymentSuccessError(null);
     if (user && selectedCertId) {
-      setPaymentComplete(user.id, selectedCertId)
-        .then(() => {
-          const newCert = CERTIFICATIONS.find((c) => c.id === selectedCertId);
-          updateUser((u) => {
-            const isSubscribed = u.subscriptions.some((s) => s.id === selectedCertId);
-            const isPaid = u.paidCertIds?.includes(selectedCertId);
-            let next = { ...u };
-            if (!isSubscribed && newCert) {
-              next.subscriptions = [...(next.subscriptions || []), newCert];
-            }
-            if (!isPaid) {
-              next.paidCertIds = [...(next.paidCertIds || []), selectedCertId];
-            }
-            if (next.expiredCertIds?.includes(selectedCertId)) {
-              next.expiredCertIds = next.expiredCertIds!.filter((id) => id !== selectedCertId);
-            }
-            next.isPremium = true;
-            return next;
-          });
-          alert('결제가 완료되었습니다! 새로고침 후에도 열공 모드가 유지됩니다.');
-          setShowCheckoutModal(false);
-          // 모달만 닫고 현재 화면 유지 → 퀴즈 풀이 중이면 이어서 풀 수 있음
-        })
-        .catch((err) => {
-          console.error('[결제 완료] Firestore 저장 실패', err);
-          alert('결제는 완료되었으나 상태 저장에 실패했습니다. 새로고침 시 무료로 보일 수 있습니다.');
-          setShowCheckoutModal(false);
-          // 모달만 닫고 현재 화면 유지
-        });
+      try {
+        await setPaymentComplete(user.id, selectedCertId);
+        await refreshUser();
+        setShowCheckoutModal(false);
+        setShowPaymentSuccessModal(true);
+      } catch (err) {
+        console.error('[결제 완료] Firestore 저장 실패', err);
+        setPaymentSuccessError('상태 저장에 실패했습니다. 새로고침 후 다시 확인해주세요.');
+        setShowCheckoutModal(false);
+        setShowPaymentSuccessModal(true);
+      }
     } else {
-      alert('결제가 완료되었습니다! 학습을 시작하세요.');
       setShowCheckoutModal(false);
-      // 비로그인 등: 모달만 닫고 현재 화면 유지
+      setShowPaymentSuccessModal(true);
     }
   };
 
@@ -668,7 +653,7 @@ const App: React.FC = () => {
               }}
               onGuestLimitReached={({ certId, roundId }) => {
                 setPendingGuestContinue({ certId, roundId });
-                setLoginInitialMode('login');
+                setLoginInitialMode('signup');
                 setShowLoginModal(true);
                 setLoginModalIntent('guestContinue');
               }}
@@ -753,6 +738,7 @@ const App: React.FC = () => {
               if (selectedCertId) navigate('/exam-list');
               else navigate('/');
             }}
+            onNextRoundPaymentRequest={() => setShowNextRoundPaymentModal(true)}
             showCouponEffect={showCouponEffect}
           />
         ) : null;
@@ -817,7 +803,8 @@ const App: React.FC = () => {
         {showLoginModal && (
           <LoginModal
             initialMode={loginInitialMode ?? 'login'}
-            persistent={false}
+            persistent={loginModalIntent === 'guestContinue'}
+            intent={loginModalIntent ?? undefined}
             onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
             onAuthSuccess={handleLoginModalAuthSuccess}
           />
@@ -863,7 +850,8 @@ const App: React.FC = () => {
       {showLoginModal && (
         <LoginModal
           initialMode={loginInitialMode ?? 'login'}
-          persistent={false}
+          persistent={loginModalIntent === 'guestContinue'}
+          intent={loginModalIntent ?? undefined}
           onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
           onAuthSuccess={handleLoginModalAuthSuccess}
         />
@@ -1024,6 +1012,35 @@ const App: React.FC = () => {
               }}
               onComplete={handleCheckoutComplete}
             />
+          </div>
+        </div>
+      )}
+
+      {/* 결제 완료 성공 모달 (서비스 디자인) */}
+      {showPaymentSuccessModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setShowPaymentSuccessModal(false); setPaymentSuccessError(null); }} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-8 shadow-2xl text-center animate-scale-in">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-5">
+              <Check className="w-7 h-7 text-emerald-600" strokeWidth={2.5} />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 mb-2">결제가 완료되었습니다</h3>
+            {paymentSuccessError ? (
+              <p className="text-sm text-red-600 mb-6">{paymentSuccessError}</p>
+            ) : (
+              <p className="text-sm text-slate-500 mb-6">
+                열공 모드가 적용되었습니다.
+                <br />
+                새로고침 후에도 유지됩니다.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => { setShowPaymentSuccessModal(false); setPaymentSuccessError(null); }}
+              className="w-full py-3.5 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 transition-colors"
+            >
+              확인
+            </button>
           </div>
         </div>
       )}
@@ -1234,7 +1251,7 @@ const App: React.FC = () => {
                 setShowNextRoundPaymentModal(false);
                 if (selectedCertId) navigate('/checkout');
               }}
-              className="w-full py-3.5 rounded-xl bg-brand-500 text-slate-900 font-bold text-sm hover:bg-brand-400"
+              className="w-full py-3.5 rounded-xl bg-brand-500 text-white font-bold text-sm hover:bg-brand-400"
             >
               결제하러 가기
             </button>

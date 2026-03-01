@@ -25,7 +25,6 @@ import {
   limit,
   updateDoc,
   setDoc,
-  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question, User, type ExamAnswerEntry, type UserRound } from '../types';
@@ -1287,34 +1286,25 @@ export async function getQuestionsForRound(
     sourceRounds = [round];
   }
 
-  /** [3] UserRound 저장: 기존 문서가 있을 때는 절대 덮어쓰지 않음 (재진입 시 동일 문제 세트 유지) */
+  /** [3] UserRound 저장: 이미 있으면 덮어쓰지 않음. 트랜잭션 대신 getDoc → 없을 때만 setDoc 으로 409 방지 */
   if (user && questions.length > 0) {
     const userRoundRef = doc(db, 'users', user.id, 'user_rounds', String(round));
+    const beforeWrite = await getDoc(userRoundRef);
+    if (beforeWrite.exists()) {
+      const data = beforeWrite.data() as UserRound;
+      const qIds = Array.isArray(data.questionIds) ? data.questionIds : [];
+      if (qIds.length > 0) {
+        const existingQuestions = await fetchQuestionsFromPools(certCode, qIds);
+        if (existingQuestions.length > 0) return maskQuestionData(existingQuestions, grade);
+      }
+    }
     const userRoundData: UserRound = {
       roundNum: round,
       sourceRounds,
       questionIds: questions.map((q) => q.id),
       createdAt: new Date().toISOString(),
     };
-    try {
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(userRoundRef);
-        if (!snap.exists()) {
-          tx.set(userRoundRef, userRoundData);
-        }
-      });
-    } catch (e) {
-      const retrySnap = await getDoc(userRoundRef);
-      if (retrySnap.exists()) {
-        const data = retrySnap.data() as UserRound;
-        const qIds = Array.isArray(data.questionIds) ? data.questionIds : [];
-        if (qIds.length > 0) {
-          const retryQuestions = await fetchQuestionsFromPools(certCode, qIds);
-          if (retryQuestions.length > 0) return maskQuestionData(retryQuestions, grade);
-        }
-      }
-      throw e;
-    }
+    await setDoc(userRoundRef, userRoundData);
   }
 
   return maskQuestionData(questions, grade);
@@ -1597,9 +1587,10 @@ export async function fetchSubjectStrengthTraining50(
   let questions = questionIds.length > 0 ? await fetchQuestionsFromPools(certCode, questionIds) : [];
   const idToIndex = new Map(questionIds.map((id, idx) => [id, idx]));
   questions = questions.slice().sort((a, b) => (idToIndex.get(a.id) ?? 999) - (idToIndex.get(b.id) ?? 999));
+  const hasLearningHistory = correctIds.size + wrongIds.size >= 40;
   return {
     questions,
-    insufficient: questions.length < SUBJECT_STRENGTH_50_TARGET,
+    insufficient: questions.length < SUBJECT_STRENGTH_50_TARGET && !hasLearningHistory,
   };
 }
 

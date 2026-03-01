@@ -209,8 +209,12 @@ export async function fetchUserTrendData(
     if (index === 0) {
       if (data.predicted_pass_rate != null && Number.isFinite(Number(data.predicted_pass_rate))) {
         recentPassRate = Math.min(100, Math.max(0, Number(data.predicted_pass_rate)));
-      } else {
+      } else if (score > 0) {
         recentPassRate = score;
+      } else {
+        const total = Number(data.totalQuestions ?? 0);
+        const correct = Number(data.correctCount ?? 0);
+        recentPassRate = total > 0 ? Math.min(100, Math.max(0, Math.round((correct / total) * 100))) : 0;
       }
     }
   });

@@ -8,8 +8,10 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   sendEmailVerification,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
+  type User as FirebaseAuthUser,
 } from 'firebase/auth';
 import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -203,62 +205,70 @@ export async function resendVerificationEmail(email: string, password: string): 
   await signOut(auth);
 }
 
-export async function loginWithGoogle(): Promise<User> {
-  try {
-    const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
-    const fbUser = result.user;
-    const uid = fbUser.uid;
-    const email = fbUser.email ?? '';
-    const displayName = (fbUser.displayName ?? '').trim() || email.split('@')[0];
-    const parts = displayName.split(/\s+/);
-    const familyName = parts.length > 1 ? parts[0] : '김';
-    const givenName = parts.length > 1 ? parts.slice(1).join(' ') : displayName || '학습자';
+/** Google 로그인 후 Firestore 사용자 조회/생성 (팝업/리다이렉트 공통) */
+async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
+  const uid = fbUser.uid;
+  const email = fbUser.email ?? '';
+  const displayName = (fbUser.displayName ?? '').trim() || email.split('@')[0];
+  const parts = displayName.split(/\s+/);
+  const familyName = parts.length > 1 ? parts[0] : '김';
+  const givenName = parts.length > 1 ? parts.slice(1).join(' ') : displayName || '학습자';
 
-    const userRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userRef);
+  const userRef = doc(db, 'users', uid);
+  const userSnap = await getDoc(userRef);
 
-    if (userSnap.exists()) {
-      const data = userSnap.data();
-      if (data.isBanned === true) {
-        await signOut(auth);
-        throw new AuthError('이용이 정지된 계정입니다. 관리자에게 문의하세요.', 'USER_NOT_FOUND');
-      }
-      await migrateUserNamesIfNeeded(userRef, data);
-      const deviceId = getDeviceId();
-      const registeredDevices = (data.registered_devices as string[]) || [];
-      if (!registeredDevices.includes(deviceId)) {
-        if (registeredDevices.length >= MAX_DEVICES) {
-          await signOut(auth);
-          throw new AuthError('등록 가능한 기기 수(3대)를 초과했습니다. 기존 기기에서 로그아웃 후 다시 시도하세요.', 'DEVICE_LIMIT_EXCEEDED');
-        }
-        await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
-      }
-      const fresh = (await getDoc(userRef)).data() ?? data;
-      return firestoreDocToUser(uid, fresh);
+  if (userSnap.exists()) {
+    const data = userSnap.data();
+    if (data.isBanned === true) {
+      await signOut(auth);
+      throw new AuthError('이용이 정지된 계정입니다. 관리자에게 문의하세요.', 'USER_NOT_FOUND');
     }
-
-    const now = new Date().toISOString();
+    await migrateUserNamesIfNeeded(userRef, data);
     const deviceId = getDeviceId();
-    await setDoc(userRef, {
-      email,
-      familyName,
-      givenName,
-      name: familyName + givenName,
-      isAdmin: false,
-      is_verified: true,
-      registered_devices: [deviceId],
-      memberships: {},
-      created_at: now,
-    });
-    const data = (await getDoc(userRef)).data() ?? {};
-    return firestoreDocToUser(uid, data);
+    const registeredDevices = (data.registered_devices as string[]) || [];
+    if (!registeredDevices.includes(deviceId)) {
+      if (registeredDevices.length >= MAX_DEVICES) {
+        await signOut(auth);
+        throw new AuthError('등록 가능한 기기 수(3대)를 초과했습니다. 기존 기기에서 로그아웃 후 다시 시도하세요.', 'DEVICE_LIMIT_EXCEEDED');
+      }
+      await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
+    }
+    const fresh = (await getDoc(userRef)).data() ?? data;
+    return firestoreDocToUser(uid, fresh);
+  }
+
+  const now = new Date().toISOString();
+  const deviceId = getDeviceId();
+  await setDoc(userRef, {
+    email,
+    familyName,
+    givenName,
+    name: familyName + givenName,
+    isAdmin: false,
+    is_verified: true,
+    registered_devices: [deviceId],
+    memberships: {},
+    created_at: now,
+  });
+  const data = (await getDoc(userRef)).data() ?? {};
+  return firestoreDocToUser(uid, data);
+}
+
+/** Google 로그인: 리다이렉트 방식 (COOP/팝업 차단 환경에서 안정 동작). 호출 시 곧바로 페이지가 이동합니다. */
+export async function loginWithGoogle(): Promise<void> {
+  const provider = new GoogleAuthProvider();
+  await signInWithRedirect(auth, provider);
+}
+
+/** 리다이렉트 복귀 시 한 번만 호출. Google 로그인 결과가 있으면 User 반환, 없으면 null. */
+export async function getGoogleRedirectUser(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (!result?.user) return null;
+    return completeGoogleSignIn(result.user);
   } catch (err: unknown) {
     if (err instanceof AuthError) throw err;
     const code = (err as { code?: string })?.code;
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      throw new AuthError('로그인 창이 닫혔습니다.', 'POPUP_CLOSED');
-    }
     if (code === 'auth/operation-not-allowed') {
       throw new AuthError('Google 로그인이 비활성화되어 있습니다.', 'GOOGLE_DISABLED');
     }
@@ -449,29 +459,20 @@ export async function ensureUserSubscription(uid: string, certId: string): Promi
 }
 
 /**
- * 결제 완료 시 Firestore에 유료 상태 저장 (새로고침 후에도 유지)
- * - memberships에 해당 자격증 PREMIUM 반영
- * - paidCertIds, isPremium 필드 동기화 (firestoreDocToUser에서 memberships 우선 사용)
+ * 결제 완료 시 Firestore에 유료 상태 저장 (memberships만 사용)
+ * - memberships[certCode].tier = 'PREMIUM' 으로 갱신
+ * - 유료 기능(3회차 이상, 유형/개념별 풀기 등)은 memberships의 tier만 보고 판단
  */
 export async function setPaymentComplete(uid: string, certId: string): Promise<void> {
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
-  if (!cert) return;
+  if (!cert) throw new Error(`자격증을 찾을 수 없습니다: ${certId}`);
   const userRef = doc(db, 'users', uid);
   const snap = await getDoc(userRef);
-  if (!snap.exists()) return;
+  if (!snap.exists()) throw new Error('사용자 문서가 없습니다.');
   const data = snap.data();
   const memberships = (data.memberships as Record<string, MembershipEntry>) || {};
-  const paidCertIds = (data.paidCertIds as string[]) || [];
-  const expiredCertIds = (data.expiredCertIds as string[]) || [];
 
   const nextMemberships = { ...memberships, [cert.code]: { tier: 'PREMIUM' as const } };
-  const nextPaidCertIds = paidCertIds.includes(certId) ? paidCertIds : [...paidCertIds, certId];
-  const nextExpiredCertIds = expiredCertIds.filter((id) => id !== certId);
 
-  await updateDoc(userRef, {
-    memberships: nextMemberships,
-    paidCertIds: nextPaidCertIds,
-    expiredCertIds: nextExpiredCertIds,
-    isPremium: true,
-  });
+  await updateDoc(userRef, { memberships: nextMemberships });
 }

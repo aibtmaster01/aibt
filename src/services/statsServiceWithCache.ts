@@ -35,9 +35,21 @@ export async function getCachedOrFetchMyPageData(
       // 이전 오류로 빈 배열이 캐시된 경우 재요청 (합격률·학습기록 등이 안 보이는 현상 방지)
       const hasTrend = Array.isArray(cached.trendData) && cached.trendData.length > 0;
       if (hasTrend || (Array.isArray(cached.radarData) && cached.radarData.length > 0)) {
+        let passRate = cached.recentPassRate;
+        // 다른 화면 갔다 왔을 때 캐시만 쓰면 0%로 나오는 현상 방지: 트렌드가 있으면 최근 회차 점수로 보정
+        if (passRate === 0 && hasTrend) {
+          const trend = cached.trendData;
+          for (let i = trend.length - 1; i >= 0; i--) {
+            const s = trend[i]?.score;
+            if (s != null && s > 0) {
+              passRate = s;
+              break;
+            }
+          }
+        }
         return {
           trendData: cached.trendData,
-          recentPassRate: cached.recentPassRate,
+          recentPassRate: passRate,
           radarData: cached.radarData,
           subjectScores: cached.subjectScores,
           weaknessTop3: cached.weaknessTop3,
@@ -51,13 +63,26 @@ export async function getCachedOrFetchMyPageData(
     fetchDashboardStats(uid, certCode),
   ]);
 
+  // Firestore에서 predicted_pass_rate가 비어 있으면 0으로 내려올 수 있음 → 트렌드 최근 회차 점수로 보정 후 캐시 저장
+  let savedPassRate = trendResult.recentPassRate;
+  if (savedPassRate === 0 && Array.isArray(trendResult.trendData) && trendResult.trendData.length > 0) {
+    const trend = trendResult.trendData;
+    for (let i = trend.length - 1; i >= 0; i--) {
+      const s = trend[i]?.score;
+      if (s != null && s > 0) {
+        savedPassRate = s;
+        break;
+      }
+    }
+  }
+
   const now = Date.now();
   await setUserStatsCache({
     key: getUserStatsCacheKey(uid, certCode),
     uid,
     certCode,
     trendData: trendResult.trendData,
-    recentPassRate: trendResult.recentPassRate,
+    recentPassRate: savedPassRate,
     radarData: dashboardResult.radarData,
     subjectScores: dashboardResult.subjectScores,
     weaknessTop3: dashboardResult.weaknessTop3,
@@ -82,6 +107,7 @@ export async function getCachedOrFetchMyPageData(
 
   return {
     ...trendResult,
+    recentPassRate: savedPassRate,
     ...dashboardResult,
   };
 }

@@ -4,6 +4,7 @@ import {
   getQuestionsForRound,
   checkExamAccess,
 } from '../services/examService';
+import { fetchAdaptiveQuestions } from '../services/aiRoundCurationService';
 import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT } from '../constants';
 import { getCertificationInfo } from '../services/gradingService';
 import type { CertificationInfo } from '../types';
@@ -139,6 +140,13 @@ export const Quiz: React.FC<QuizProps> = ({
     let cancelled = false;
     (async () => {
       try {
+        if (startIndex === 20 && user && user.is_verified === false) {
+          if (!cancelled) {
+            setError('이메일 인증을 완료한 뒤 21번 문제부터 이어서 풀 수 있어요.');
+            setLoading(false);
+          }
+          return;
+        }
         if (!weaknessRetryMode) {
           const access = checkExamAccess({
             user,
@@ -166,7 +174,15 @@ export const Quiz: React.FC<QuizProps> = ({
           setLoading(false);
           return;
         } else if (isWeaknessRound) {
-          qs = await getQuestionsForWeaknessRound(certId, user);
+          if (!user?.id) {
+            if (!cancelled) {
+              setError('약점 공략 모의고사는 로그인 후 이용할 수 있습니다.');
+              setLoading(false);
+            }
+            return;
+          }
+          const roundNum = roundInfo?.round ?? 6;
+          qs = await fetchAdaptiveQuestions(user.id, certId, user, roundNum);
         } else {
           qs = await getQuestionsForRound(certId, round, user);
         }

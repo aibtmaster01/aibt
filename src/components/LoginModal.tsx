@@ -3,12 +3,16 @@ import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthError } from '../services/authService';
 
+export type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
+
 export interface LoginModalProps {
   initialMode?: 'login' | 'signup';
   onBack?: () => void;
   onAuthSuccess?: (options?: { isNewUser?: boolean }) => void;
   /** true면 바깥 클릭/닫기 없음, 로그인 필수 */
   persistent?: boolean;
+  /** 게스트 20문제 후 이어하기 등: 인증 대기 문구·미인증 시 21번 차단 */
+  intent?: LoginModalIntent;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -16,6 +20,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   onBack,
   onAuthSuccess,
   persistent = false,
+  intent,
 }) => {
   const { login, register, loginWithGoogle, resendVerificationEmail } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
@@ -27,6 +32,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [resendLoading, setResendLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  /** 회원가입 후 이메일 인증 대기 화면 (인증완료 버튼 노출) */
+  const [pendingVerification, setPendingVerification] = useState(false);
   const submittingRef = useRef(false);
 
   const SIGNUP_TIMEOUT_MS = 20000;
@@ -51,7 +58,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
     try {
       if (mode === 'login') {
-        await login(email, password);
+        const loggedInUser = await login(email, password);
+        if (intent === 'guestContinue' && loggedInUser.is_verified === false) {
+          setError('이메일 인증을 완료한 뒤 로그인해주세요. 메일함을 확인해주세요.');
+          return;
+        }
         (onAuthSuccess ?? onBack)?.();
       } else {
         await register(email, password, familyName, givenName);
@@ -60,8 +71,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     } catch (err) {
       if (timeoutId != null) clearTimeout(timeoutId);
       if (err instanceof AuthError && err.code === 'EMAIL_VERIFICATION_SENT') {
-        setSuccessMessage(err.message);
+        setSuccessMessage('이메일에서 인증한 뒤 아래 [인증완료] 버튼을 눌러주세요.');
         setError('');
+        setPendingVerification(true);
+        clearLoading();
         return;
       }
       const msg = err instanceof Error ? err.message : (mode === 'login' ? '로그인에 실패했습니다.' : '회원가입에 실패했습니다.');
@@ -80,13 +93,32 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setLoading(true);
     try {
       await loginWithGoogle();
-      (onAuthSuccess ?? onBack)?.();
+      // 리다이렉트 방식: 페이지가 Google로 이동하므로 여기서는 아무 것도 호출하지 않음 (복귀 시 AuthContext에서 처리)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google 로그인에 실패했습니다.';
       setError(msg);
-    } finally {
       setLoading(false);
       submittingRef.current = false;
+    }
+  };
+
+  /** 인증완료 버튼: 로그인 시도 후 이메일 인증 여부 확인 */
+  const handleConfirmVerification = async () => {
+    if (!email.trim() || !password) return;
+    setError('');
+    setLoading(true);
+    try {
+      const loggedInUser = await login(email, password);
+      if (loggedInUser.is_verified !== false) {
+        setPendingVerification(false);
+        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+      } else {
+        setError('이메일에서 인증을 완료해주세요.');
+      }
+    } catch {
+      setError('이메일에서 인증을 완료해주세요.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -160,11 +192,40 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </button>
           )}
           <div className="mb-6 text-center">
-            <h3 className="text-2xl font-black text-slate-900">{mode === 'login' ? '로그인' : '회원가입'}</h3>
+            <h3 className="text-2xl font-black text-slate-900">
+              {pendingVerification ? '이메일 인증' : mode === 'login' ? '로그인' : '회원가입'}
+            </h3>
             <p className="text-slate-400 text-sm mt-1">
-              {mode === 'login' ? '학습 기록을 저장하려면 로그인하세요.' : '새 계정을 만들어 학습을 시작하세요.'}
+              {pendingVerification
+                ? '인증 메일을 확인한 뒤 아래 버튼을 눌러주세요.'
+                : mode === 'login'
+                  ? '학습 기록을 저장하려면 로그인하세요.'
+                  : '새 계정을 만들어 학습을 시작하세요.'}
             </p>
           </div>
+
+          {pendingVerification ? (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">{successMessage || '인증 메일을 보냈습니다. 이메일에서 링크를 클릭한 뒤 아래 버튼을 눌러주세요.'}</p>
+              {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleConfirmVerification}
+                className="w-full bg-[#0034d3] text-white font-bold py-4 rounded-xl hover:bg-[#003087] transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? '확인 중...' : '인증완료'}
+              </button>
+              <button
+                type="button"
+                disabled={resendLoading}
+                onClick={handleResendVerification}
+                className="w-full py-2.5 text-sm font-bold text-[#0034d3] border border-[#0034d3] rounded-xl hover:bg-[#0034d3]/5 disabled:opacity-50"
+              >
+                {resendLoading ? '재발송 중...' : '인증 메일 재발송'}
+              </button>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
               <>
@@ -269,22 +330,23 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               구글로 로그인
             </button>
           </form>
+          )}
           <div className="mt-6 text-center text-sm">
             {mode === 'login' ? (
               <>
                 <span className="text-slate-400">계정이 없으신가요? </span>
-                <button type="button" onClick={() => { setMode('signup'); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">
+                <button type="button" onClick={() => { setMode('signup'); setPendingVerification(false); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">
                   회원가입
                 </button>
               </>
-            ) : (
+            ) : !pendingVerification ? (
               <>
                 <span className="text-slate-400">이미 계정이 있으신가요? </span>
                 <button type="button" onClick={() => { setMode('login'); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">
                   로그인
                 </button>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
