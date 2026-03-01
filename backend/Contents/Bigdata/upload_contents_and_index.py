@@ -121,8 +121,13 @@ def build_question_doc(q_id: str, content: dict, index_entry: Optional[dict], co
 
     options = qc.get("options", [])
     answer_idx = qc.get("answer_idx", 0)
-    wrong_arr = qc.get("wrong_feedback", [])
-    wrong_obj = {str(i + 1): v for i, v in enumerate(wrong_arr) if isinstance(v, str)}
+    wrong_raw = qc.get("wrong_feedback")
+    if isinstance(wrong_raw, dict):
+        wrong_obj = {str(k): str(v) for k, v in wrong_raw.items() if v}
+    elif isinstance(wrong_raw, list):
+        wrong_obj = {str(i + 1): v for i, v in enumerate(wrong_raw) if isinstance(v, str)}
+    else:
+        wrong_obj = {}
     difficulty_raw = stats.get("difficulty", 0.5)
     difficulty_level = max(1, min(5, round(difficulty_raw * 5)))
     trap_score = stats.get("trap_score", 0) or 0
