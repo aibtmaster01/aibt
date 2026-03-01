@@ -685,59 +685,6 @@ async function fetchQuestionsByIds(certCode: string, qIds: string[]): Promise<Qu
   return qIds.map((id) => orderMap.get(id)).filter((q): q is Question => !!q);
 }
 
-// ─────────────────────────────────────────────
-// 공개 API
-// ─────────────────────────────────────────────
-
-/**
- * Round 4+ 맞춤형 문제 Fetch (항상 80문항)
- * examService.getQuestionsForRound에서 round >= 4 시 호출
- */
-export async function fetchAdaptiveQuestions(
-  uid: string,
-  certId: string,
-  _user: User | null,
-  round: number,
-  _curationMode?: AiMockExamMode
-): Promise<Question[]> {
-  const certCode = certIdToCode(certId);
-  if (!certCode) throw new Error('해당 자격증을 찾을 수 없습니다.');
-
-  const ids = await selectDiverseAdaptiveQIds(certCode, uid, round);
-  if (ids.length === 0) return [];
-  return fetchQuestionsByIds(certCode, ids);
-}
-
-/**
- * 기존 generateAdaptiveExam 호환 (examService에서 직접 호출되는 경우)
- */
-export async function generateAdaptiveExam(
-  uid: string,
-  certCode: string,
-  _certId: string,
-  _targetExamDate: string | null,
-  round: number = 4
-): Promise<Question[]> {
-  const ids = await selectDiverseAdaptiveQIds(certCode, uid, round);
-  if (ids.length === 0) return [];
-  return fetchQuestionsByIds(certCode, ids);
-}
-
-/**
- * generateIndexBasedExam 호환 (기존 코드에서 직접 호출되는 경우)
- */
-export async function generateIndexBasedExam(
-  uid: string,
-  certCode: string,
-  _totalCount: number,
-  _mode?: AiMockExamMode,
-  round: number = 4
-): Promise<Question[]> {
-  const ids = await selectDiverseAdaptiveQIds(certCode, uid, round);
-  if (ids.length === 0) return [];
-  return fetchQuestionsByIds(certCode, ids);
-}
-
 /**
  * tag_stats에서 정답률이 낮은 상위 태그명 반환 (오버레이 안내 문구용)
  */
@@ -783,23 +730,8 @@ export async function getAnalysisContext(
   const statsData = await fetchStatsForCert(uid, certCode);
   const conceptStats = statsData.core_concept_stats ?? (statsData as { hierarchy_stats?: Record<string, StatEntryLike> }).hierarchy_stats ?? {};
   const hasData = Object.keys(conceptStats).length > 0;
-
-  const hasData = Object.keys(conceptStats).length > 0 || Object.keys(subCoreStats).length > 0;
-
-  // 가장 약한 개념 찾기 (proficiency 최저)
-  let top1Unit: string | null = null;
   let top1Proficiency: number | undefined;
   let top1Misconception: number | undefined;
-
-  const allStats = Object.keys(subCoreStats).length > 0 ? subCoreStats : conceptStats;
-  const sorted = Object.entries(allStats)
-    .filter(([, v]) => (v.total ?? 0) > 0)
-    .sort((a, b) => (a[1].proficiency ?? 1200) - (b[1].proficiency ?? 1200));
-  if (sorted.length > 0) {
-    top1Unit = sorted[0][0];
-    top1Proficiency = sorted[0][1].proficiency;
-    top1Misconception = sorted[0][1].misconception_count;
-  }
 
   let avgProficiency = 0;
   if (hasData) {

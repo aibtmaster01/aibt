@@ -2,9 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Question, User } from '../types';
 import {
   getQuestionsForRound,
-  getQuestionsForWeaknessRound,
   checkExamAccess,
-  markWeaknessTrialUsed,
 } from '../services/examService';
 import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT } from '../constants';
 import { getCertificationInfo } from '../services/gradingService';

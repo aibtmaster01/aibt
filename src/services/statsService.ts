@@ -289,7 +289,7 @@ export async function fetchDashboardStats(
         fullMark: FULL_MARK,
       };
     }
-  }
+  );
 
   // ─── 최근 3회 가중 이동 평균 합격률 ───
   let weightedPassRate: number | null = null;
@@ -304,23 +304,6 @@ export async function fetchDashboardStats(
       passRates.reduce((acc, val, i) => acc + val * w[i], 0) / wSum
     );
   }
-
-  // 세부 개념(sub_core_id) → 대분류(Core) 합산
-  const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};
-  for (const [subCoreId, ent] of Object.entries(subCoreIdStats)) {
-    const coreId = subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId;
-    if (!coreAggFromSubCore[coreId]) coreAggFromSubCore[coreId] = { sumProficiency: 0, total: 0, count: 0 };
-    const prof = ent?.proficiency ?? 1200;
-    const total = ent?.total ?? 0;
-    coreAggFromSubCore[coreId].sumProficiency += prof * total;
-    coreAggFromSubCore[coreId].total += total;
-    coreAggFromSubCore[coreId].count += 1;
-  }
-
-  // 1) Radar (problem_type_stats)
-  const radarData: RadarDataItem[] = Object.entries(problemTypeStats).map(
-    ([subject, ent]) => ({ subject, A: understandingFromStat(ent), fullMark: FULL_MARK })
-  );
 
   // 2) Subject Gauge — 이해도 + 트렌드 방향 + 안전 마진
   const subjectScores: SubjectScore[] = Object.entries(subjectStats).map(
