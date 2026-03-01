@@ -16,16 +16,30 @@ python3 seed_certification_info.py
 
 ## backend/BIGDATA (빅데이터 자격증 데이터)
 
-- **core_concepts_list.json** — 코어컨셉 목록 (시드 시 사용)
-- **1000_final.json** — 문제 1000제 (업로드 소스)
+- **core_concepts_list.json** — 코어컨셉 목록 (시드·업로드 시 사용)
+- **1000_final.json** — 문제 1000제 (레거시 업로드 소스)
 - **bigdata_certification_config.py** — 자격증 설정 (과목, 합격 기준, core_concepts 로드)
-- **upload_1000.py** — 1000제를 Firestore question_pools + static_exams(Round_1~5)로 업로드
+- **upload_1000.py** — 1000제를 Firestore question_pools + static_exams 로 업로드
 
 ```bash
 cd backend
 python3 BIGDATA/upload_1000.py
 # 확인 후 'DELETE' 입력 시 기존 BIGDATA 데이터 삭제 후 1000_final.json 기준으로 재업로드
 ```
+
+---
+
+## backend/Contents/Bigdata (콘텐츠·인덱스 업로드, 현재 운영)
+
+- **upload_contents_and_index.py** — Bigdata_contents_1681.json → Firestore `question_pools/contents_1681/questions/{q_id}`, 인덱스 파일 → Storage `assets/BIGDATA/index.json` + Firestore `certifications/BIGDATA/public/index`
+- **필요 파일:** 같은 디렉터리에 `Bigdata_contents_1681.json`, `Bigdata_Index.json`(또는 `Index.json`). 선택 시 `Bigdata_Index_Rebalanced.json` 사용 가능.
+- **실행:**  
+  ```bash
+  cd backend
+  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/serviceAccountKey.json"
+  python3 Contents/Bigdata/upload_contents_and_index.py
+  ```
+- 서비스 계정에 Firestore + Storage 권한 필요. 상세: `docs/08_로직_문제생성로직.md`.
 
 ---
 

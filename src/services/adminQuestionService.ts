@@ -158,6 +158,13 @@ export async function uploadQuestionImage(
   return url;
 }
 
+/** 문제 문서에서 이미지 필드만 null로 초기화 (이미지 삭제) */
+export async function clearQuestionImage(certCode: string, qId: string): Promise<void> {
+  const docRef = getQuestionDocRef(certCode, qId);
+  if (!docRef) return;
+  await updateDoc(docRef, { image: null });
+}
+
 /** Storage에 이미지 존재 여부 확인 (문제 doc의 image 필드 또는 동일 경로) */
 export async function getQuestionImageUrl(certCode: string, qId: string): Promise<string | null> {
   const docRef = getQuestionDocRef(certCode, qId);

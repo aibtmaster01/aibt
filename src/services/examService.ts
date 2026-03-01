@@ -261,10 +261,15 @@ function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Questi
   const baseExplanation = data.explanation ?? '';
   const aiExplanation = data.ai_explanation ?? '';
   const options = Array.isArray(data.options) ? data.options : [];
-  // Firestore에는 0-based로 저장됨(관리자 저장 시 answer_idx/answer). 1-based(①=1…)로 변환
-  const raw0Based = typeof data.answer_idx === 'number' ? data.answer_idx : typeof data.answer === 'number' ? data.answer : 0;
+  // answer_idx 있으면 0-based 저장(관리자 저장), 없고 answer만 있으면 레거시 1-based(1~4) 가능. 항상 1-based(1~4)로 통일
+  const hasAnswerIdx = typeof data.answer_idx === 'number';
+  const raw = hasAnswerIdx ? data.answer_idx : typeof data.answer === 'number' ? data.answer : 0;
   const answer1Based =
-    options.length > 0 && raw0Based >= 0 && raw0Based < options.length ? raw0Based + 1 : 1;
+    options.length > 0
+      ? hasAnswerIdx
+        ? (raw >= 0 && raw < options.length ? raw + 1 : 1)
+        : (raw >= 1 && raw <= options.length ? raw : raw >= 0 && raw < options.length ? raw + 1 : 1)
+      : 1;
   const coreConcept =
     (typeof data.core_concept === 'string' && data.core_concept.trim()) ||
     extractTopicUnit(data.topic) ||

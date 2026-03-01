@@ -117,20 +117,22 @@ export const Quiz: React.FC<QuizProps> = ({
     questionStartTimeRef.current = Date.now();
   }, [currentQIndex]);
 
-  // 지문/보기 HTML 내 모든 이미지 위에 딤 + "이미지는 준비중입니다" 오버레이
+  // 지문/보기 HTML 내 이미지: Firestore(Storage) URL이 있으면 딤 없음, 없으면 딤 + "이미지 준비중"
   useEffect(() => {
     const el = questionBodyRef.current;
     if (!el) return;
     const imgs = el.querySelectorAll('img');
     imgs.forEach((img) => {
       if (img.closest('.quiz-image-dim-overlay-wrap') || img.closest('.quiz-image-explicit')) return;
+      const src = (img.getAttribute('src') || img.src || '').trim();
+      if (src && src.startsWith('http')) return;
       const wrap = document.createElement('div');
       wrap.className = 'relative inline-block max-w-full quiz-image-dim-overlay-wrap';
       img.parentNode?.insertBefore(wrap, img);
       wrap.appendChild(img);
       const overlay = document.createElement('div');
       overlay.className = 'absolute inset-0 bg-black/60 flex items-center justify-center z-10 pointer-events-none';
-      overlay.innerHTML = '<span class="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지는 준비중입니다</span>';
+      overlay.innerHTML = '<span class="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지 준비중</span>';
       wrap.appendChild(overlay);
     });
   }, [currentQIndex, questions[currentQIndex]?.content]);
@@ -545,10 +547,11 @@ export const Quiz: React.FC<QuizProps> = ({
                                 onError={() => setImageLoadError(true)}
                               />
                             )}
-                            {/* 시험 중 이미지 딤: 이미지는 준비중입니다 */}
-                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10 pointer-events-none">
-                              <span className="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지는 준비중입니다</span>
-                            </div>
+                            {(!currentQ.imageUrl || !currentQ.imageUrl.startsWith('http') || imageLoadError) && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10 pointer-events-none">
+                                <span className="text-white font-bold text-sm px-4 py-2 rounded-lg bg-black/40">이미지 준비중</span>
+                              </div>
+                            )}
                             <button
                               type="button"
                               onClick={() => {
