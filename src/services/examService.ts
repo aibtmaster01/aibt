@@ -268,7 +268,7 @@ export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc):
     id: data.q_id ?? docId,
     content: data.question_text ?? '',
     options,
-    answer: answer1Based,
+    answer: to1BasedAnswer(rawAnswer, options.length),
     explanation: aiExplanation || baseExplanation,
     aiExplanation: data.ai_explanation,
     wrongFeedback: wrongFeedbackTo1Based(data.wrong_feedback),
