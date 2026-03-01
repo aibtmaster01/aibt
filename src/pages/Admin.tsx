@@ -576,7 +576,7 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                   <p className="text-slate-500 text-sm py-4">해당 기간 데이터가 없습니다.</p>
                 ) : (
                   <div className="w-full h-64">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                       <LineChart data={visitorTrend} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis

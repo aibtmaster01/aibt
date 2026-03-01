@@ -604,7 +604,7 @@ export const MyPage: React.FC<MyPageProps> = ({
                   ) : (
                     <>
                       <div className="relative w-full h-48 md:h-52 flex-shrink-0 overflow-visible">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                           <RadarChart
                             data={radarChartData}
                             margin={{ top: 20, right: 32, bottom: 20, left: 32 }}
