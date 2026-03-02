@@ -14,9 +14,9 @@
 
 | [gradingService.ts](./gradingService.ts) | **채점·통계** — 퀴즈 제출 시 `certification_info` 기반 과목별 점수·합격 판정, `exam_results` 저장, `users/{uid}/stats/{certCode}`의 core_concept/problem_type/subject 3차원 통계(increment, confused 포함), Elo 업데이트. 레이더/과목 통계 조회. |
 
-| [examService.ts](./examService.ts) | **시험 문제 조회** — Round 1~3: `static_exams` 고정 문제. Round 6+: aiRoundCurationService 호출(stats 기반·실전 대비형/약점 강화형 모드). 회원 등급별 마스킹, 약점 다시풀기(stats.problem_type_stats). |
+| [examService.ts](./examService.ts) | **시험 문제 조회** — 1~3회차: 고정(round 1,2,3). 맞춤형: aiRoundCurationService 호출(**라운드 99 풀** 사용, stats 기반·실전 대비형/약점 강화형). 회원 등급별 마스킹, 약점 다시풀기(stats.problem_type_stats). |
 
-| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | **Round 6+ 맞춤 큐레이션** — `exam_results`로 맞춘 문제 제외·틀린 문제(Zone A) 우선, 전체 풀에서 과목별 배분 후 80문제 생성. `getAnalysisContext`·`getTopWeakTags`는 stats(core_concept_stats, tag_stats) 기반. |
+| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | **맞춤형 큐레이션(라운드 99)** — 인덱스 **라운드 99** 풀에서 4과목×20문항(`selectQuestionIdsBy3ZonesPerSubject`). 과목별 `selectForSubject`: 1구역 12 + 2구역 8, 동일 개념 중복 제한(MAX_PER_CORE_ID/MAX_PER_SUB_CORE_ID). `getAnalysisContext`·`getTopWeakTags`는 stats 기반. |
 
 | [statsService.ts](./statsService.ts) | **대시보드 통계** — `users/{uid}/stats/{certCode}` 및 `exam_results` 조회 후 UI용 포맷 변환(레이더, 과목별 점수, 약점 Top2, 최근 시험 트렌드 등). |
 
@@ -27,7 +27,7 @@
 ```
 [인증]     authService        → 로그인/회원·멤버십
 [문제 선정] examService        → 라운드별·약점·큐레이션 진입점
-[큐레이션] aiRoundCurationService → Round 6+ 문제 선정(Zone A/B, 제외)
+[큐레이션] aiRoundCurationService → 라운드 99 풀에서 4과목×20문항 선정(커버리지·약점 구역, 개념 중복 제한, 제외 윈도우)
 [채점]     gradingService     → 제출 답 채점·통계·Elo 반영
 [대시보드] statsService       → 통계 조회·포맷팅
 [관리]     adminService       → 관리자 회원/멤버십/통계

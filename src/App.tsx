@@ -14,7 +14,7 @@ import { AdminQuestions } from './pages/AdminQuestions';
 import { Checkout } from './pages/Checkout';
 import { AccountSettings } from './pages/AccountSettings';
 import { User } from './types';
-import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from './constants';
+import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS, getRoundLabel } from './constants';
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
@@ -30,7 +30,7 @@ type LoginModalIntent = import('./components/LoginModal').LoginModalIntent;
 
 const App: React.FC = () => {
   const isMobile = useIsMobile();
-  const { user, loading: authLoading, logout, updateUser, resendVerificationEmail, refreshUser } = useAuth();
+  const { user, loading: authLoading, login, logout, updateUser, resendVerificationEmail, refreshUser } = useAuth();
   const [route, setRoute] = useState<Route>('/');
   const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
@@ -94,6 +94,11 @@ const App: React.FC = () => {
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   /** 로그인 성공 시 "로그인되었습니다" 토스트 (하단 작게) */
   const [showLoginToast, setShowLoginToast] = useState(false);
+  /** 가입 후 이메일 인증 대기: 백그라운드 상단 노란 배너 + 인증완료 버튼으로 로그인 적용 */
+  const [pendingVerificationBanner, setPendingVerificationBanner] = useState<{ email: string; password: string } | null>(null);
+  const [verificationBannerError, setVerificationBannerError] = useState('');
+  const [verificationBannerLoading, setVerificationBannerLoading] = useState(false);
+  const [verificationBannerResendLoading, setVerificationBannerResendLoading] = useState(false);
   /** 마이페이지 집중학습(과목/유형/개념) 클릭 시 모드 선택 모달 → 선택 후 5초 오버레이 → 퀴즈 */
   const [pendingFocusTraining, setPendingFocusTraining] = useState<{
     type: 'subject_strength' | 'weak_type' | 'weak_concept';
@@ -429,8 +434,8 @@ const App: React.FC = () => {
 
     // 로그인 회원: 학습 이력 저장 + 참여 자격증 구독 반영 (마이페이지 진입 가능)
     if (user && sessionHistory?.length && questions?.length && selectedCertId) {
+      const rid = selectedRoundId ?? undefined;
       const roundLabel = (() => {
-        const rid = selectedRoundId ?? undefined;
         if (!rid || !questions.length) return undefined;
         if (rid === '__subject_strength__') {
           const subjects = new Set(questions.map((q) => q.subject_number ?? 1));
@@ -456,9 +461,9 @@ const App: React.FC = () => {
           if (n === 1) return `취약 개념 집중 학습 - ${first} 강화`;
           return `취약 개념 집중 학습 - ${first} 외 ${n - 1}개 개념 강화`;
         }
-        return undefined;
+        return getRoundLabel(rid);
       })();
-      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: selectedRoundId ?? undefined, roundLabel })
+      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: rid, roundLabel: roundLabel ?? undefined })
         .then((result) => {
           if (result) {
             const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
@@ -551,6 +556,11 @@ const App: React.FC = () => {
       setShowPaymentSuccessModal(true);
     }
   };
+
+  // 로그인된 상태면 인증 대기 배너 제거 (다른 탭에서 인증 후 로그인 등)
+  React.useEffect(() => {
+    if (user && pendingVerificationBanner) setPendingVerificationBanner(null);
+  }, [user, pendingVerificationBanner]);
 
   // Check status for current selected cert
   const isCurrentCertPremium = user ? (user.isPremium || (selectedCertId && user.paidCertIds?.includes(selectedCertId))) : false;
@@ -728,6 +738,10 @@ const App: React.FC = () => {
               if (selectedRoundId) setShowRetryModeModal(true);
               else navigate('/exam-list');
             }}
+            onGoToList={() => {
+              setSelectedRoundId(null);
+              navigate(selectedCertId ? `/exam-list?cert=${selectedCertId}` : '/exam-list');
+            }}
             onGoToDashboard={() => navigate('/mypage')}
             onNextRoundAuto={() => {
               if (!user || !selectedCertId) {
@@ -739,16 +753,21 @@ const App: React.FC = () => {
                 return;
               }
               if (!selectedRoundId) {
+                setSelectedRoundId(null);
                 navigate('/exam-list');
                 return;
               }
-              const current = EXAM_ROUNDS.find((r) => r.id === selectedRoundId && r.certId === selectedCertId);
+              const certRounds = EXAM_ROUNDS.filter((r) => r.certId === selectedCertId).sort((a, b) => a.round - b.round);
+              const current = certRounds.find((r) => r.id === selectedRoundId);
               if (!current) {
+                setSelectedRoundId(null);
                 navigate('/exam-list');
                 return;
               }
-              const nextRound = EXAM_ROUNDS.find((r) => r.certId === selectedCertId && r.round === current.round + 1);
+              const currentIndex = certRounds.indexOf(current);
+              const nextRound = currentIndex >= 0 && currentIndex < certRounds.length - 1 ? certRounds[currentIndex + 1] : null;
               if (!nextRound) {
+                setSelectedRoundId(null);
                 navigate('/exam-list');
                 return;
               }
@@ -796,10 +815,20 @@ const App: React.FC = () => {
 
   // 랜딩만 사이드바 없음, 그 외 모든 화면에 좌측 사이드바 노출
   const isLanding = route === '/' && !user;
-  const handleLoginModalAuthSuccess = (options?: { isNewUser?: boolean }) => {
+  const handleLoginModalAuthSuccess = (options?: {
+    isNewUser?: boolean;
+    needsVerificationBanner?: boolean;
+    email?: string;
+    password?: string;
+  }) => {
     const intent = loginModalIntent;
     setShowLoginModal(false);
     setLoginModalIntent(null);
+    if (options?.needsVerificationBanner && options?.email && options?.password) {
+      setPendingVerificationBanner({ email: options.email, password: options.password });
+      setVerificationBannerError('');
+      return;
+    }
     if (!options?.isNewUser) setShowLoginToast(true);
     if (intent === 'guestContinue' && pendingGuestContinue) {
       setSelectedCertId(pendingGuestContinue.certId);
@@ -817,10 +846,28 @@ const App: React.FC = () => {
     } else if (options?.isNewUser) {
       setShowSignupSuccessModal(true);
     } else {
-      // LNB 등에서 로그인 시: navigate('/mypage')를 쓰면 이 시점에 user가 아직 갱신되지 않아
-      // needsLogin && !user로 모달이 다시 열리므로, route만 직접 바꾼다.
       setRoute('/mypage');
       window.scrollTo(0, 0);
+    }
+  };
+
+  const handleVerificationBannerConfirm = async () => {
+    if (!pendingVerificationBanner) return;
+    setVerificationBannerError('');
+    setVerificationBannerLoading(true);
+    try {
+      const u = await login(pendingVerificationBanner.email, pendingVerificationBanner.password);
+      if (u.is_verified !== false) {
+        setPendingVerificationBanner(null);
+        setRoute('/mypage');
+        window.scrollTo(0, 0);
+      } else {
+        setVerificationBannerError('이메일에서 인증을 완료해주세요.');
+      }
+    } catch {
+      setVerificationBannerError('이메일에서 인증을 완료해주세요.');
+    } finally {
+      setVerificationBannerLoading(false);
     }
   };
 
@@ -835,6 +882,49 @@ const App: React.FC = () => {
             onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
             onAuthSuccess={handleLoginModalAuthSuccess}
           />
+        )}
+        {pendingVerificationBanner && !user && (
+          <div className="bg-amber-400 text-amber-950 border-b border-amber-500/50 shadow-sm">
+            <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-medium">
+                이메일 인증이 필요합니다. 메일함에서 인증 링크를 클릭한 뒤 아래 [인증완료] 버튼을 눌러주세요.
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={verificationBannerLoading || verificationBannerResendLoading}
+                  onClick={handleVerificationBannerConfirm}
+                  className="px-5 py-2 rounded-xl bg-amber-900 text-white font-bold text-sm hover:bg-amber-800 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {verificationBannerLoading ? '확인 중...' : '인증완료'}
+                </button>
+                <button
+                  type="button"
+                  disabled={verificationBannerLoading || verificationBannerResendLoading}
+                  onClick={async () => {
+                    if (!pendingVerificationBanner) return;
+                    setVerificationBannerError('');
+                    setVerificationBannerResendLoading(true);
+                    try {
+                      await resendVerificationEmail(pendingVerificationBanner.email, pendingVerificationBanner.password);
+                    } catch (e) {
+                      setVerificationBannerError(e instanceof Error ? e.message : '재발송에 실패했습니다.');
+                    } finally {
+                      setVerificationBannerResendLoading(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl border border-amber-900 text-amber-900 font-bold text-sm hover:bg-amber-900/10 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {verificationBannerResendLoading ? '재발송 중...' : '메일 재발송'}
+                </button>
+              </div>
+            </div>
+            {verificationBannerError && (
+              <p className="max-w-4xl mx-auto px-4 pb-2 text-sm font-medium text-red-700">
+                {verificationBannerError}
+              </p>
+            )}
+          </div>
         )}
         {renderContent()}
         {showCheckoutModal && (
@@ -1088,7 +1178,8 @@ const App: React.FC = () => {
                   setNextRoundPreparingCountdown(5);
                   setNextRoundPreparingPhase('countdown');
                   setNextRoundFetchedQuestions(null);
-                  setShowNextRoundPreparing(true);
+                  // 모달이 닫힌 다음 틱에 딤+준비 오버레이 표시 (렌더 타이밍 보장)
+                  setTimeout(() => setShowNextRoundPreparing(true), 0);
                 }}
                 className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
               >
@@ -1108,7 +1199,7 @@ const App: React.FC = () => {
                   setNextRoundPreparingCountdown(5);
                   setNextRoundPreparingPhase('countdown');
                   setNextRoundFetchedQuestions(null);
-                  setShowNextRoundPreparing(true);
+                  setTimeout(() => setShowNextRoundPreparing(true), 0);
                 }}
                 className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
               >
@@ -1132,17 +1223,19 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 결과 화면 다음 회차 5초 준비 오버레이 (현재 화면 유지) */}
+      {/* 결과 화면 다음 회차 5초 준비 오버레이 (딤 + 팝업) */}
       {showNextRoundPreparing && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="text-center text-white px-6">
+          <div className="text-center text-white px-8 py-10 rounded-3xl bg-slate-800/95 border border-slate-600 shadow-2xl min-w-[280px]">
             {nextRoundPreparingPhase === 'countdown' ? (
               <>
-                <p className="text-slate-300 text-sm">맞춤형 모의고사를 준비하고 있어요</p>
+                <p className="text-slate-300 text-sm mb-3">맞춤형 모의고사를 준비하고 있어요</p>
+                <p className="text-5xl font-black text-white tabular-nums">{nextRoundPreparingCountdown}</p>
+                <p className="text-slate-400 text-xs mt-2">초 후 시작</p>
               </>
             ) : (
               <>
-                <p className="text-xl font-bold mb-1">모의고사가 준비되었습니다</p>
+                <p className="text-xl font-bold text-white mb-1">모의고사가 준비되었습니다</p>
                 <p className="text-slate-300 text-sm">곧 시작됩니다</p>
               </>
             )}
@@ -1258,7 +1351,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 무료 회원 결과 화면 "다음 회차" → 결제 필요 팝업 (확인 시 결제 화면) */}
+      {/* 무료 회원 2회차 결과 "다음 학습" → 열공모드 가입 안내 팝업 (확인 시 결제 모달) */}
       {showNextRoundPaymentModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-5">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowNextRoundPaymentModal(false)} />
@@ -1266,21 +1359,21 @@ const App: React.FC = () => {
             <div className="w-12 h-12 rounded-full bg-brand-100 flex items-center justify-center mx-auto mb-4">
               <Lock className="w-6 h-6 text-brand-600" />
             </div>
-            <h3 className="text-lg font-black text-slate-900 mb-2">결제가 필요합니다</h3>
+            <h3 className="text-lg font-black text-slate-900 mb-2">열공모드 가입이 필요합니다</h3>
             <p className="text-sm text-slate-500 mb-5">
               2회차까지 무료로 이용 가능합니다.
               <br />
-              결제 후 전체 및 맞춤형 모의고사를 이용하실 수 있습니다.
+              열공모드에 가입하면 전체 및 맞춤형 모의고사를 이용하실 수 있습니다.
             </p>
             <button
               type="button"
               onClick={() => {
                 setShowNextRoundPaymentModal(false);
-                if (selectedCertId) navigate('/checkout');
+                if (selectedCertId) setShowCheckoutModal(true);
               }}
-              className="w-full py-3.5 rounded-xl bg-brand-500 text-white font-bold text-sm hover:bg-brand-400"
+              className="w-full py-3.5 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800"
             >
-              결제하러 가기
+              확인
             </button>
             <button
               type="button"

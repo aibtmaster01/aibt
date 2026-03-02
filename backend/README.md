@@ -17,15 +17,7 @@ python3 seed_certification_info.py
 ## backend/BIGDATA (빅데이터 자격증 데이터)
 
 - **core_concepts_list.json** — 코어컨셉 목록 (시드·업로드 시 사용)
-- **1000_final.json** — 문제 1000제 (레거시 업로드 소스)
 - **bigdata_certification_config.py** — 자격증 설정 (과목, 합격 기준, core_concepts 로드)
-- **upload_1000.py** — 1000제를 Firestore question_pools + static_exams 로 업로드
-
-```bash
-cd backend
-python3 BIGDATA/upload_1000.py
-# 확인 후 'DELETE' 입력 시 기존 BIGDATA 데이터 삭제 후 1000_final.json 기준으로 재업로드
-```
 
 ---
 
@@ -63,21 +55,13 @@ pip3 install -r requirements.txt
 python3 seed_users.py
 ```
 
-### v5.0 Firestore 스키마 (users 컬렉션)
+### Firestore users 컬렉션 (요약)
 
-- `email`, `name`, `isAdmin`
-- `is_verified`: boolean
-- `registered_devices`: string[] (빈 배열로 초기화)
-- `memberships`: `{ [certCode]: { tier: "PREMIUM"|"FREE", expiry_date?: "YYYY-MM-DD" } }`
+- `email`, `name`, `isAdmin`, `is_verified`, `registered_devices`, `memberships`
+- 앱에서는 `isPremium`, `paidCertIds`, `subscriptions`, `targetExamDateByCert` 등도 사용.  
+  실제 스키마는 `authService`·`adminService`의 Firestore 읽기/쓰기와 동기화.
 
-### 생성되는 계정
+### seed_users.py 생성 계정
 
-| 이메일 | 비밀번호 | 설명 |
-|--------|----------|------|
-| paid_bigandsqldstudent@aaa.com | abc123456 | BIGDATA+SQLD 유료 (2026 만료) |
-| paid_bigdatastudent@aaa.com | abc123456 | 빅분기만 유료 |
-| halfpaid_student@aaa.com | abc123456 | 빅분기 유료, SQLD 무료 |
-| free_bigdatastudent@aaa.com | abc123456 | 빅분기 무료 |
-| free_nothingstudent@aaa.com | abc123456 | 신규 (memberships 빈 객체) |
-| expired_student@aaa.com | abc123456 | BIGDATA 만료 |
-| admin@aaa.com | abc123456 | 관리자 |
+테스트용 계정 예시. 실행 전 `GOOGLE_APPLICATION_CREDENTIALS` 설정 필요.  
+생성되는 이메일·역할은 스크립트 내 정의를 참고.

@@ -3,6 +3,7 @@ import { Question, User } from '../types';
 import {
   getQuestionsForRound,
   checkExamAccess,
+  markWeaknessTrialUsed,
 } from '../services/examService';
 import { fetchAdaptiveQuestions } from '../services/aiRoundCurationService';
 import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT } from '../constants';
@@ -731,6 +732,13 @@ export const Quiz: React.FC<QuizProps> = ({
                       <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm overflow-y-auto overflow-x-auto flex-1 min-h-0 flex flex-col">
                         {effectiveSubmitted ? (
                           <div className="animate-slide-up">
+                            {isPremium && (currentQ.core_concept || currentQ.core_id) && (
+                              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-medium bg-slate-200/90 text-slate-600 border border-slate-200/80">
+                                  {currentQ.core_concept || (currentQ.core_id ? `코어 ${currentQ.core_id}` : '—')}
+                                </span>
+                              </div>
+                            )}
                             <div className="mb-2">
                               <p className="text-xs font-black text-blue-600 uppercase mb-2 flex items-center gap-1">
                                 <Lightbulb className="w-4 h-4" /> 정답해설

@@ -222,7 +222,8 @@ export const ExamList: React.FC<ExamListProps> = ({
       onConsumedStartNext();
       return;
     }
-    const nextRound = allRounds.find((r) => r.round === current.round + 1);
+    const currentIndex = allRounds.findIndex((r) => r.id === startNextAfterRoundId);
+    const nextRound = currentIndex >= 0 && currentIndex < allRounds.length - 1 ? allRounds[currentIndex + 1] : null;
     if (!nextRound) {
       consumedStartNextRef.current = null;
       onConsumedStartNext();

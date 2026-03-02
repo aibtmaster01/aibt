@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthError } from '../services/authService';
@@ -8,7 +8,13 @@ export type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'gu
 export interface LoginModalProps {
   initialMode?: 'login' | 'signup';
   onBack?: () => void;
-  onAuthSuccess?: (options?: { isNewUser?: boolean }) => void;
+  onAuthSuccess?: (options?: {
+    isNewUser?: boolean;
+    /** 가입 후 이메일 인증 대기: 모달 닫고 상단 노란 배너로 안내, 인증완료 버튼으로 로그인 적용 */
+    needsVerificationBanner?: boolean;
+    email?: string;
+    password?: string;
+  }) => void;
   /** true면 바깥 클릭/닫기 없음, 로그인 필수 */
   persistent?: boolean;
   /** 게스트 20문제 후 이어하기 등: 인증 대기 문구·미인증 시 21번 차단 */
@@ -71,10 +77,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     } catch (err) {
       if (timeoutId != null) clearTimeout(timeoutId);
       if (err instanceof AuthError && err.code === 'EMAIL_VERIFICATION_SENT') {
-        setSuccessMessage('이메일에서 인증한 뒤 아래 [인증완료] 버튼을 눌러주세요.');
-        setError('');
-        setPendingVerification(true);
         clearLoading();
+        // 게스트 20번 후 이어하기: 모달을 유지하고 인증완료 버튼만 표시 (백그라운드 20번 유지, 인증 후 모달 닫고 21번으로)
+        if (intent === 'guestContinue') {
+          setSuccessMessage('이메일에서 인증한 뒤 아래 [인증완료] 버튼을 눌러주세요.');
+          setError('');
+          setPendingVerification(true);
+          return;
+        }
+        (onAuthSuccess ?? onBack)?.({
+          isNewUser: true,
+          needsVerificationBanner: true,
+          email,
+          password,
+        });
         return;
       }
       const msg = err instanceof Error ? err.message : (mode === 'login' ? '로그인에 실패했습니다.' : '회원가입에 실패했습니다.');
@@ -122,23 +138,59 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
+  /** 재발송 버튼 쿨다운(초). too-many-requests 또는 재발송 성공 후 60초간 비활성화 */
+  const [resendCooldownSec, setResendCooldownSec] = useState(0);
+  const resendCooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const handleResendVerification = async () => {
     if (!email.trim() || !password) {
       setError('이메일과 비밀번호를 입력한 뒤 재발송해주세요.');
       return;
     }
+    if (resendCooldownSec > 0) return;
     setResendLoading(true);
     setError('');
     setSuccessMessage('');
     try {
       await resendVerificationEmail(email, password);
       setSuccessMessage('인증 메일을 다시 보냈습니다. 메일함을 확인해주세요.');
+      startResendCooldown();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '재발송에 실패했습니다.');
+      const msg = err instanceof Error ? err.message : '재발송에 실패했습니다.';
+      setError(msg);
+      if (err instanceof AuthError && err.code === 'TOO_MANY_REQUESTS') {
+        startResendCooldown();
+      }
     } finally {
       setResendLoading(false);
     }
   };
+
+  function startResendCooldown() {
+    if (resendCooldownRef.current) clearInterval(resendCooldownRef.current);
+    setResendCooldownSec(60);
+    resendCooldownRef.current = setInterval(() => {
+      setResendCooldownSec((s) => {
+        if (s <= 1) {
+          if (resendCooldownRef.current) {
+            clearInterval(resendCooldownRef.current);
+            resendCooldownRef.current = null;
+          }
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (resendCooldownRef.current) {
+        clearInterval(resendCooldownRef.current);
+        resendCooldownRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
@@ -218,11 +270,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={resendLoading}
+                disabled={resendLoading || resendCooldownSec > 0}
                 onClick={handleResendVerification}
-                className="w-full py-2.5 text-sm font-bold text-[#0034d3] border border-[#0034d3] rounded-xl hover:bg-[#0034d3]/5 disabled:opacity-50"
+                className="w-full py-2.5 text-sm font-bold text-[#0034d3] border border-[#0034d3] rounded-xl hover:bg-[#0034d3]/5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {resendLoading ? '재발송 중...' : '인증 메일 재발송'}
+                {resendLoading
+                  ? '재발송 중...'
+                  : resendCooldownSec > 0
+                    ? `${resendCooldownSec}초 후 재발송`
+                    : '인증 메일 재발송'}
               </button>
             </div>
           ) : (

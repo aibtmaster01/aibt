@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, StickyNote } from 'lucide-react';
+import { RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, StickyNote, List } from 'lucide-react';
 import { User } from '../types';
 import type { CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { RichText } from '../components/RichText';
@@ -28,6 +28,8 @@ interface ResultProps {
   roundMemo?: RoundMemo | null;
   onHome: () => void;
   onRetry: () => void;
+  /** 상단 "목록으로" 클릭 시 모의고사 목록(회차 선택) 화면으로 이동 */
+  onGoToList?: () => void;
   /** 상단 우측 "학습 대시보드" 클릭 시 마이페이지로 이동 */
   onGoToDashboard?: () => void;
   /** CTA "다음 회차" 클릭 시 자동으로 다음 회차 불러오기 (맞춤형이면 5초 큐레이션 후 생성) */
@@ -169,6 +171,7 @@ export const Result: React.FC<ResultProps> = ({
   roundMemo,
   onHome,
   onRetry,
+  onGoToList,
   onGoToDashboard,
   onNextRoundAuto,
   onLogin,
@@ -320,22 +323,31 @@ export const Result: React.FC<ResultProps> = ({
       )}
 
       <div className="max-w-6xl mx-auto px-5 py-12 pt-16 relative z-10">
-        {/* 상단: 다시 풀기 / 학습 대시보드 */}
-        <div className="flex justify-end gap-2 mb-4">
+        {/* 상단: 목록으로 / 다시 풀기 / 학습 대시보드 */}
+        <div className="flex items-center justify-between gap-2 mb-4">
           <button
             type="button"
-            onClick={onRetry}
+            onClick={onGoToList ?? onHome}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50"
           >
-            <RefreshCcw size={16} /> 다시 풀기
+            <List size={16} /> 목록으로
           </button>
-          <button
-            type="button"
-            onClick={onGoToDashboard ?? onHome}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-brand-200 bg-brand-50 text-slate-800 text-sm font-semibold hover:bg-brand-100"
-          >
-            <ArrowRight size={16} /> 학습 대시보드
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRetry}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50"
+            >
+              <RefreshCcw size={16} /> 다시 풀기
+            </button>
+            <button
+              type="button"
+              onClick={onGoToDashboard ?? onHome}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-brand-200 bg-brand-50 text-slate-800 text-sm font-semibold hover:bg-brand-100"
+            >
+              <ArrowRight size={16} /> 학습 대시보드
+            </button>
+          </div>
         </div>
 
         <div className="text-center mb-8">
@@ -519,7 +531,7 @@ export const Result: React.FC<ResultProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (isRound2FreeUser && onNextRoundPaymentRequest) {
+                  if (onNextRoundPaymentRequest && (isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')))) {
                     onNextRoundPaymentRequest();
                   } else {
                     (onContinueLearning ?? onHome)();
@@ -527,7 +539,7 @@ export const Result: React.FC<ResultProps> = ({
                 }}
                 className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 flex items-center justify-center gap-2"
               >
-                <ArrowRight size={20} /> {isRound2FreeUser ? '다음 학습' : '계속해서 학습하기'}
+                <ArrowRight size={20} /> {isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')) ? '다음 학습' : '계속해서 학습하기'}
               </button>
             )}
             {isPaidUser && !showCouponCta && (
@@ -585,6 +597,11 @@ export const Result: React.FC<ResultProps> = ({
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
                           <span className="text-xs font-bold px-2 py-0.5 rounded bg-red-200 text-red-800">오답</span>
                           <span className="text-slate-500 text-sm">문제 {idx + 1}</span>
+                          {isPaidUser && (q.core_concept || q.core_id) && (
+                            <span className="text-xs text-slate-500 bg-slate-100 rounded-md px-2 py-0.5 border border-slate-200">
+                              {q.core_concept || (q.core_id ? `코어 ${q.core_id}` : '—')}
+                            </span>
+                          )}
                           {rec?.isConfused && (
                             <span className="text-xs font-bold text-[#0034d3] bg-[#99ccff] px-2 py-0.5 rounded">*헷갈린 문제*</span>
                           )}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import type { User } from "../types";
-import { CERTIFICATIONS, EXAM_SCHEDULE_DATES, EXAM_ROUNDS, SUBJECT_NAMES_BY_CERT, PROBLEM_TYPE_LABELS } from "../constants";
+import { CERTIFICATIONS, EXAM_SCHEDULE_DATES, getRoundLabel, SUBJECT_NAMES_BY_CERT, PROBLEM_TYPE_LABELS } from "../constants";
 import { getDaysLeft, getNearestExamDate, getPurchasedSchedulesForCert, getDaysLeftForDateId, getNearestExamFromCertInfo, formatExamDateDisplay } from "../utils/dateUtils";
 import {
   fetchHasAnyExamRecord,
@@ -39,19 +39,6 @@ function getPassRateMessage(rate: number) {
   if (rate >= 60) return "열심히 하고있어요! 이대로만 계속해요";
   if (rate >= 40) return "조금만 더 힘내볼까요? 화이팅!";
   return "기초부터 차근차근 시작해봐요";
-}
-
-/**
- * 나의 학습 기록·모의고사 목록과 동일한 회차 라벨
- * - 연습/응용/실전(round 1~3): 회차 없이 제목만 (연습 모의고사, 응용 모의고사, 실전 모의고사)
- * - 약점 공략(round 6+): "약점 공략 모의고사 1회", "2회", … (목록 순서와 동일)
- */
-function getRoundLabel(roundId: string | null | undefined, _certId?: string): string {
-  if (!roundId) return "모의고사";
-  const round = EXAM_ROUNDS.find((r) => r.id === roundId);
-  if (!round) return `${roundId}회차`;
-  if (round.round <= 3) return round.title; // 연습/응용/실전 — 회차 없음
-  return `약점 공략 모의고사 ${round.round - 5}회`; // 큐레이션(6→1회, 7→2회, …)
 }
 
 /** DB problem_type_descriptions 키가 공백/표기 차이일 수 있어 유연 매칭 후, 없으면 기본 설명 반환 */
@@ -572,7 +559,7 @@ export const MyPage: React.FC<MyPageProps> = ({
 
           {/* Right: 상단 3카드 + 하단 학습 기록 (약 65~70% 너비) */}
           <div className="col-span-12 lg:col-span-9 flex flex-col gap-6">
-            {/* 상단 Row: 과목별 안전도 분석 | 유형별 분석 | 취약 개념 분석 */}
+            {/* 상단 Row: 과목별 안전도 분석 | 취약 개념 분석 | 유형별 분석 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Card 1: 과목별 안전도 분석 */}
               <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
@@ -640,92 +627,7 @@ export const MyPage: React.FC<MyPageProps> = ({
                 </div>
               </div>
 
-              {/* Card 2: 유형별 분석 */}
-              <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative overflow-visible">
-                <div className="flex justify-between items-start gap-2 mb-3">
-                  <h3 className="text-[#1e56cd] text-base font-bold">유형별 분석</h3>
-                </div>
-                <div className="relative flex-1 flex flex-col min-h-0">
-                  {!hasLearningHistory ? (
-                    <div className="absolute inset-0 bg-white flex items-center justify-center z-20 rounded-2xl">
-                      <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
-                        {MY_PAGE_EMPTY_MESSAGES.weakness}
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="relative w-full flex-shrink-0 overflow-visible flex items-center justify-center" style={{ height: 208 }}>
-                        <RadarChart width={280} height={208}
-                            data={radarChartData}
-                            margin={{ top: 20, right: 32, bottom: 20, left: 32 }}
-                          >
-                            <PolarGrid stroke="#e5e7eb" strokeOpacity={0.5} strokeWidth={2} />
-                            <PolarAngleAxis
-                              dataKey="subject"
-                              axisLine={false}
-                              tick={({ payload, x, y, textAnchor }) => {
-                                const typeName = payload?.value ?? "";
-                                return (
-                                  <g
-                                    onMouseEnter={() => setHoveredTypeLabel(typeName)}
-                                    onMouseLeave={() => setHoveredTypeLabel(null)}
-                                    style={{ cursor: "pointer" }}
-                                  >
-                                    <text
-                                      x={x}
-                                      y={y}
-                                      textAnchor={textAnchor}
-                                      fill={payload.value === weakestSubject ? "#1e56cd" : "#374151"}
-                                      fontSize={11}
-                                      fontWeight={payload.value === weakestSubject ? 700 : 500}
-                                    >
-                                      {payload.value}
-                                    </text>
-                                  </g>
-                                );
-                              }}
-                            />
-                            <PolarRadiusAxis domain={[0, 100]} axisLine={false} tick={false} />
-                            <Radar
-                              name="정답률"
-                              dataKey="A"
-                              stroke="#1e56cd"
-                              fill="#1e56cd"
-                              fillOpacity={0.2}
-                              strokeWidth={2}
-                            />
-                          </RadarChart>
-                        {hoveredTypeLabel && (
-                          <div className="absolute left-1/2 -translate-x-1/2 bottom-0 z-10 w-[280px] rounded-lg bg-slate-800 text-white text-xs shadow-xl py-2.5 px-3 border border-slate-600">
-                            <p className="font-bold text-[#99ccff] mb-1">{hoveredTypeLabel}</p>
-                            <p className="text-slate-300 leading-relaxed">{getProblemTypeDescription(certInfo, hoveredTypeLabel)}</p>
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!isPremiumCert) {
-                            setShowWeaknessPaymentModal(true);
-                            return;
-                          }
-                          if (onStartWeakTypeFocus) onStartWeakTypeFocus(activeCertId);
-                          else handleNavigate(`/exam-list?cert=${activeCertId}`);
-                        }}
-                        className="w-full mt-auto bg-[#99ccff] border border-[#99ccff] rounded-xl py-3 px-4 flex justify-between items-center text-sm font-bold text-[#1e56cd] hover:bg-[#b3d9ff] hover:border-[#99ccff]"
-                      >
-                        <span className="flex items-center gap-2">
-                          {!isPremiumCert && <Lock className="w-4 h-4 text-[#1e56cd] shrink-0" />}
-                          취약 유형 집중 학습
-                        </span>
-                        <ChevronRight className="w-4 h-4 text-[#1e56cd]" />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Card 3: 취약 개념 분석 */}
+              {/* Card 2: 취약 개념 분석 */}
               <div ref={weaknessCardRef} className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative">
                 <div className="flex justify-between items-start gap-2 mb-3">
                   <h3 className="text-[#1e56cd] text-base font-bold">취약 개념 분석</h3>
@@ -828,15 +730,100 @@ export const MyPage: React.FC<MyPageProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Card 3: 유형별 분석 */}
+              <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md min-h-[280px] relative overflow-visible">
+                <div className="flex justify-between items-start gap-2 mb-3">
+                  <h3 className="text-[#1e56cd] text-base font-bold">유형별 분석</h3>
+                </div>
+                <div className="relative flex-1 flex flex-col min-h-0">
+                  {!hasLearningHistory ? (
+                    <div className="absolute inset-0 bg-white flex items-center justify-center z-20 rounded-2xl">
+                      <p className="text-sm text-gray-600 px-4 whitespace-pre-line text-center font-medium">
+                        {MY_PAGE_EMPTY_MESSAGES.weakness}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="relative w-full flex-shrink-0 overflow-visible flex items-center justify-center" style={{ height: 208 }}>
+                        <RadarChart width={280} height={208}
+                            data={radarChartData}
+                            margin={{ top: 20, right: 32, bottom: 20, left: 32 }}
+                          >
+                            <PolarGrid stroke="#e5e7eb" strokeOpacity={0.5} strokeWidth={2} />
+                            <PolarAngleAxis
+                              dataKey="subject"
+                              axisLine={false}
+                              tick={({ payload, x, y, textAnchor }) => {
+                                const typeName = payload?.value ?? "";
+                                return (
+                                  <g
+                                    onMouseEnter={() => setHoveredTypeLabel(typeName)}
+                                    onMouseLeave={() => setHoveredTypeLabel(null)}
+                                    style={{ cursor: "pointer" }}
+                                  >
+                                    <text
+                                      x={x}
+                                      y={y}
+                                      textAnchor={textAnchor}
+                                      fill={payload.value === weakestSubject ? "#1e56cd" : "#374151"}
+                                      fontSize={11}
+                                      fontWeight={payload.value === weakestSubject ? 700 : 500}
+                                    >
+                                      {payload.value}
+                                    </text>
+                                  </g>
+                                );
+                              }}
+                            />
+                            <PolarRadiusAxis domain={[0, 100]} axisLine={false} tick={false} />
+                            <Radar
+                              name="정답률"
+                              dataKey="A"
+                              stroke="#1e56cd"
+                              fill="#1e56cd"
+                              fillOpacity={0.2}
+                              strokeWidth={2}
+                            />
+                          </RadarChart>
+                        {hoveredTypeLabel && (
+                          <div className="absolute left-1/2 -translate-x-1/2 bottom-0 z-10 w-[280px] rounded-lg bg-slate-800 text-white text-xs shadow-xl py-2.5 px-3 border border-slate-600">
+                            <p className="font-bold text-[#99ccff] mb-1">{hoveredTypeLabel}</p>
+                            <p className="text-slate-300 leading-relaxed">{getProblemTypeDescription(certInfo, hoveredTypeLabel)}</p>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isPremiumCert) {
+                            setShowWeaknessPaymentModal(true);
+                            return;
+                          }
+                          if (onStartWeakTypeFocus) onStartWeakTypeFocus(activeCertId);
+                          else handleNavigate(`/exam-list?cert=${activeCertId}`);
+                        }}
+                        className="w-full mt-auto bg-[#99ccff] border border-[#99ccff] rounded-xl py-3 px-4 flex justify-between items-center text-sm font-bold text-[#1e56cd] hover:bg-[#b3d9ff] hover:border-[#99ccff]"
+                      >
+                        <span className="flex items-center gap-2">
+                          {!isPremiumCert && <Lock className="w-4 h-4 text-[#1e56cd] shrink-0" />}
+                          취약 유형 집중 학습
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-[#1e56cd]" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* 하단 Row: 나의 학습 기록 (Full width) */}
-            <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col justify-between h-full shadow-md flex-1 min-h-0">
-              <div className="flex justify-between items-center mb-6">
+            {/* 하단 Row: 나의 학습 기록 (Full width) — 높이 고정으로 페이지네이션 시 레이아웃 흔들림 방지 */}
+            <div className="bg-white border-2 border-[#99ccff] rounded-3xl p-6 flex flex-col shadow-md flex-1 min-h-[420px]">
+              <div className="flex justify-between items-center mb-6 shrink-0">
                 <h3 className="text-[#1e56cd] text-lg font-bold">나의 학습 기록</h3>
               </div>
-              <div className="relative flex-1 min-h-[320px] flex flex-col">
-              <div className="flex-grow min-h-0 overflow-y-auto pr-2 space-y-0">
+              <div className="relative flex flex-col flex-1 min-h-0">
+              <div className="h-[320px] overflow-y-auto pr-2 space-y-0 shrink-0">
               {paginatedTrend.length === 0 ? (
                 <p className="text-sm text-gray-600 py-8 text-center whitespace-pre-line font-medium">
                   {hasLearningHistory ? "기록이 없습니다." : MY_PAGE_EMPTY_MESSAGES.learningRecord}
