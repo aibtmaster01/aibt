@@ -215,7 +215,14 @@ export async function resendVerificationEmail(email: string, password: string): 
     throw new AuthError('이미 인증된 이메일입니다. 로그인해주세요.', 'INVALID_CREDENTIALS');
   }
   try {
-    await sendEmailVerification(credential.user);
+    const continueUrl =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'https://aibt-99bc6.web.app';
+    await sendEmailVerification(credential.user, {
+      url: continueUrl,
+      handleCodeInApp: true,
+    });
   } catch (err: unknown) {
     await signOut(auth);
     const code = (err as { code?: string })?.code;
@@ -341,6 +348,27 @@ export function clearStoredGoogleRedirectIntent(): void {
   }
 }
 
+/**
+ * 미인증 계정 삭제 (이메일 수정 시: 다른 주소로 다시 가입하기 위함).
+ * 이메일/비밀번호로 로그인 후 emailVerified가 false면 Firestore 문서 + Auth 사용자 삭제 후 signOut.
+ */
+export async function deleteUnverifiedUser(email: string, password: string): Promise<void> {
+  const credential = await signInWithEmailAndPassword(auth, email, password);
+  const u = credential.user;
+  if (u.emailVerified) {
+    await signOut(auth);
+    throw new AuthError('이미 인증된 계정입니다. 로그인해 주세요.', 'INVALID_CREDENTIALS');
+  }
+  const uid = u.uid;
+  const userRef = doc(db, 'users', uid);
+  try {
+    await deleteDoc(userRef);
+  } catch {
+    // Firestore 문서 없을 수 있음
+  }
+  await deleteUser(u);
+}
+
 /** 리다이렉트 복귀 시 한 번만 호출. Google 로그인 결과가 있으면 User 반환, 없으면 null. */
 export async function getGoogleRedirectUser(): Promise<User | null> {
   try {
@@ -412,8 +440,16 @@ export async function registerWithEmailAndPassword(
   if (firebaseUser) {
     try {
       // 인증 메일 제목/본문은 Firebase Console → Authentication → Templates 에서 설정.
-      // 한국어·합격/인증 문구 권장: docs/FIREBASE_EMAIL_VERIFICATION_TEMPLATE.md
-      await sendEmailVerification(firebaseUser);
+      // 한국어·핀셋 문구 권장: docs/FIREBASE_EMAIL_VERIFICATION_TEMPLATE.md
+      // continueUrl: 인증 링크 클릭 후 돌아올 주소 (Authorized domains에 등록된 도메인만 가능)
+      const continueUrl =
+        typeof window !== 'undefined' && window.location?.origin
+          ? window.location.origin
+          : 'https://aibt-99bc6.web.app';
+      await sendEmailVerification(firebaseUser, {
+        url: continueUrl,
+        handleCodeInApp: true,
+      });
     } catch (mailErr) {
       await signOut(auth);
       throw new AuthError(

@@ -1,8 +1,8 @@
 /**
  * aiRoundCurationService.ts
- * Round 6 이상 맞춤형 큐레이션 엔진 (index 기반)
+ * 맞춤형 큐레이션 엔진 (index 기반, 4과목×20문항)
  * - Firestore 풀 쿼리 없음: localCacheDB의 index.json 배열 사용
- * - 3 Zone: 약점(낮은 proficiency sub_core_id) / 강점(높은 proficiency) / 랜덤
+ * - 과목별 selectForSubject: 1구역(커버리지 12) + 2구역(약점 집중 8), 개념 중복 제한
  * - 선발된 q_id 80개만 Firestore getDoc 병렬 조회 후 반환
  */
 
@@ -26,12 +26,7 @@ const QUESTION_POOL_ID_BY_CERT: Record<string, string> = {
   BIGDATA: 'contents_1681',
 };
 
-/** 3 Zone 비율: 약점 / 강점 / 랜덤 (합 1) — selectQuestionIdsBy3ZonesPerSubject용 */
-const ZONE_RATIO_WEAKNESS = 0.4;
-const ZONE_RATIO_STRENGTH = 0.3;
-const ZONE_RATIO_RANDOM = 0.3;
-
-/** selectForSubject(과목별 다양-적응 선발) 상수 */
+/** selectForSubject(과목별 1구역+2구역 선발) 상수 */
 const QUESTIONS_PER_SUBJECT = 20;
 const COVERAGE_PER_SUBJECT = 12;   // 1구역: 커버리지 슬롯 수
 const WEAKNESS_PER_SUBJECT = 8;    // 2구역: 약점 집중 슬롯 수
@@ -110,25 +105,23 @@ function getSubjectFromItem(it: QuestionIndexItem): number {
 }
 
 /**
- * 과목별 20개씩, 1→2→3→4 순서로 선발 (약점공략 모의고사 큐레이션용).
- * 각 과목 내부는 동일 3 Zone(약점/강점/랜덤) 비율 + 취약 유형 우선.
+ * 과목별 20개씩, 1→2→3→4 순서로 선발 (1구역 커버리지 12 + 2구역 약점 8).
+ * selectForSubject 한 번 호출 per 과목.
  */
 async function selectQuestionIdsBy3ZonesPerSubject(
   certCode: string,
   uid: string,
   subjectQuotas: { subjectNumber: number; count: number }[],
-  mode?: AiMockExamMode
+  _mode?: AiMockExamMode
 ): Promise<string[]> {
   const items = await getQuestionIndexFromCache(certCode);
   if (!items || items.length === 0) return [];
 
   const stats = await fetchStatsForCert(uid, certCode);
-  const subCoreStats = stats.sub_core_id_stats ?? {};
-  const problemTypeStats = stats.problem_type_stats ?? {};
-  const getProficiency = (subCoreId: string) => {
-    const ent = subCoreStats[subCoreId];
-    return ent?.proficiency ?? 1200;
-  };
+  const subCoreStats = (stats.sub_core_id_stats ?? {}) as Record<string, StatEntryLike>;
+  const problemTypeStats = (stats.problem_type_stats ?? {}) as Record<string, StatEntryLike>;
+  const subjectStats = (stats as { subject_stats?: Record<string, StatEntryLike> }).subject_stats ?? {};
+
   const weakTypeSet = new Set<string>(
     Object.entries(problemTypeStats)
       .filter(([, v]) => (v.total ?? 0) > 0)
@@ -136,83 +129,32 @@ async function selectQuestionIdsBy3ZonesPerSubject(
       .slice(0, WEAK_TYPE_TOP_N)
       .map(([key]) => String(key).trim())
   );
-  const isWeakType = (it: QuestionIndexItem) => {
-    const pt = it.metadata?.problem_type;
-    return typeof pt === 'string' && pt.trim() && weakTypeSet.has(pt.trim());
-  };
 
+  const subjectProfs = Object.values(subjectStats)
+    .map((e) => e?.proficiency ?? 1200)
+    .filter((p) => p > 0);
+  const avgProf = subjectProfs.length > 0
+    ? subjectProfs.reduce((a, b) => a + b, 0) / subjectProfs.length
+    : 1200;
+  const userEloPercent = eloToPercent(avgProf);
+
+  const subCoreCounts = new Map<string, number>();
+  for (const it of items) {
+    const sc = it.metadata?.sub_core_id ?? '';
+    if (sc) subCoreCounts.set(sc, (subCoreCounts.get(sc) ?? 0) + 1);
+  }
+
+  const ctx: ScoreContext = { subCoreStats, weakTypeSet, userEloPercent, subCoreCounts };
+  const globalUsedSubCoreIds = new Set<string>();
   const result: string[] = [];
-  const seen = new Set<string>();
 
   for (const { subjectNumber, count } of subjectQuotas) {
     const subItems = items.filter((it) => getSubjectFromItem(it) === subjectNumber);
     if (subItems.length === 0) continue;
-
-    const weakness: QuestionIndexItem[] = [];
-    const strength: QuestionIndexItem[] = [];
-    const random: QuestionIndexItem[] = [];
-    for (const it of subItems) {
-      if (seen.has(it.q_id)) continue;
-      const subId = it.metadata?.sub_core_id ?? '';
-      const prof = subId ? getProficiency(subId) : 1200;
-      if (subId && prof < 1150) weakness.push(it);
-      else if (subId && prof >= 1250) strength.push(it);
-      else random.push(it);
-    }
-
-    let nWeak = Math.round(count * (mode === 'WEAKNESS_ATTACK' ? 0.5 : ZONE_RATIO_WEAKNESS));
-    let nStrong = Math.round(count * (mode === 'WEAKNESS_ATTACK' ? 0.2 : ZONE_RATIO_STRENGTH));
-    let nRand = count - nWeak - nStrong;
-    if (nRand < 0) nRand = 0;
-
-    const pick = (arr: QuestionIndexItem[], n: number, preferWeakType = false): string[] => {
-      let list = arr.filter((it) => !seen.has(it.q_id));
-      if (preferWeakType && weakTypeSet.size > 0) {
-        list.sort((a, b) => (isWeakType(b) ? 1 : 0) - (isWeakType(a) ? 1 : 0));
-      }
-      const sh = shuffleArray(list);
-      return sh.slice(0, n).map((x) => x.q_id);
-    };
-    const add = (ids: string[]): string[] => {
-      const out: string[] = [];
-      for (const id of ids) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        out.push(id);
-      }
-      return out;
-    };
-
-    const w = add(pick(weakness, nWeak, true));
-    const s = add(pick(strength, nStrong, true));
-    const r = add(pick(random, nRand, true));
-    let combined = [...w, ...s, ...r];
-    if (combined.length < count) {
-      const rest = subItems.filter((it) => !seen.has(it.q_id));
-      const extra = add(shuffleArray(rest).slice(0, count - combined.length).map((x) => x.q_id));
-      combined = [...combined, ...extra];
-    }
-    result.push(...combined.slice(0, count));
+    const picked = selectForSubject(subItems, count, ctx, globalUsedSubCoreIds);
+    result.push(...picked);
   }
 
-  if (weakTypeSet.size > 0) {
-    const qidToItem = new Map(items.map((it) => [it.q_id, it]));
-    const reordered: string[] = [];
-    for (const { subjectNumber, count } of subjectQuotas) {
-      const start = reordered.length;
-      const segment = result.slice(start, start + count);
-      const weakFirst = segment.filter((id) => {
-        const it = qidToItem.get(id);
-        return it ? isWeakType(it) : false;
-      });
-      const rest = segment.filter((id) => {
-        const it = qidToItem.get(id);
-        return !it || !isWeakType(it);
-      });
-      reordered.push(...weakFirst, ...rest);
-    }
-    return reordered.length ? reordered : result;
-  }
   return result;
 }
 
@@ -242,7 +184,7 @@ async function fetchQuestionsByIdsWithGetDoc(certCode: string, qIds: string[]): 
 
 /**
  * index 기반 맞춤형 선발 후 getDoc 병렬로 본문 로드.
- * 80문항: 과목별 20개씩(4과목 × 20) selectQuestionIdsBy3ZonesPerSubject만 사용.
+ * 80문항: 과목별 20개씩(4과목 × 20), selectForSubject(1구역 12 + 2구역 8) 정책 사용.
  */
 export async function generateIndexBasedExam(
   uid: string,
@@ -279,7 +221,7 @@ export async function generateIndexBasedExam(
 }
 
 /**
- * Round 4+ 맞춤형 시험 생성: index 기반 3 Zone (약점/강점/랜덤) 비율 선발 후 getDoc 병렬 조회
+ * Round 4+ 맞춤형 시험 생성: index 기반 과목별 1구역+2구역 선발 후 getDoc 병렬 조회
  */
 export async function generateAdaptiveExam(
   uid: string,

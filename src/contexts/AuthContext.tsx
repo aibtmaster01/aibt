@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { auth } from '../firebase';
 import { User } from '../types';
-import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail, type GoogleRedirectIntent } from '../services/authService';
+import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail, deleteUnverifiedUser, type GoogleRedirectIntent } from '../services/authService';
 
 interface AuthContextValue {
   user: User | null;
@@ -13,6 +13,8 @@ interface AuthContextValue {
   /** 구글 로그인. intentData 있으면 리다이렉트 시 저장. 팝업 성공 시 User 반환, 리다이렉트 시 void. */
   loginWithGoogle: (intentData?: GoogleRedirectIntent) => Promise<User | void>;
   resendVerificationEmail: (email: string, password: string) => Promise<void>;
+  /** 미인증 계정 삭제 (이메일 수정 시 다른 주소로 다시 가입용) */
+  deleteUnverifiedAccount: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (updater: (prev: User) => User) => void;
   /** Firestore에서 현재 유저 정보 재조회 (결제 완료 등 상태 반영용) */
@@ -44,6 +46,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const resendVerification = async (email: string, password: string) => {
     await resendVerificationEmail(email, password);
+  };
+
+  const deleteUnverifiedAccount = async (email: string, password: string) => {
+    await deleteUnverifiedUser(email, password);
   };
 
   const logout = async () => {
@@ -110,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     register,
     loginWithGoogle: loginWithGoogleHandler,
     resendVerificationEmail: resendVerification,
+    deleteUnverifiedAccount,
     logout,
     updateUser,
     refreshUser,

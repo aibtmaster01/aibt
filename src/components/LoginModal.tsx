@@ -31,7 +31,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   persistent = false,
   intent,
 }) => {
-  const { login, register, loginWithGoogle, resendVerificationEmail } = useAuth();
+  const { login, register, loginWithGoogle, resendVerificationEmail, deleteUnverifiedAccount } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -83,7 +83,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         clearLoading();
         // 게스트 20번 후 이어하기: 모달을 유지하고 인증완료 버튼만 표시 (백그라운드 20번 유지, 인증 후 모달 닫고 21번으로)
         if (intent === 'guestContinue') {
-          setSuccessMessage('이메일에서 인증한 뒤 아래 [인증완료] 버튼을 눌러주세요.');
           setError('');
           setPendingVerification(true);
           return;
@@ -255,18 +254,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             <h3 className="text-2xl font-black text-slate-900">
               {pendingVerification ? '이메일 인증' : mode === 'login' ? '로그인' : '회원가입'}
             </h3>
-            <p className="text-slate-400 text-sm mt-1">
-              {pendingVerification
-                ? '인증 메일을 확인한 뒤 아래 버튼을 눌러주세요.'
-                : mode === 'login'
+            {!pendingVerification && (
+              <p className="text-slate-400 text-sm mt-1">
+                {mode === 'login'
                   ? '학습 기록을 저장하려면 로그인하세요.'
                   : '새 계정을 만들어 학습을 시작하세요.'}
-            </p>
+              </p>
+            )}
           </div>
 
           {pendingVerification ? (
             <div className="space-y-4">
-              <p className="text-sm text-slate-600">{successMessage || '인증 메일을 보냈습니다. 이메일에서 링크를 클릭한 뒤 아래 버튼을 눌러주세요.'}</p>
+              <p className="text-xs font-bold text-slate-500 uppercase mb-1">인증 메일을 보낸 주소</p>
+              <p className="text-sm font-medium text-slate-800 break-all rounded-lg bg-slate-100 px-3 py-2.5 border border-slate-200">
+                {email || '(이메일 없음)'}
+              </p>
               {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
               <button
                 type="button"
@@ -287,6 +289,29 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   : resendCooldownSec > 0
                     ? `${resendCooldownSec}초 후 재발송`
                     : '인증 메일 재발송'}
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={async () => {
+                  if (!email.trim() || !password) return;
+                  setError('');
+                  setLoading(true);
+                  try {
+                    await deleteUnverifiedAccount(email, password);
+                    setPendingVerification(false);
+                    setEmail('');
+                    setPassword('');
+                    setSuccessMessage('');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : '계정 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="w-full py-2.5 text-sm font-bold text-slate-600 border border-slate-300 rounded-xl hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                이메일 수정 (다른 주소로 다시 가입)
               </button>
             </div>
           ) : (

@@ -41,7 +41,7 @@
 ## 4. 앱 배포
 
 - 프론트를 배포하면 앱 기동 시 자동으로 `syncQuestionIndex('BIGDATA')`가 호출됩니다.
-- 사용자 기기에는 IndexedDB `questionIndexCache`에 index가 저장되며, Round 4·5 맞춤형은 이 index 기반 3 Zone(약점/강점/랜덤) 선발 + getDoc 병렬 조회로 동작합니다.
+- 사용자 기기에는 IndexedDB `questionIndexCache`에 index가 저장되며, Round 4 이상 맞춤형은 이 index 기반 과목별 1구역(커버리지 12) + 2구역(약점 8) 선발 + getDoc 병렬 조회로 동작합니다.
 
 ---
 
