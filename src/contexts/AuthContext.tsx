@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { auth } from '../firebase';
 import { User } from '../types';
-import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail } from '../services/authService';
+import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail, type GoogleRedirectIntent } from '../services/authService';
 
 interface AuthContextValue {
   user: User | null;
@@ -10,7 +10,8 @@ interface AuthContextValue {
   /** 로그인 성공 시 해당 User 반환 (guestContinue 플로우에서 is_verified 확인용) */
   login: (email: string, password: string) => Promise<User>;
   register: (email: string, password: string, familyName: string, givenName: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
+  /** 구글 로그인. intentData 있으면 리다이렉트 시 저장. 팝업 성공 시 User 반환, 리다이렉트 시 void. */
+  loginWithGoogle: (intentData?: GoogleRedirectIntent) => Promise<User | void>;
   resendVerificationEmail: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (updater: (prev: User) => User) => void;
@@ -35,8 +36,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
-  const loginWithGoogleHandler = () => {
-    loginWithGoogle(); // 리다이렉트 발생 → 복귀 시 getGoogleRedirectUser로 처리
+  const loginWithGoogleHandler = async (intentData?: GoogleRedirectIntent): Promise<User | void> => {
+    const appUser = await loginWithGoogle(intentData);
+    if (appUser) setUser(appUser);
+    return appUser;
   };
 
   const resendVerification = async (email: string, password: string) => {
@@ -48,40 +51,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
+  // 리다이렉트 복귀 시 getRedirectResult를 먼저 처리한 뒤 onAuthStateChanged 구독 (신규 구글 유저 Firestore 생성 후 세션 반영)
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
 
     getGoogleRedirectUser()
       .then((appUser) => {
         if (cancelled) return;
-        if (appUser) {
-          setUser(appUser);
-          setLoading(false);
-        }
+        if (appUser) setUser(appUser);
       })
-      .catch(() => {});
-
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
-      if (!firebaseUser) {
-        setUser(null);
+      .catch(() => {})
+      .finally(() => {
+        if (cancelled) return;
         setLoading(false);
-        return;
-      }
-
-      try {
-        const appUser = await getSessionForCurrentAuth(firebaseUser.uid);
-        setUser(appUser);
-        if (!appUser) setUser(null);
-      } catch {
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
-    });
+        unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+          if (!firebaseUser) {
+            setUser(null);
+            setLoading(false);
+            return;
+          }
+          try {
+            const appUser = await getSessionForCurrentAuth(firebaseUser.uid);
+            setUser(appUser ?? null);
+          } catch {
+            setUser(null);
+          } finally {
+            setLoading(false);
+          }
+        });
+      });
 
     return () => {
       cancelled = true;
-      unsubscribe();
+      unsubscribe?.();
     };
   }, []);
 

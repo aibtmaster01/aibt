@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { AuthError } from '../services/authService';
+import { AuthError, type GoogleRedirectIntent } from '../services/authService';
 
 export type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
 
 export interface LoginModalProps {
   initialMode?: 'login' | 'signup';
+  /** 구글 로그인 리다이렉트 시 복귀 후 게스트 이어하기 복원용 (guestContinue일 때만 전달) */
+  intentDataForGoogle?: GoogleRedirectIntent | null;
   onBack?: () => void;
   onAuthSuccess?: (options?: {
     isNewUser?: boolean;
@@ -23,6 +25,7 @@ export interface LoginModalProps {
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   initialMode = 'login',
+  intentDataForGoogle,
   onBack,
   onAuthSuccess,
   persistent = false,
@@ -108,8 +111,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setSuccessMessage('');
     setLoading(true);
     try {
-      await loginWithGoogle();
-      // 리다이렉트 방식: 페이지가 Google로 이동하므로 여기서는 아무 것도 호출하지 않음 (복귀 시 AuthContext에서 처리)
+      const appUser = await loginWithGoogle(intentDataForGoogle ?? undefined);
+      if (appUser) {
+        setLoading(false);
+        submittingRef.current = false;
+        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+      }
+      // 리다이렉트인 경우 페이지가 이동하므로 여기서 추가 호출 없음 (복귀 시 App에서 intent 복원)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google 로그인에 실패했습니다.';
       setError(msg);
@@ -214,7 +222,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <br />
               가장 빠른 길,
               <br />
-              합격해
+              핀셋
             </h2>
             <ul className="space-y-4 text-slate-300">
               <li className="flex items-center gap-3">
@@ -228,7 +236,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </li>
             </ul>
           </div>
-          <p className="text-xs text-slate-500 relative z-10">© 2026 합격해. All Rights Reserved.</p>
+          <p className="text-xs text-slate-500 relative z-10">© 2026 반지고리. All Rights Reserved.</p>
         </div>
 
         {/* Right: 폼 (기존 로그인 페이지와 동일) */}
@@ -303,7 +311,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     value={givenName}
                     onChange={(e) => setGivenName(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0034d3] font-medium"
-                    placeholder="합격"
+                    placeholder="이름"
                     required
                   />
                 </div>

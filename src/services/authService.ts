@@ -9,6 +9,7 @@ import {
   EmailAuthProvider,
   sendEmailVerification,
   signInWithRedirect,
+  signInWithPopup,
   getRedirectResult,
   GoogleAuthProvider,
   type User as FirebaseAuthUser,
@@ -278,10 +279,66 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
   return firestoreDocToUser(uid, data);
 }
 
-/** Google 로그인: 리다이렉트 방식 (COOP/팝업 차단 환경에서 안정 동작). 호출 시 곧바로 페이지가 이동합니다. */
-export async function loginWithGoogle(): Promise<void> {
+const GOOGLE_REDIRECT_INTENT_KEY = 'finset_google_redirect_intent';
+
+export interface GoogleRedirectIntent {
+  intent: 'guestContinue';
+  certId: string;
+  roundId: string;
+  sessionHistory: { qid: string; selected: number; isCorrect?: boolean; isConfused?: boolean }[];
+  questions: { id: string; [key: string]: unknown }[];
+}
+
+function isPopupBlockedOrClosed(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  return (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    code === 'auth/popup-blocked' ||
+    code === 'auth/web-storage-unsupported'
+  );
+}
+
+/** Google 로그인: 팝업 우선, 실패 시 리다이렉트. intentData 있으면 리다이렉트 전 sessionStorage에 저장해 복귀 시 게스트 이어하기 복원용. */
+export async function loginWithGoogle(intentData?: GoogleRedirectIntent): Promise<User | void> {
   const provider = new GoogleAuthProvider();
-  await signInWithRedirect(auth, provider);
+  try {
+    const result = await signInWithPopup(auth, provider);
+    return await completeGoogleSignIn(result.user);
+  } catch (err: unknown) {
+    if (isPopupBlockedOrClosed(err)) {
+      if (intentData) {
+        try {
+          sessionStorage.setItem(GOOGLE_REDIRECT_INTENT_KEY, JSON.stringify(intentData));
+        } catch {
+          // ignore
+        }
+      }
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+    throw err;
+  }
+}
+
+export function getStoredGoogleRedirectIntent(): GoogleRedirectIntent | null {
+  try {
+    const raw = sessionStorage.getItem(GOOGLE_REDIRECT_INTENT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as GoogleRedirectIntent;
+    if (data?.intent === 'guestContinue' && data.certId && data.roundId) return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearStoredGoogleRedirectIntent(): void {
+  try {
+    sessionStorage.removeItem(GOOGLE_REDIRECT_INTENT_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 /** 리다이렉트 복귀 시 한 번만 호출. Google 로그인 결과가 있으면 User 반환, 없으면 null. */

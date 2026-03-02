@@ -19,7 +19,7 @@ import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
 import { clearGuestQuizProgress } from './utils/guestQuizStorage';
-import { ensureUserSubscription, setPaymentComplete } from './services/authService';
+import { ensureUserSubscription, setPaymentComplete, getStoredGoogleRedirectIntent, clearStoredGoogleRedirectIntent } from './services/authService';
 import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
 import { logClientError } from './services/errorLogService';
 import { doc, getDoc } from 'firebase/firestore';
@@ -562,6 +562,29 @@ const App: React.FC = () => {
     if (user && pendingVerificationBanner) setPendingVerificationBanner(null);
   }, [user, pendingVerificationBanner]);
 
+  // 구글 로그인 리다이렉트 복귀 시 guestContinue intent 복원 (팝업 대신 전체 화면 이동한 경우)
+  React.useEffect(() => {
+    if (authLoading || !user) return;
+    const intent = getStoredGoogleRedirectIntent();
+    if (!intent || intent.intent !== 'guestContinue') return;
+    clearStoredGoogleRedirectIntent();
+    setPendingGuestSession({
+      certId: intent.certId,
+      roundId: intent.roundId,
+      sessionHistory: intent.sessionHistory,
+      questions: intent.questions as import('./types').Question[],
+    });
+    setPendingGuestContinue({ certId: intent.certId, roundId: intent.roundId });
+    setSelectedCertId(intent.certId);
+    setSelectedRoundId(intent.roundId);
+    setQuizStartIndex(20);
+    setPreFetchedQuestions(intent.questions as import('./types').Question[]);
+    setShowLoginModal(false);
+    setLoginModalIntent(null);
+    setRoute('/quiz');
+    setShowGuestContinueModal(true);
+  }, [user, authLoading]);
+
   // Check status for current selected cert
   const isCurrentCertPremium = user ? (user.isPremium || (selectedCertId && user.paidCertIds?.includes(selectedCertId))) : false;
   const isCurrentCertExpired = user ? (selectedCertId && user.expiredCertIds?.includes(selectedCertId)) : false;
@@ -831,6 +854,7 @@ const App: React.FC = () => {
     }
     if (!options?.isNewUser) setShowLoginToast(true);
     if (intent === 'guestContinue' && pendingGuestContinue) {
+      setRoute('/quiz');
       setSelectedCertId(pendingGuestContinue.certId);
       setSelectedRoundId(pendingGuestContinue.roundId);
       setQuizStartIndex(20);
@@ -879,6 +903,17 @@ const App: React.FC = () => {
             initialMode={loginInitialMode ?? 'login'}
             persistent={loginModalIntent === 'guestContinue'}
             intent={loginModalIntent ?? undefined}
+            intentDataForGoogle={
+              loginModalIntent === 'guestContinue' && pendingGuestSession
+                ? {
+                    intent: 'guestContinue',
+                    certId: pendingGuestSession.certId,
+                    roundId: pendingGuestSession.roundId,
+                    sessionHistory: pendingGuestSession.sessionHistory,
+                    questions: pendingGuestSession.questions,
+                  }
+                : undefined
+            }
             onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
             onAuthSuccess={handleLoginModalAuthSuccess}
           />
@@ -950,13 +985,23 @@ const App: React.FC = () => {
     );
   }
 
+  // 구글 로그인 리다이렉트 복귀 시 intent 복원 중에는 메인(MyPage) 노출 방지 — 로딩만 표시
+  const pendingGoogleRedirectIntent = user && !authLoading && getStoredGoogleRedirectIntent()?.intent === 'guestContinue';
+  if (pendingGoogleRedirectIntent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#edf1f5]">
+        <div className="text-slate-500 font-medium">로딩 중...</div>
+      </div>
+    );
+  }
+
   if (isMobile) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#edf1f5] p-6 text-center">
         <div className="w-16 h-16 rounded-2xl bg-[#99ccff] flex items-center justify-center mb-6">
           <Monitor className="w-8 h-8 text-[#1e56cd]" />
         </div>
-        <h1 className="text-xl font-bold text-slate-900 mb-2">MVP 버전은 PC에 최적화되었습니다</h1>
+        <h1 className="text-xl font-bold text-slate-900 mb-2">핀셋은 PC에 최적화되었습니다</h1>
         <p className="text-slate-600 text-sm">PC로 학습해 주세요.</p>
       </div>
     );
@@ -969,6 +1014,17 @@ const App: React.FC = () => {
           initialMode={loginInitialMode ?? 'login'}
           persistent={loginModalIntent === 'guestContinue'}
           intent={loginModalIntent ?? undefined}
+          intentDataForGoogle={
+            loginModalIntent === 'guestContinue' && pendingGuestSession
+              ? {
+                  intent: 'guestContinue',
+                  certId: pendingGuestSession.certId,
+                  roundId: pendingGuestSession.roundId,
+                  sessionHistory: pendingGuestSession.sessionHistory,
+                  questions: pendingGuestSession.questions,
+                }
+              : undefined
+          }
           onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
           onAuthSuccess={handleLoginModalAuthSuccess}
         />

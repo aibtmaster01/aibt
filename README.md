@@ -1,6 +1,6 @@
-# AIBT — AI 기반 자격증 모의고사 플랫폼 (합격해)
+# 핀셋 FINSET — AI 기반 자격증 모의고사 플랫폼
 
-자격증 대비 모의고사·진단평가 서비스. Firebase 인증/ Firestore, React + Vite 프론트엔드, Python 백엔드(시드/문제 업로드) 구성.
+자격증 대비 모의고사·진단평가 서비스. Firebase 인증/Firestore, React + Vite 프론트엔드, Python 백엔드(시드/문제 업로드) 구성. 팀: 반지고리.
 
 ## 실행 방법
 

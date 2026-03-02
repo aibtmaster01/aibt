@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'aibt_guest_quiz_progress';
+const STORAGE_KEY = 'finset_guest_quiz_progress';
 
 export interface GuestQuizProgress {
   certId: string;

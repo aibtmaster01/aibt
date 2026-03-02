@@ -19,7 +19,7 @@ export function EmptyState({ onStartCert }: EmptyStateProps) {
   return (
     <div className="mx-auto max-w-4xl px-5 py-16">
       <p className="mb-8 text-center text-3xl font-black tracking-tight text-[#1e56cd] md:text-4xl">
-        MVP 버전
+        핀셋-MVP
       </p>
       <div className="mb-10 text-center">
         <h1 className="text-2xl font-black text-foreground">

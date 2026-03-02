@@ -2,7 +2,7 @@
  * Generate a unique device fingerprint for device limit tracking.
  * Uses localStorage to persist across sessions.
  */
-const STORAGE_KEY = 'aibt_device_id';
+const STORAGE_KEY = 'finset_device_id';
 
 export function getDeviceId(): string {
   if (typeof window === 'undefined') return 'unknown';
@@ -26,7 +26,7 @@ export function getDeviceId(): string {
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }
-  const deviceId = `aibt_${Math.abs(hash).toString(36)}_${Date.now().toString(36)}`;
+  const deviceId = `finset_${Math.abs(hash).toString(36)}_${Date.now().toString(36)}`;
   localStorage.setItem(STORAGE_KEY, deviceId);
   return deviceId;
 }

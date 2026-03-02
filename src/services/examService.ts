@@ -7,7 +7,7 @@
  * --- Firestore 인덱스 (단일 필드, 콘솔에서만 생성 가능) ---
  * collectionGroup('questions') + where('q_id', 'in', chunk) 쿼리 사용 시
  * 아래 링크를 브라우저로 열어 "인덱스 생성" 버튼 클릭 후 Enabled 될 때까지 대기.
- * 프로젝트: aibt-99bc6
+ * Firebase 프로젝트: aibt-99bc6 (서비스: FINSET/핀셋)
  *
  * [단일 필드 - q_id] create_exemption 링크:
  * https://console.firebase.google.com/v1/r/project/aibt-99bc6/firestore/indexes?create_exemption=Ck5wcm9qZWN0cy9haWJ0LTk5YmM2L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9xdWVzdGlvbnMvZmllbGRzL3FfaWQQAhoICgRxX2lkEAE

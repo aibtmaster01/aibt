@@ -79,7 +79,7 @@ export function DashboardSidebar({
         onClick={() => onNavigate('/')}
         className="text-white font-black text-sm md:text-base mb-6 md:mb-8 tracking-tight"
       >
-        합격해
+        핀셋
       </button>
       {/* 프로필 영역 - 로그인 시에만 표시, 클릭 시 계정설정/로그아웃 팝업 */}
       {user && (
