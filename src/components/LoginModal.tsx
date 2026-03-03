@@ -329,8 +329,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             <div className="space-y-6">
               <p className="text-sm text-slate-600 text-center">
                 베타테스터는 구글 로그인만 사용할 수 있습니다.
-                <br />
-                이메일 가입·인증은 실서버에서만 제공됩니다.
               </p>
               {error && <p className="text-sm text-red-600 font-medium text-center">{error}</p>}
               <button
