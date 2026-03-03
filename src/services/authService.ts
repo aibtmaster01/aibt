@@ -204,7 +204,7 @@ export async function resendVerificationEmail(email: string, password: string): 
     const code = (err as { code?: string })?.code;
     if (code === 'auth/too-many-requests') {
       throw new AuthError(
-        '요청이 너무 많습니다. 잠시 후(몇 분 뒤) 다시 시도해주세요.',
+        '재발송은 90초 간격으로 최대 5번까지 가능합니다. 잠시 후 다시 시도해 주세요.',
         'TOO_MANY_REQUESTS'
       );
     }
@@ -228,7 +228,7 @@ export async function resendVerificationEmail(email: string, password: string): 
     const code = (err as { code?: string })?.code;
     if (code === 'auth/too-many-requests') {
       throw new AuthError(
-        '요청이 너무 많습니다. 잠시 후(몇 분 뒤) 다시 시도해주세요.',
+        '재발송은 90초 간격으로 최대 5번까지 가능합니다. 잠시 후 다시 시도해 주세요.',
         'TOO_MANY_REQUESTS'
       );
     }

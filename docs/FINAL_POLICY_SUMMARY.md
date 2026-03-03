@@ -1,6 +1,12 @@
-# FINSET Final Policy Summary
+# 핀셋(FINSET) 최종 정책 정리
 
-Current code-base policy summary: login, curation, stats. Team: Banjigori.
+팀: 반지고리. 현재 코드 기준 로그인·큐레이션·스탯 정책 요약.
+
+---
+
+# FINSET Final Policy Summary (EN)
+
+Team: Banjigori. Current code-base policy: login, curation, stats.
 
 ## 1. Login / Auth
 
