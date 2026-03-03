@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "aibt-99bc6"
+    "default": "aibt-99bc6",
+    "beta": "aibt-beta"
   }
 }

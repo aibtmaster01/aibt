@@ -8,10 +8,12 @@ export interface User {
   /** 표시용 풀네임 (familyName + givenName) - 기존 호환 */
   name: string;
   isAdmin: boolean;
+  /** memberships에 PREMIUM tier가 하나라도 있으면 true (앱에서 memberships 기반으로 파생) */
   isPremium: boolean;
   subscriptions: Certification[];
-  paidCertIds?: string[]; // IDs of certifications the user has paid for
-  expiredCertIds?: string[]; // IDs of certifications that have expired
+  /** memberships[certCode].tier === 'PREMIUM' 인 자격증 ID 목록 (memberships 기반 파생). 해당 자격증에 한해 유료 기능(3회차+, 유형/개념 풀기 등) 제공 */
+  paidCertIds?: string[];
+  expiredCertIds?: string[];
   /** 약점 공략(round 6+) 1회 체험 사용 여부 - certId별 */
   weaknessTrialUsedByCert?: Record<string, boolean>;
   /** 목표 시험일 (certId → YYYY-MM-DD) - D-Day 모드용 */

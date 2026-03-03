@@ -172,12 +172,22 @@ export async function submitQuizResult(
 
   const certInfo = await getCertificationInfo(certCode);
   const qMap = new Map(questions.map((q) => [q.id, q]));
+  /** 문제 순서(인덱스) → 과목 번호. subject_number가 없는 문제(예: round2 풀)에 대한 폴백용 */
+  const indexToSubject = buildIndexToSubject(questions, certInfo?.subjects);
 
-  // ---- 과목별 점수 계산 (subject_number 기준) ----
+  // ---- 과목별 점수 계산 (subject_number 기준, 없으면 시험 순서로 추정) ----
   const subjectCorrectTotal: Record<string, { correct: number; total: number }> = {};
-  for (const rec of sessionHistory) {
+  for (let i = 0; i < sessionHistory.length; i++) {
+    const rec = sessionHistory[i];
     const q = qMap.get(rec.qid);
-    const subjKey = q?.subject_number != null ? String(q.subject_number) : '0';
+    let subjKey: string;
+    if (q?.subject_number != null) {
+      subjKey = String(q.subject_number);
+    } else if (indexToSubject && i < indexToSubject.length) {
+      subjKey = String(indexToSubject[i]);
+    } else {
+      subjKey = '0';
+    }
     if (!subjectCorrectTotal[subjKey]) subjectCorrectTotal[subjKey] = { correct: 0, total: 0 };
     subjectCorrectTotal[subjKey].total += 1;
     if (rec.isCorrect) subjectCorrectTotal[subjKey].correct += 1;

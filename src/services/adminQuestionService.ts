@@ -107,7 +107,7 @@ function wrongFeedbackToStorage(wrongFeedback?: Record<string, string>): string[
   return arr;
 }
 
-/** 문제 수정 저장 (answer는 1-based로 입력받아 0-based answer_idx로 저장). image 있으면 해당 필드도 반영 */
+/** 문제 수정 저장 (answer는 1-based로 입력받아 0-based answer_idx로 저장). image·table_data 있으면 해당 필드도 반영 */
 export async function updateQuestionInFirestore(
   certCode: string,
   qId: string,
@@ -119,6 +119,8 @@ export async function updateQuestionInFirestore(
     wrong_feedback?: Record<string, string>;
     /** 이미지 필요 시 파일명(예: q_id.png), 불필요 시 null */
     image?: string | null;
+    /** 문제 본문 표: HTML 문자열 또는 { headers, rows } 또는 null */
+    table_data?: string | { headers: string[]; rows: string[][] } | null;
   }
 ): Promise<void> {
   const ref = getQuestionDocRef(certCode, qId);
@@ -135,6 +137,9 @@ export async function updateQuestionInFirestore(
   };
   if (payload.image !== undefined) {
     updateData.image = payload.image ?? null;
+  }
+  if (payload.table_data !== undefined) {
+    updateData.table_data = payload.table_data ?? null;
   }
   await updateDoc(ref, updateData);
 }
@@ -156,6 +161,13 @@ export async function uploadQuestionImage(
     await updateDoc(docRef, { image: url });
   }
   return url;
+}
+
+/** 문제 문서에서 이미지 필드만 null로 초기화 (이미지 삭제) */
+export async function clearQuestionImage(certCode: string, qId: string): Promise<void> {
+  const docRef = getQuestionDocRef(certCode, qId);
+  if (!docRef) return;
+  await updateDoc(docRef, { image: null });
 }
 
 /** Storage에 이미지 존재 여부 확인 (문제 doc의 image 필드 또는 동일 경로) */

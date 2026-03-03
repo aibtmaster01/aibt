@@ -6,6 +6,7 @@ import { RichText } from '../components/RichText';
 import { to1BasedAnswer } from '../utils/questionUtils';
 import { getCertificationInfo } from '../services/gradingService';
 import { CERTIFICATIONS } from '../constants';
+import { APP_BRAND } from '../config/brand';
 import type { RoundMemo } from './Quiz';
 
 export interface QuizAnswerRecord {
@@ -74,7 +75,7 @@ const GRADE_CONFIG: Record<
   },
   need_much_effort: {
     headline: '끝까지 풀어낸 끈기, 합격의 시작입니다! ✨',
-    guide: '조급함은 잠시 내려두셔도 좋습니다.\n당신의 점수가 합격선에 닿을 때까지, **합격해**가 끝까지 함께 훈련할게요.',
+    guide: `조급함은 잠시 내려두셔도 좋습니다.\n당신의 점수가 합격선에 닿을 때까지, **${APP_BRAND}**이 끝까지 함께 훈련할게요.`,
     ctaLabel: '약점 집중 훈련하기',
   },
 };

@@ -23,6 +23,7 @@ import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocu
 import { logClientError } from './services/errorLogService';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
+import { canResend, recordResend } from './utils/verificationResendLimit';
 
 type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin' | '/admin/certs' | '/admin/questions' | '/admin/billing';
 type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
@@ -57,6 +58,7 @@ const App: React.FC = () => {
   const [pendingCheckoutCertId, setPendingCheckoutCertId] = useState<string | null>(null);
   /** 결제 화면: 페이지 대신 대형 모달로 표시 (문제 풀이 중 이탈 없이 결제 가능) */
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showCouponModal, setShowCouponModal] = useState(false);
   /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
@@ -88,6 +90,10 @@ const App: React.FC = () => {
     type: 'subject_strength' | 'weak_type' | 'weak_concept';
     certId: string;
   } | null>(null);
+
+  useEffect(() => {
+    document.title = `${APP_BRAND} - 합격으로 가는 가장 빠른 길`;
+  }, []);
 
   /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
   useEffect(() => {
@@ -835,6 +841,8 @@ const App: React.FC = () => {
                 certId={selectedCertId || undefined}
                 onBack={() => setShowCheckoutModal(false)}
                 onComplete={handleCheckoutComplete}
+                userEmail={user?.email}
+                userId={user?.id}
               />
             </div>
           </div>
@@ -849,7 +857,7 @@ const App: React.FC = () => {
         <div className="w-16 h-16 rounded-2xl bg-[#99ccff] flex items-center justify-center mb-6">
           <Monitor className="w-8 h-8 text-[#1e56cd]" />
         </div>
-        <h1 className="text-xl font-bold text-slate-900 mb-2">MVP 버전은 PC에 최적화되었습니다</h1>
+        <h1 className="text-xl font-bold text-slate-900 mb-2">{APP_BRAND}은 PC에 최적화되었습니다</h1>
         <p className="text-slate-600 text-sm">PC로 학습해 주세요.</p>
       </div>
     );
@@ -887,7 +895,11 @@ const App: React.FC = () => {
           currentPath={route}
           onNavigate={navigate}
           onLogout={handleLogout}
+          onOpenCoupon={FEATURE_COUPON ? () => setShowCouponModal(true) : undefined}
         />
+        {showCouponModal && (
+          <CouponModal onClose={() => setShowCouponModal(false)} />
+        )}
         <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
           {user && user.is_verified === false && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
@@ -979,10 +991,16 @@ const App: React.FC = () => {
                 disabled={!resendPassword.trim() || resendLoading}
                 onClick={async () => {
                   if (!resendPassword.trim() || !user?.email) return;
+                  const limit = canResend();
+                  if (!limit.allowed) {
+                    setResendError(limit.message ?? '잠시 후 다시 시도해 주세요.');
+                    return;
+                  }
                   setResendLoading(true);
                   setResendError(null);
                   try {
                     await resendVerificationEmail(user.email, resendPassword.trim());
+                    recordResend();
                     setShowResendVerificationModal(false);
                     setResendPassword('');
                     alert('인증 메일을 발송했습니다. 받은편지함과 스팸함을 확인해주세요.');

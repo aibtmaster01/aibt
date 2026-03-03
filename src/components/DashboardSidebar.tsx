@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
-import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, CreditCard } from "lucide-react";
+import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, CreditCard, Ticket } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../constants";
+import { APP_BRAND, FEATURE_COUPON } from "../config/brand";
 import { getCertDisplayName } from "../services/gradingService";
 import { useAllCertificationInfos } from "../hooks/useCertificationInfo";
 import type { User } from "../types";
@@ -18,6 +19,8 @@ export interface DashboardSidebarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
   onLogout?: () => void;
+  /** 베타 전용: 쿠폰 입력 모달 열기 */
+  onOpenCoupon?: () => void;
 }
 
 const certIconMap: Record<string, React.ReactNode> = {
@@ -32,6 +35,7 @@ export function DashboardSidebar({
   currentPath,
   onNavigate,
   onLogout,
+  onOpenCoupon,
 }: DashboardSidebarProps) {
   const [listPopupOpen, setListPopupOpen] = useState(false);
   const [profilePopupOpen, setProfilePopupOpen] = useState(false);
@@ -79,7 +83,7 @@ export function DashboardSidebar({
         onClick={() => onNavigate('/')}
         className="text-white font-black text-sm md:text-base mb-6 md:mb-8 tracking-tight"
       >
-        합격해
+        {APP_BRAND}
       </button>
       {/* 프로필 영역 - 로그인 시에만 표시, 클릭 시 계정설정/로그아웃 팝업 */}
       {user && (
@@ -105,6 +109,18 @@ export function DashboardSidebar({
               >
                 <Settings size={16} /> 계정설정
               </button>
+              {FEATURE_COUPON && onOpenCoupon && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfilePopupOpen(false);
+                    onOpenCoupon();
+                  }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 rounded-lg"
+                >
+                  <Ticket size={16} /> 쿠폰 등록
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {

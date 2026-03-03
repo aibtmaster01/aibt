@@ -16,7 +16,7 @@
 
 | [examService.ts](./examService.ts) | **시험 문제 조회** — Round 1~3: `static_exams` 고정 문제. Round 6+: aiRoundCurationService 호출(stats 기반·실전 대비형/약점 강화형 모드). 회원 등급별 마스킹, 약점 다시풀기(stats.problem_type_stats). |
 
-| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | **Round 6+ 맞춤 큐레이션** — `exam_results`로 맞춘 문제 제외·틀린 문제(Zone A) 우선, 전체 풀에서 과목별 배분 후 80문제 생성. `getAnalysisContext`·`getTopWeakTags`는 stats(core_concept_stats, tag_stats) 기반. |
+| [aiRoundCurationService.ts](./aiRoundCurationService.ts) | **Round 6+ 맞춤형 큐레이션** — 4과목×20문항(`selectQuestionIdsBy3ZonesPerSubject`). 과목별 `selectForSubject`: 1구역 커버리지 12문항 + 2구역 약점 집중 8문항, `users/{uid}/stats/{certCode}` 기반. `getAnalysisContext`·`getTopWeakTags`는 stats 기반. |
 
 | [statsService.ts](./statsService.ts) | **대시보드 통계** — `users/{uid}/stats/{certCode}` 및 `exam_results` 조회 후 UI용 포맷 변환(레이더, 과목별 점수, 약점 Top2, 최근 시험 트렌드 등). |
 

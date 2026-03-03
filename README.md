@@ -37,7 +37,7 @@ pip install -r requirements.txt
 | `backend/` | Python 스크립트 (시드, 문제 업로드, AI-Gen 파이프라인) |
 | `docs/` | 설계·정책·가이드 문서 |
 
-상세 구조는 **`docs/디렉터리_구조_가이드.md`** 참고.
+상세 문서·목록은 **`docs/README.md`** 참고.
 
 ## 정책·설계 문서 (docs/)
 

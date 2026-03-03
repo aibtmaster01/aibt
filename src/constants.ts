@@ -75,3 +75,21 @@ export const EXAM_ROUNDS: ExamRound[] = [
   { id: 'r3c2', certId: 'c2', round: 3, title: '실전 모의고사', description: '실전 대비 고정 문제', isPremium: true, questionCount: 20, type: 'practice' },
   { id: 'r7', certId: 'c3', round: 1, title: '연습 모의고사', description: 'ADsP 기초 실력 점검', isPremium: false, questionCount: 5, type: 'diagnostic' },
 ];
+
+/** 나의 학습 기록·모의고사 목록 표시용 라벨 (연습/응용/실전/약점공략/과목강화/취약유형 등) */
+const SPECIAL_ROUND_LABELS: Record<string, string> = {
+  __subject_strength__: '과목 강화 학습',
+  __weak_type_focus__: '취약 유형 집중 학습',
+  __weak_concept_focus__: '취약 개념 집중 학습',
+  weakness_retry: '약점 공략 재응시',
+};
+
+export function getRoundLabel(roundId: string | null | undefined, _certId?: string): string {
+  if (!roundId) return '모의고사';
+  const special = SPECIAL_ROUND_LABELS[roundId];
+  if (special) return special;
+  const round = EXAM_ROUNDS.find((r) => r.id === roundId);
+  if (!round) return `${roundId}회차`;
+  if (round.round <= 3) return round.title;
+  return `약점 공략 모의고사 ${round.round - 5}회`;
+}

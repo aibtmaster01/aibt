@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Database, Code, FileText, Plus } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../../constants";
+import { APP_BRAND_LANDING } from "../../config/brand";
 import { getCertDisplayName } from "../../services/gradingService";
 import { useAllCertificationInfos } from "../../hooks/useCertificationInfo";
 
@@ -19,7 +20,7 @@ export function EmptyState({ onStartCert }: EmptyStateProps) {
   return (
     <div className="mx-auto max-w-4xl px-5 py-16">
       <p className="mb-8 text-center text-3xl font-black tracking-tight text-[#1e56cd] md:text-4xl">
-        MVP 버전
+        {APP_BRAND_LANDING}
       </p>
       <div className="mb-10 text-center">
         <h1 className="text-2xl font-black text-foreground">

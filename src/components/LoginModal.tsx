@@ -1,7 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { APP_BRAND } from '../config/brand';
 import { AuthError } from '../services/authService';
+import { canResend, recordResend, RESEND_COOLDOWN_SEC } from '../utils/verificationResendLimit';
 
 export interface LoginModalProps {
   initialMode?: 'login' | 'signup';
@@ -90,19 +92,59 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
+  const [resendCooldownSec, setResendCooldownSec] = useState(0);
+  const resendCooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startResendCooldown = () => {
+    if (resendCooldownRef.current) clearInterval(resendCooldownRef.current);
+    setResendCooldownSec(RESEND_COOLDOWN_SEC);
+    resendCooldownRef.current = setInterval(() => {
+      setResendCooldownSec((s) => {
+        if (s <= 1) {
+          if (resendCooldownRef.current) {
+            clearInterval(resendCooldownRef.current);
+            resendCooldownRef.current = null;
+          }
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (resendCooldownRef.current) {
+        clearInterval(resendCooldownRef.current);
+        resendCooldownRef.current = null;
+      }
+    };
+  }, []);
+
   const handleResendVerification = async () => {
     if (!email.trim() || !password) {
       setError('이메일과 비밀번호를 입력한 뒤 재발송해주세요.');
       return;
     }
+    const limit = canResend();
+    if (!limit.allowed) {
+      setError(limit.message ?? '잠시 후 다시 시도해 주세요.');
+      return;
+    }
+    if (resendCooldownSec > 0) return;
     setResendLoading(true);
     setError('');
     setSuccessMessage('');
     try {
       await resendVerificationEmail(email, password);
+      recordResend();
       setSuccessMessage('인증 메일을 다시 보냈습니다. 메일함을 확인해주세요.');
+      startResendCooldown();
     } catch (err) {
       setError(err instanceof Error ? err.message : '재발송에 실패했습니다.');
+      if (err instanceof AuthError && err.code === 'TOO_MANY_REQUESTS') {
+        startResendCooldown();
+      }
     } finally {
       setResendLoading(false);
     }
@@ -130,7 +172,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <br />
               가장 빠른 길,
               <br />
-              합격해
+              {APP_BRAND}
             </h2>
             <ul className="space-y-4 text-slate-300">
               <li className="flex items-center gap-3">
@@ -229,21 +271,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             {(error && (error.includes('인증') || error.includes('이메일 인증'))) && mode === 'login' && (
               <button
                 type="button"
-                disabled={resendLoading}
+                disabled={resendLoading || resendCooldownSec > 0}
                 onClick={handleResendVerification}
                 className="w-full mt-2 py-2.5 text-sm font-bold text-[#0034d3] border border-[#0034d3] rounded-xl hover:bg-[#0034d3]/5 disabled:opacity-50"
               >
-                {resendLoading ? '재발송 중...' : '인증 메일 재발송'}
+                {resendLoading ? '재발송 중...' : resendCooldownSec > 0 ? `${resendCooldownSec}초 후 재발송` : '인증 메일 재발송'}
               </button>
             )}
             {successMessage && successMessage.includes('인증 메일') && (
               <button
                 type="button"
-                disabled={resendLoading}
+                disabled={resendLoading || resendCooldownSec > 0}
                 onClick={handleResendVerification}
                 className="w-full mt-2 py-2.5 text-sm font-bold text-[#0034d3] border border-[#0034d3] rounded-xl hover:bg-[#0034d3]/5 disabled:opacity-50"
               >
-                {resendLoading ? '재발송 중...' : '인증 메일 재발송'}
+                {resendLoading ? '재발송 중...' : resendCooldownSec > 0 ? `${resendCooldownSec}초 후 재발송` : '인증 메일 재발송'}
               </button>
             )}
             <div className="relative my-6">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   getRoundsForCert,
   getSubjectsForCertAndRound,
@@ -7,13 +7,33 @@ import {
   fetchQuestionsForAdmin,
   updateQuestionInFirestore,
   uploadQuestionImage,
+  clearQuestionImage,
 } from '../services/adminQuestionService';
 import { getQuestionIndexFromCache, syncQuestionIndex, type QuestionIndexItem } from '../services/db/localCacheDB';
 import { CERTIFICATIONS } from '../constants';
+import { RichText } from '../components/RichText';
 import type { Question } from '../types';
 
 const PAGE_SIZE = 20;
 const CERT_QUESTIONS = ['BIGDATA'] as const; // 현재 문제 데이터 있는 자격증만
+
+/** 지문/해설 검색용: HTML·LaTeX 제거, 엔티티 복원, 공백 정규화. "11</b>회", "11 회" 등도 "11회" 검색에 매칭 */
+function normalizeTextForSearch(html: string): string {
+  if (!html || typeof html !== 'string') return '';
+  let s = html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\$\$[^$]*\$\$/g, ' ')
+    .replace(/\$[^$]*\$/g, ' ')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+  s = s.replace(/(\d)\s+([가-힣a-zA-Z])/g, '$1$2');
+  return s.toLowerCase();
+}
 
 export function AdminQuestions() {
   const [certCode, setCertCode] = useState<string>(CERT_QUESTIONS[0]);
@@ -32,8 +52,14 @@ export function AdminQuestions() {
   const [viewQid, setViewQid] = useState<string | null>(null);
   const [editQid, setEditQid] = useState<string | null>(null);
   const [uploadQid, setUploadQid] = useState<string | null>(null);
+  const [imageDeletingQid, setImageDeletingQid] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [searchTarget, setSearchTarget] = useState<'지문' | '해설'>('지문');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [keywordFilteredQids, setKeywordFilteredQids] = useState<string[] | null>(null);
+  const [keywordSearching, setKeywordSearching] = useState(false);
+  const [exportingJson, setExportingJson] = useState(false);
 
   const certOptions = useMemo(
     () => CERTIFICATIONS.filter((c) => CERT_QUESTIONS.includes(c.code as typeof CERT_QUESTIONS[number])),
@@ -74,6 +100,7 @@ export function AdminQuestions() {
         ]);
         setAllQids(qids);
         setCurrentPage(1);
+        setKeywordFilteredQids(null);
         const items = await getQuestionIndexFromCache(certCode);
         setIndexItems(items);
         setFilteredByImageQids(null);
@@ -84,10 +111,47 @@ export function AdminQuestions() {
     [certCode, round, subject, subjects.length]
   );
 
+  const runKeywordSearch = useCallback(async () => {
+    const kw = searchKeyword.trim();
+    if (!searched || allQids.length === 0) return;
+    if (!kw) {
+      setKeywordFilteredQids(null);
+      setCurrentPage(1);
+      return;
+    }
+    setKeywordSearching(true);
+    try {
+      const batchSize = 100;
+      const matched: string[] = [];
+      const field = searchTarget === '지문' ? 'content' : 'explanation';
+      const normalizedKw = normalizeTextForSearch(kw);
+      if (!normalizedKw) {
+        setKeywordFilteredQids(null);
+        setCurrentPage(1);
+        setKeywordSearching(false);
+        return;
+      }
+      for (let i = 0; i < allQids.length; i += batchSize) {
+        const chunk = allQids.slice(i, i + batchSize);
+        const questions = await fetchQuestionsForAdmin(certCode, chunk);
+        questions.forEach((q) => {
+          const raw = (searchTarget === '지문' ? q.content : q.explanation) ?? '';
+          const normalized = normalizeTextForSearch(raw);
+          if (normalized.includes(normalizedKw)) matched.push(q.id);
+        });
+      }
+      setKeywordFilteredQids(matched);
+      setCurrentPage(1);
+    } finally {
+      setKeywordSearching(false);
+    }
+  }, [certCode, searchKeyword, searchTarget, searched, allQids]);
+
   const displayQids = useMemo(() => {
+    const base = keywordFilteredQids ?? allQids;
     if (onlyWithImage && filteredByImageQids) return filteredByImageQids;
-    return allQids;
-  }, [allQids, onlyWithImage, filteredByImageQids]);
+    return base;
+  }, [allQids, onlyWithImage, filteredByImageQids, keywordFilteredQids]);
 
   const totalPages = Math.max(1, Math.ceil(displayQids.length / PAGE_SIZE));
   const pageQids = useMemo(() => {
@@ -128,7 +192,7 @@ export function AdminQuestions() {
   const editQuestion = editQid ? pageQuestions.find((q) => q.id === editQid) : null;
 
   return (
-    <div className="p-6 md:p-8 max-w-6xl">
+    <div className="p-6 md:p-8 max-w-[94rem]">
       <h1 className="text-2xl font-black text-slate-900 mb-6">문제 관리</h1>
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -182,14 +246,96 @@ export function AdminQuestions() {
             <span className="text-sm font-medium text-slate-700">이미지 문제만 모아보기</span>
           </label>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <span className="text-sm font-bold text-slate-600">4. 지문/해설 검색</span>
+          <select
+            value={searchTarget}
+            onChange={(e) => setSearchTarget(e.target.value as '지문' | '해설')}
+            className="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white min-w-[5rem]"
+          >
+            <option value="지문">지문</option>
+            <option value="해설">해설</option>
+          </select>
+          <input
+            type="text"
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            placeholder="검색어 입력"
+            className="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white min-w-[12rem] max-w-[20rem] placeholder:text-slate-400"
+          />
+          <button
+            type="button"
+            onClick={runKeywordSearch}
+            disabled={!searched || allQids.length === 0 || keywordSearching}
+            className="px-4 py-2 rounded-xl bg-slate-600 text-white font-semibold text-sm hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {keywordSearching ? '검색 중...' : '키워드 검색'}
+          </button>
+          {keywordFilteredQids !== null && (
+            <span className="text-xs text-slate-500">
+              {searchKeyword.trim() ? `"${searchKeyword.trim()}" ${searchTarget} 검색: ${keywordFilteredQids.length}건` : ''}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3">
           <button
             type="button"
             onClick={runSearch}
             disabled={loading || subjects.length === 0}
-            className="flex-1 py-3 rounded-xl bg-[#0034d3] text-white font-bold text-sm hover:bg-[#003087] disabled:opacity-50"
+            className="flex-1 min-w-[120px] py-3 rounded-xl bg-[#0034d3] text-white font-bold text-sm hover:bg-[#003087] disabled:opacity-50"
           >
             검색
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!searched || displayQids.length === 0) return;
+              setExportingJson(true);
+              try {
+                const batchSize = 100;
+                const out: Record<string, unknown> = {};
+                for (let i = 0; i < displayQids.length; i += batchSize) {
+                  const chunk = displayQids.slice(i, i + batchSize);
+                  const questions = await fetchQuestionsForAdmin(certCode, chunk);
+                  questions.forEach((q) => {
+                    const answer1 = q.answer ?? 1;
+                    const opts = q.options ?? [];
+                    const answerIdx = Math.max(0, Math.min(opts.length - 1, answer1 - 1));
+                    out[q.id] = {
+                      question_text: q.content ?? '',
+                      options: opts,
+                      answer_idx: answerIdx,
+                      explanation: q.explanation ?? '',
+                      wrong_feedback: q.wrongFeedback ?? undefined,
+                      image: q.imageUrl ?? undefined,
+                      table_data: q.tableData ?? undefined,
+                      core_concept: q.core_concept ?? undefined,
+                      subject_number: q.subject_number ?? undefined,
+                      problem_types: q.problem_types ?? undefined,
+                      tags: q.tags ?? [],
+                      trend: q.trend ?? undefined,
+                      difficulty_level: q.difficulty_level ?? undefined,
+                      core_id: q.core_id ?? undefined,
+                      sub_core_id: q.sub_core_id ?? undefined,
+                      round: q.round ?? undefined,
+                    };
+                  });
+                }
+                const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `questions_export_${certCode}_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } finally {
+                setExportingJson(false);
+              }
+            }}
+            disabled={!searched || displayQids.length === 0 || exportingJson}
+            className="shrink-0 px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {exportingJson ? '내보내는 중...' : 'JSON 내보내기'}
           </button>
           <button
             type="button"
@@ -210,32 +356,43 @@ export function AdminQuestions() {
           <table className="w-full text-left">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-16">인덱스</th>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-28">고유값</th>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-40">이미지</th>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-28">이미지 보기</th>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-28">문제보기</th>
-                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-28">문제수정</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-12">No</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase min-w-[160px] w-40">고유값</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-28 max-w-[120px]">개념명</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-32">이미지</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-14">테이블</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">이미지</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">문제보기</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">문제수정</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!searched ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">자격증·회차·과목을 선택한 뒤 <strong>검색</strong> 버튼을 눌러 주세요.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">자격증·회차·과목을 선택한 뒤 <strong>검색</strong> 버튼을 눌러 주세요.</td></tr>
               ) : loading && pageQuestions.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">로딩 중...</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">로딩 중...</td></tr>
               ) : pageQuestions.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">조회된 문제가 없습니다.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">조회된 문제가 없습니다.</td></tr>
               ) : (
                 pageQuestions.map((q, idx) => {
                   const rowIndex = (currentPage - 1) * PAGE_SIZE + idx + 1;
                   return (
                     <tr key={q.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3 text-sm text-slate-600">{rowIndex}</td>
-                      <td className="px-4 py-3 font-mono text-sm text-slate-900 max-w-[120px] truncate" title={q.id}>{q.id}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 font-mono text-sm text-slate-900 min-w-[140px] max-w-[220px] truncate" title={q.id}>{q.id}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700 max-w-[110px] truncate" title={q.core_concept ?? ''}>
+                        {q.core_concept ?? '—'}
+                      </td>
+                      <td className="px-2 py-3">
                         <ImageNameCell imageValue={q.imageUrl} />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-3 text-center">
+                        {(() => {
+                          const hasTable = q.tableData != null && (typeof q.tableData === 'string' ? q.tableData.trim() !== '' : true);
+                          return hasTable ? <span className="text-emerald-600 font-bold">O</span> : <span className="text-slate-400 font-medium">X</span>;
+                        })()}
+                      </td>
+                      <td className="px-2 py-3">
                         <ImageViewCell
                           qId={q.id}
                           imageUrl={q.imageUrl}
@@ -247,11 +404,21 @@ export function AdminQuestions() {
                               if (nq) setPageQuestions((prev) => prev.map((x) => (x.id === q.id ? nq : x)));
                             });
                           }}
-                          onShowImage={(url) => setImagePreviewUrl(url)}
+                          onClearImage={async () => {
+                            setImageDeletingQid(q.id);
+                            try {
+                              await clearQuestionImage(certCode, q.id);
+                              const [nq] = await fetchQuestionsForAdmin(certCode, [q.id]);
+                              if (nq) setPageQuestions((prev) => prev.map((x) => (x.id === q.id ? nq : x)));
+                            } finally {
+                              setImageDeletingQid(null);
+                            }
+                          }}
                           uploading={uploadQid === q.id}
+                          deleting={imageDeletingQid === q.id}
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-3">
                         <button
                           type="button"
                           onClick={() => setViewQid(q.id)}
@@ -260,7 +427,7 @@ export function AdminQuestions() {
                           문제보기
                         </button>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-3">
                         <button
                           type="button"
                           onClick={() => setEditQid(q.id)}
@@ -348,8 +515,7 @@ function ImageNameCell({ imageValue }: { imageValue?: string | null }) {
 }
 
 /**
- * 이미지 보기 열: image가 null이면 회색 "null".
- * 이미지 필요 시 스토리지에 파일 있으면 파란 "이미지보기", 없으면 빨간 "업로드필요".
+ * 이미지 열: 값이 Firebase Storage URL(http/https)이 아니면 "업로드필요", Storage URL이면 "이미지삭제".
  */
 function ImageViewCell({
   qId,
@@ -358,8 +524,9 @@ function ImageViewCell({
   onUploadStart,
   onUploadEnd,
   onRefresh,
-  onShowImage,
+  onClearImage,
   uploading,
+  deleting,
 }: {
   qId: string;
   imageUrl?: string | null;
@@ -367,8 +534,9 @@ function ImageViewCell({
   onUploadStart: () => void;
   onUploadEnd: () => void;
   onRefresh: () => void;
-  onShowImage: (url: string) => void;
+  onClearImage?: () => Promise<void>;
   uploading: boolean;
+  deleting?: boolean;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -383,44 +551,32 @@ function ImageViewCell({
       e.target.value = '';
     }
   };
-  if (imageUrl == null || imageUrl === '') {
-    return <span className="text-sm text-slate-400">null</span>;
-  }
-  const hasFileInStorage = imageUrl.startsWith('http');
-  if (hasFileInStorage) {
+  const isStorageUrl = typeof imageUrl === 'string' && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
+  if (!isStorageUrl) {
     return (
-      <button
-        type="button"
-        onClick={() => onShowImage(imageUrl)}
-        className="text-sm font-medium text-[#0034d3] hover:underline"
-      >
-        이미지보기
-      </button>
+      <div className="flex items-center gap-2">
+        {uploading ? (
+          <span className="text-xs text-slate-500">업로드 중...</span>
+        ) : (
+          <>
+            <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+            <button type="button" onClick={() => inputRef.current?.click()} className="text-sm font-medium text-red-600 hover:underline">
+              업로드필요
+            </button>
+          </>
+        )}
+      </div>
     );
   }
   return (
-    <div className="flex items-center gap-2">
-      {uploading ? (
-        <span className="text-xs text-slate-500">업로드 중...</span>
-      ) : (
-        <>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleUpload}
-          />
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            className="text-sm font-medium text-red-600 hover:underline"
-          >
-            업로드필요
-          </button>
-        </>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={() => onClearImage?.()}
+      disabled={deleting}
+      className="text-sm font-medium text-slate-600 hover:text-red-600 hover:underline disabled:opacity-50"
+    >
+      {deleting ? '삭제 중...' : '이미지삭제'}
+    </button>
   );
 }
 
@@ -436,33 +592,75 @@ function ViewModal({
   const answerDisplay = question.answer ?? 1;
   const stats = indexItem?.stats ? Object.entries(indexItem.stats) : [];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-4">
-          <h2 className="text-lg font-black text-slate-900">문제보기</h2>
+          <h2 className="text-lg font-black text-slate-900 font-mono truncate max-w-[calc(100%-4rem)]" title={question.id}>{question.id}</h2>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">닫기</button>
         </div>
         <div className="space-y-4 text-sm">
           <div>
             <p className="font-bold text-[#0034d3] mb-1">문제</p>
-            <p className="text-slate-900 whitespace-pre-wrap">{question.content}</p>
+            <div className="text-slate-900 leading-relaxed [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded [&_.katex]:text-[inherit]">
+              <RichText key={`q-${question.id}`} content={question.content ?? ''} as="div" />
+            </div>
           </div>
+          {question.tableData != null && (
+            <div>
+              <p className="font-bold text-[#0034d3] mb-1">표</p>
+              <div className="w-full overflow-x-auto [&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:text-sm [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2">
+                {typeof question.tableData === 'string' ? (
+                  <RichText content={question.tableData} as="div" />
+                ) : Array.isArray(question.tableData?.headers) && Array.isArray(question.tableData?.rows) ? (
+                  <table>
+                    <thead>
+                      <tr>
+                        {question.tableData.headers.map((h, i) => (
+                          <th key={i}><RichText content={h} as="span" /></th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {question.tableData.rows.map((row, ri) => (
+                        <tr key={ri}>
+                          {row.map((cell, ci) => (
+                            <td key={ci}><RichText content={cell} as="span" /></td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : null}
+              </div>
+            </div>
+          )}
+          {question.imageUrl && (
+            <div>
+              <p className="font-bold text-[#0034d3] mb-1">이미지</p>
+              <img src={question.imageUrl} alt="문제" className="max-w-full max-h-64 object-contain rounded-lg border border-slate-200" />
+            </div>
+          )}
           <div>
             <p className="font-bold text-[#0034d3] mb-1">보기</p>
             <ul className="list-decimal list-inside space-y-1 text-slate-800">
               {question.options?.map((o, i) => (
-                <li key={i}>{o}</li>
+                <li key={i}><RichText content={o} as="span" /></li>
               ))}
             </ul>
           </div>
           <div>
             <p className="font-bold text-[#0034d3] mb-1">정답</p>
-            <p className="text-slate-900">{answerDisplay}번 (인덱스+1)</p>
+            <p className="text-slate-900">{Math.min(4, Math.max(1, answerDisplay))}번</p>
           </div>
           {question.explanation && (
             <div>
               <p className="font-bold text-[#0034d3] mb-1">해설</p>
-              <p className="text-slate-800 whitespace-pre-wrap">{question.explanation}</p>
+              <div className="text-slate-800 leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_td]:border [&_td]:border-slate-300 [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:rounded">
+                <RichText content={question.explanation} as="div" />
+              </div>
             </div>
           )}
           {question.wrongFeedback && Object.keys(question.wrongFeedback).length > 0 && (
@@ -470,9 +668,19 @@ function ViewModal({
               <p className="font-bold text-[#0034d3] mb-1">오답 피드백</p>
               <ul className="space-y-1 text-slate-800">
                 {Object.entries(question.wrongFeedback).map(([key, val]) => (
-                  <li key={key}><strong>{key}번:</strong> {val}</li>
+                  <li key={key}><strong>{key}번:</strong> <RichText content={val} as="span" /></li>
                 ))}
               </ul>
+            </div>
+          )}
+          {(question.core_concept || (question.problem_types?.length ?? 0) > 0 || (question.tags?.length ?? 0) > 0) && (
+            <div>
+              <p className="font-bold text-[#0034d3] mb-1">개념 · 유형 · 태그</p>
+              <div className="space-y-2 text-slate-800 text-sm">
+                <p><span className="text-slate-500">개념:</span> {question.core_concept ?? '—'}</p>
+                <p><span className="text-slate-500">유형:</span> {(question.problem_types?.length ? question.problem_types.join(', ') : null) ?? '—'}</p>
+                <p><span className="text-slate-500">태그:</span> {(question.tags?.length ? question.tags.join(', ') : null) ?? '—'}</p>
+              </div>
             </div>
           )}
           {stats.length > 0 && (
@@ -513,6 +721,13 @@ function EditModal({
   const [explanation, setExplanation] = useState(question.explanation ?? '');
   const [wrong_feedback, setWrong_feedback] = useState<Record<string, string>>(question.wrongFeedback ?? {});
   const [imageRequired, setImageRequired] = useState<boolean>(hasImageValue);
+  const [tableData, setTableData] = useState<Question['tableData']>(question.tableData ?? null);
+  const [tableDataRaw, setTableDataRaw] = useState<string>(() => {
+    const t = question.tableData;
+    if (t == null) return '';
+    if (typeof t === 'string') return t;
+    return JSON.stringify(t, null, 2);
+  });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -522,6 +737,9 @@ function EditModal({
     setExplanation(question.explanation ?? '');
     setWrong_feedback(question.wrongFeedback ?? {});
     setImageRequired(question.imageUrl != null && question.imageUrl !== '');
+    setTableData(question.tableData ?? null);
+    const t = question.tableData;
+    setTableDataRaw(t == null ? '' : typeof t === 'string' ? t : JSON.stringify(t, null, 2));
   }, [question.id]);
 
   const handleSave = async () => {
@@ -552,8 +770,8 @@ function EditModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-6">
         <div className="flex justify-between items-start mb-4">
           <h2 className="text-lg font-black text-slate-900">문제수정 · {question.id}</h2>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">닫기</button>

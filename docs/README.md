@@ -31,15 +31,11 @@
 
 ---
 
-## 부가 문서 (유지)
+## 부가 문서
 
 | 문서 | 용도 |
 |------|------|
-| [디렉터리_구조_가이드](./디렉터리_구조_가이드.md) | 프로젝트 구조·파일 역할 |
-| [마이페이지_디자인_기능명세서](./마이페이지_디자인_기능명세서.md) | 마이페이지 UI 설계 |
-| [메인화면_디자인_기능명세서](./메인화면_디자인_기능명세서.md) | 메인 화면 설계 |
-| [AIBT_마스터_리포트_예창패_요청사항](./AIBT_마스터_리포트_예창패_요청사항.md) | 예창패 제출용 상세 스펙 |
 | [INDEX_AND_SUBCORE_CHECKLIST](./INDEX_AND_SUBCORE_CHECKLIST.md) | 인덱스·서브코어 점검 |
-| [FIREBASE_READ_AUDIT](./FIREBASE_READ_AUDIT.md) | Firestore 읽기 감사 |
 | [FIREBASE_EMAIL_VERIFICATION_TEMPLATE](./FIREBASE_EMAIL_VERIFICATION_TEMPLATE.md) | 이메일 인증 템플릿 |
 | [STORAGE_CORS_SETUP](./STORAGE_CORS_SETUP.md) | Storage CORS 설정 |
+| [외부검토용_기술구조_가이드](./외부검토용_기술구조_가이드.md) | 기술 구조 개요 |

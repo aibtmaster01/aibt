@@ -8,8 +8,10 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   sendEmailVerification,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
+  type User as FirebaseAuthUser,
 } from 'firebase/auth';
 import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -194,12 +196,43 @@ export async function loginWithEmailPassword(email: string, password: string): P
 
 /** 이메일 인증 메일 재발송 (로그인 후 발송이므로 현재 비밀번호 필요). 메일 제목/본문은 Firebase Console 템플릿에서 설정. */
 export async function resendVerificationEmail(email: string, password: string): Promise<void> {
-  const credential = await signInWithEmailAndPassword(auth, email, password);
+  let credential: { user: FirebaseAuthUser };
+  try {
+    credential = await signInWithEmailAndPassword(auth, email, password);
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code;
+    if (code === 'auth/too-many-requests') {
+      throw new AuthError(
+        '재발송은 90초 간격으로 최대 5번까지 가능합니다. 잠시 후 다시 시도해 주세요.',
+        'TOO_MANY_REQUESTS'
+      );
+    }
+    throw err;
+  }
   if (credential.user.emailVerified) {
     await signOut(auth);
     throw new AuthError('이미 인증된 이메일입니다. 로그인해주세요.', 'INVALID_CREDENTIALS');
   }
-  await sendEmailVerification(credential.user);
+  try {
+    const continueUrl =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'https://aibt-99bc6.web.app';
+    await sendEmailVerification(credential.user, {
+      url: continueUrl,
+      handleCodeInApp: true,
+    });
+  } catch (err: unknown) {
+    await signOut(auth);
+    const code = (err as { code?: string })?.code;
+    if (code === 'auth/too-many-requests') {
+      throw new AuthError(
+        '재발송은 90초 간격으로 최대 5번까지 가능합니다. 잠시 후 다시 시도해 주세요.',
+        'TOO_MANY_REQUESTS'
+      );
+    }
+    throw err;
+  }
   await signOut(auth);
 }
 

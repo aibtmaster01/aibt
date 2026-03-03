@@ -115,7 +115,7 @@ interface LocalCacheDBSchema extends DBSchema {
   };
 }
 
-const DB_NAME = 'aibt_local_cache';
+const DB_NAME = 'finset_local_cache';
 const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<LocalCacheDBSchema>> | null = null;

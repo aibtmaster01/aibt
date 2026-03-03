@@ -17,15 +17,7 @@ python3 seed_certification_info.py
 ## backend/BIGDATA (빅데이터 자격증 데이터)
 
 - **core_concepts_list.json** — 코어컨셉 목록 (시드·업로드 시 사용)
-- **1000_final.json** — 문제 1000제 (레거시 업로드 소스)
 - **bigdata_certification_config.py** — 자격증 설정 (과목, 합격 기준, core_concepts 로드)
-- **upload_1000.py** — 1000제를 Firestore question_pools + static_exams 로 업로드
-
-```bash
-cd backend
-python3 BIGDATA/upload_1000.py
-# 확인 후 'DELETE' 입력 시 기존 BIGDATA 데이터 삭제 후 1000_final.json 기준으로 재업로드
-```
 
 ---
 

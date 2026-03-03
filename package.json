@@ -1,13 +1,15 @@
 {
-  "name": "aibt---ai-based-test-platform",
+  "name": "finset-platform",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:beta": "vite build --mode beta",
     "preview": "vite preview",
-    "deploy": "npm run build && firebase deploy --only hosting"
+    "deploy": "npm run build && firebase deploy --only hosting",
+    "deploy:beta": "npm run build:beta && firebase use aibt-beta && firebase deploy --only hosting"
   },
   "dependencies": {
     "idb": "^8.0.0",
