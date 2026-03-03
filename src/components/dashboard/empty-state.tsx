@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Database, Code, FileText, Plus } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../../constants";
-import { APP_BRAND_LANDING } from "../../config/brand";
+import { APP_BRAND_LANDING, APP_BRAND } from "../../config/brand";
 import { getCertDisplayName } from "../../services/gradingService";
 import { useAllCertificationInfos } from "../../hooks/useCertificationInfo";
 
@@ -23,12 +23,27 @@ export function EmptyState({ onStartCert }: EmptyStateProps) {
         {APP_BRAND_LANDING}
       </p>
       <div className="mb-10 text-center">
-        <h1 className="text-2xl font-black text-foreground">
-          나의 학습 대시보드
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          아직 학습 기록이 없습니다. 자격증을 추가하고 시작해보세요.
-        </p>
+        {APP_BRAND === 'AiBT' ? (
+          <>
+            <h1 className="text-2xl font-black text-foreground">
+              베타테스터
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              베타테스트는 현재 빅데이터분석기사 필기 자격증만 제공하고 있습니다.
+              <br />
+              론칭 후 추가될 다양한 자격증을 기대해주세요!
+            </p>
+          </>
+        ) : (
+          <>
+            <h1 className="text-2xl font-black text-foreground">
+              나의 학습 대시보드
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              아직 학습 기록이 없습니다. 자격증을 추가하고 시작해보세요.
+            </p>
+          </>
+        )}
       </div>
 
       <div className="grid gap-5 md:grid-cols-3">

@@ -4,12 +4,21 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const appBrand = (env.VITE_APP_BRAND ?? '').trim() || '핀셋';
     return {
       server: {
         port: 3000,
         host: '0.0.0.0',
       },
-      plugins: [react()],
+      plugins: [
+        react(),
+        {
+          name: 'html-brand',
+          transformIndexHtml(html: string) {
+            return html.replace(/__APP_BRAND__/g, appBrand);
+          },
+        },
+      ],
       define: {},
       resolve: {
         alias: {
