@@ -547,9 +547,11 @@ const App: React.FC = () => {
 
   const handleCheckoutComplete = async () => {
     setPaymentSuccessError(null);
-    if (user && selectedCertId) {
+    // 베타: 결제 모달만 열고 자격증 미선택 시 BIGDATA(c1)로 결제 완료 처리해 열공 모드 개방
+    const certIdToComplete = selectedCertId ?? (FEATURE_COUPON ? CERTIFICATIONS[0]?.id : null);
+    if (user && certIdToComplete) {
       try {
-        await setPaymentComplete(user.id, selectedCertId);
+        await setPaymentComplete(user.id, certIdToComplete);
         await refreshUser();
         setShowCheckoutModal(false);
         setShowPaymentSuccessModal(true);

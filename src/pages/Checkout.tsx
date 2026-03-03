@@ -48,8 +48,9 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
       await redeemBetaCoupon(code, userEmail, userId);
       setCouponSuccess(true);
       setTimeout(() => onComplete(), 1500);
-    } catch {
-      setCouponError('쿠폰 적용 중 오류가 발생했습니다.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '쿠폰 적용 중 오류가 발생했습니다.';
+      setCouponError(message);
     } finally {
       setIsProcessing(false);
     }
