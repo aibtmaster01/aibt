@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_BRAND, FEATURE_COUPON } from '../config/brand';
+
+/** 베타 빌드: 구글 로그인만 노출 (FEATURE_COUPON 또는 AiBT 브랜드) */
+const IS_BETA_GOOGLE_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 import { AuthError, type GoogleRedirectIntent } from '../services/authService';
 import { canResend, recordResend, RESEND_COOLDOWN_SEC } from '../utils/verificationResendLimit';
 
@@ -259,7 +262,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           )}
           <div className="mb-6 text-center">
             <h3 className="text-2xl font-black text-slate-900">
-              {FEATURE_COUPON ? '로그인' : pendingVerification ? '이메일 인증' : mode === 'login' ? '로그인' : '회원가입'}
+              {IS_BETA_GOOGLE_ONLY ? '로그인' : pendingVerification ? '이메일 인증' : mode === 'login' ? '로그인' : '회원가입'}
             </h3>
             {!pendingVerification && (
               <p className="text-slate-400 text-sm mt-1">
@@ -270,7 +273,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             )}
           </div>
 
-          {pendingVerification && !FEATURE_COUPON ? (
+          {pendingVerification && !IS_BETA_GOOGLE_ONLY ? (
             <div className="space-y-4">
               <p className="text-xs font-bold text-slate-500 uppercase mb-1">인증 메일을 보낸 주소</p>
               <p className="text-sm font-medium text-slate-800 break-all rounded-lg bg-slate-100 px-3 py-2.5 border border-slate-200">
@@ -321,7 +324,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 이메일 수정 (다른 주소로 다시 가입)
               </button>
             </div>
-          ) : FEATURE_COUPON ? (
+          ) : IS_BETA_GOOGLE_ONLY ? (
             /* 베타: 구글 로그인만 */
             <div className="space-y-6">
               <p className="text-sm text-slate-600 text-center">
@@ -452,7 +455,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </form>
           )}
           <div className="mt-6 text-center text-sm">
-            {FEATURE_COUPON ? null : mode === 'login' ? (
+            {IS_BETA_GOOGLE_ONLY ? null : mode === 'login' ? (
               <>
                 <span className="text-slate-400">계정이 없으신가요? </span>
                 <button type="button" onClick={() => { setMode('signup'); setPendingVerification(false); setError(''); setSuccessMessage(''); setLoading(false); submittingRef.current = false; }} className="font-bold text-[#003087] hover:underline">

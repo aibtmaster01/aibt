@@ -1200,10 +1200,10 @@ const App: React.FC = () => {
             </button>
             <Checkout
               certId={selectedCertId || undefined}
-              onBack={() => {
-                setShowCheckoutModal(false);
-              }}
+              onBack={() => setShowCheckoutModal(false)}
               onComplete={handleCheckoutComplete}
+              userEmail={user?.email}
+              userId={user?.id}
             />
           </div>
         </div>

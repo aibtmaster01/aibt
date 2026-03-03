@@ -8,6 +8,10 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { ref, getMetadata, getDownloadURL } from 'firebase/storage';
 import { doc, getDoc } from 'firebase/firestore';
 import { storage, db } from '../../firebase';
+import { FEATURE_COUPON, APP_BRAND } from '../../config/brand';
+
+/** 베타: Storage CORS 이슈 회피를 위해 index는 Firestore에서만 로드 */
+const USE_FIRESTORE_INDEX_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 
 // ========== 스토어 스키마 ==========
 
@@ -362,7 +366,7 @@ export async function syncQuestionIndex(certCode: string): Promise<{ updated: bo
   let items: QuestionIndexItem[] | null = null;
   let serverUpdatedAt = 0;
 
-  if (path) {
+  if (path && !USE_FIRESTORE_INDEX_ONLY) {
     try {
       const storageRef = ref(storage, path);
       const meta = await getMetadata(storageRef);
