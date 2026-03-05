@@ -2,6 +2,24 @@
 
 베타는 **호스팅만** aibt-beta 프로젝트에 배포되고, **Auth·Firestore·Storage는 aibt-99bc6**를 사용합니다.
 
+## 0. Firestore 규칙 배포 (로컬/실서버/베타 공통)
+
+**로컬 개발**과 **실서버**는 기본 프로젝트 **aibt-99bc6**의 Firestore를 사용합니다.  
+`coupons` 컬렉션을 쓰려면 **aibt-99bc6에도** `firestore.rules`를 배포해야 합니다.  
+규칙을 베타(aibt-beta)에만 배포한 상태면, 로컬·실서버에서 쿠폰 메뉴 진입 시 **"Missing or insufficient permissions"** 가 납니다.
+
+```bash
+# 기본 프로젝트(aibt-99bc6)에 규칙 배포 (로컬·실서버용)
+firebase use default
+firebase deploy --only firestore:rules
+
+# 베타 호스팅용 프로젝트에도 규칙 배포 (같은 규칙 파일 사용)
+firebase use aibt-beta
+firebase deploy --only firestore:rules
+```
+
+한 번에 두 프로젝트에 배포하려면 위 두 블록을 순서대로 실행하세요.
+
 ## 1. OAuth 허용 도메인 추가 (필수)
 
 구글 로그인 시 "The current domain is not authorized for OAuth operations" 를 없애려면:

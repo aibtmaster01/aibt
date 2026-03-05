@@ -304,7 +304,7 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
   };
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl">
+    <div className="p-6 md:p-8 max-w-6xl">
       <h1 className="text-2xl font-black text-slate-900 mb-6">쿠폰 관리</h1>
 
       {loading ? (

@@ -532,7 +532,7 @@ const App: React.FC = () => {
     switch (route) {
       case '/':
         if (user?.isAdmin) {
-          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar />;
+          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
         }
         if (user) {
           return (
@@ -567,7 +567,7 @@ const App: React.FC = () => {
         );
       case '/mypage':
         if (user?.isAdmin) {
-          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar />;
+          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
         }
         return user ? (
           <MyPage
@@ -749,7 +749,7 @@ const App: React.FC = () => {
           />
         ) : null;
       case '/admin':
-        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar /> : <div>Access Denied</div>;
+        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar={false} onNavigate={navigate} /> : <div>Access Denied</div>;
       case '/admin/certs':
         return user?.isAdmin ? <AdminCerts /> : <div>Access Denied</div>;
       case '/admin/questions':

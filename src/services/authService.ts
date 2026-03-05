@@ -20,8 +20,6 @@ import { User } from '../types';
 import { CERTIFICATIONS } from '../constants';
 import { getDeviceId } from '../utils/deviceId';
 
-const MAX_DEVICES = 3;
-
 export class AuthError extends Error {
   constructor(
     message: string,
@@ -184,11 +182,7 @@ export async function loginWithEmailPassword(email: string, password: string): P
     const fresh = (await getDoc(userRef)).data() ?? data;
     return firestoreDocToUser(uid, fresh);
   }
-  if (registeredDevices.length >= MAX_DEVICES) {
-    await signOut(auth);
-    throw new AuthError('등록 가능한 기기 수(3대)를 초과했습니다. 기존 기기에서 로그아웃 후 다시 시도하세요.', 'DEVICE_LIMIT_EXCEEDED');
-  }
-
+  // 기기 캐치는 유지, 등록 수 제한 없음 (기존: 3대 초과 시 로그인 차단 제거)
   await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
   await migrateUserNamesIfNeeded(userRef, data);
   const fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };
@@ -259,10 +253,7 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
     const deviceId = getDeviceId();
     const registeredDevices = (data.registered_devices as string[]) || [];
     if (!registeredDevices.includes(deviceId)) {
-      if (registeredDevices.length >= MAX_DEVICES) {
-        await signOut(auth);
-        throw new AuthError('등록 가능한 기기 수(3대)를 초과했습니다. 기존 기기에서 로그아웃 후 다시 시도하세요.', 'DEVICE_LIMIT_EXCEEDED');
-      }
+      // 기기 캐치는 유지, 등록 수 제한 없음
       await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
     }
     const fresh = (await getDoc(userRef)).data() ?? data;
@@ -491,8 +482,7 @@ export async function getSessionForCurrentAuth(uid: string): Promise<User | null
     const fresh = (await getDoc(userRef)).data() ?? data;
     return firestoreDocToUser(uid, fresh);
   }
-  if (registeredDevices.length >= MAX_DEVICES) return null;
-
+  // 기기 캐치는 유지, 등록 수 제한 없음
   await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
   await migrateUserNamesIfNeeded(userRef, data);
   const fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };

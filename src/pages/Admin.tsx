@@ -70,11 +70,13 @@ interface AdminProps {
   /** 메인 LNB에서 진입 시 사용. 이때 어드민 전용 LNB는 숨김 */
   initialMenu?: AdminMenu;
   hideSidebar?: boolean;
+  /** 쿠폰 관리 등 다른 경로로 이동 시 (예: 정산 및 쿠폰 클릭) */
+  onNavigate?: (path: string) => void;
 }
 
 type PaymentFormEntry = { checked: boolean; startDate: string; expiryDate: string; targetScheduleId: string };
 
-export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: currentUserProp, initialMenu, hideSidebar }) => {
+export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: currentUserProp, initialMenu, hideSidebar, onNavigate }) => {
   const { user: authUser } = useAuth();
   const [menu, setMenu] = useState<AdminMenu>(initialMenu ?? 'dashboard');
   const effectiveMenu = hideSidebar ? (initialMenu ?? 'dashboard') : menu;
@@ -455,7 +457,7 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
     { id: 'dashboard', label: '대시보드', icon: <LayoutDashboard size={20} /> },
     { id: 'users', label: '회원 관리', icon: <Users size={20} /> },
     { id: 'questions', label: '문제 관리', icon: <FileQuestion size={20} />, disabled: true },
-    { id: 'billing', label: '정산 및 쿠폰', icon: <CreditCard size={20} />, disabled: true },
+    { id: 'billing', label: '쿠폰 관리', icon: <TicketIcon size={20} /> },
   ];
 
   return (
@@ -474,7 +476,14 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
             {menuItems.map((item) => (
               <button
                 key={item.id}
-                onClick={() => !item.disabled && setMenu(item.id)}
+                onClick={() => {
+                  if (item.disabled) return;
+                  if (item.id === 'billing' && onNavigate) {
+                    onNavigate('/admin/billing');
+                    return;
+                  }
+                  setMenu(item.id);
+                }}
                 disabled={item.disabled}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left font-semibold transition-colors ${
                   menu === item.id && !item.disabled ? 'bg-[#0034d3]/20 text-slate-800' : item.disabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-50'
