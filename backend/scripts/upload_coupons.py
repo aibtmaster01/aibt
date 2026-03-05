@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
-[폐기] beta_coupons 컬렉션은 더 이상 사용하지 않습니다.
-대신 backend/scripts/upload_coupons.py 를 사용해 coupons 컬렉션에 업로드하세요.
+beta_coupon.csv(또는 coupon.csv)를 읽어 Firestore coupons 컬렉션에 업로드합니다.
+- 문서 ID = 쿠폰 코드
+- 필드: couponName, expiryDate, certCode, premiumDays, used(False), (선택) name, phone, email
 
-이 스크립트는 beta_coupons에 업로드하므로, coupons 전환 후에는 사용하지 마세요.
+Usage:
+  cd backend && python scripts/upload_coupons.py
+
+CSV 경로: 프로젝트 루트의 beta_coupon.csv
+열: 이름, 전화번호, 쿠폰, 이메일 (필수: 쿠폰). 선택 열: 쿠폰이름, 만료기일, 자격증, 유료기간(일)
+필수: GOOGLE_APPLICATION_CREDENTIALS 또는 backend/serviceAccountKey.json
 """
 import csv
 import os
 import sys
 
-# backend/scripts에서 backend로 가려면 상위 두 단계
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
 ROOT_DIR = os.path.dirname(BACKEND_DIR)
@@ -31,8 +36,6 @@ def init_firebase():
                 break
     if not cred_path or not os.path.exists(cred_path):
         print("서비스 계정 JSON을 찾을 수 없습니다.")
-        print("  Firebase Console → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성")
-        print("  export GOOGLE_APPLICATION_CREDENTIALS=\"/path/to/serviceAccountKey.json\"")
         sys.exit(1)
     cred = credentials.Certificate(cred_path)
     firebase_admin.initialize_app(cred)
@@ -47,7 +50,7 @@ def main():
     from firebase_admin import firestore
 
     db = firestore.client()
-    coll = db.collection("beta_coupons")
+    coll = db.collection("coupons")
 
     created = 0
     updated = 0
@@ -55,13 +58,21 @@ def main():
 
     with open(CSV_PATH, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        if reader.fieldnames and "쿠폰" not in (reader.fieldnames or []):
-            print("CSV에 '쿠폰' 열이 없습니다. (이름,전화번호,쿠폰,이메일)")
+        fieldnames = reader.fieldnames or []
+        if "쿠폰" not in fieldnames:
+            print("CSV에 '쿠폰' 열이 없습니다. (이름, 전화번호, 쿠폰, 이메일)")
             sys.exit(1)
         for row in reader:
             code = (row.get("쿠폰") or "").strip()
             if not code:
                 continue
+            coupon_name = (row.get("쿠폰이름") or row.get("쿠폰 이름") or "").strip()[:15]
+            expiry = (row.get("만료기일") or row.get("만료 기일") or "").strip()
+            cert = (row.get("자격증") or "BIGDATA").strip()
+            try:
+                days = int(row.get("유료기간(일)") or row.get("유료기간") or "365")
+            except ValueError:
+                days = 365
             name = (row.get("이름") or "").strip()
             phone = (row.get("전화번호") or "").strip()
             email = (row.get("이메일") or "").strip()
@@ -74,13 +85,31 @@ def main():
                     skipped_used += 1
                     print(f"  건너뜀 (이미 사용됨): {code}")
                     continue
-                ref.update({"name": name, "phone": phone})
-                if email:
-                    ref.update({"email": email})
+                update_data = {}
+                if coupon_name:
+                    update_data["couponName"] = coupon_name
+                if expiry:
+                    update_data["expiryDate"] = expiry
+                update_data["certCode"] = cert
+                update_data["premiumDays"] = days
+                ref.update(update_data)
                 updated += 1
                 print(f"  업데이트: {code}")
             else:
-                ref.set({"name": name, "phone": phone, "email": email or "", "used": False})
+                doc_data = {
+                    "couponName": coupon_name or None,
+                    "expiryDate": expiry or None,
+                    "certCode": cert,
+                    "premiumDays": days,
+                    "used": False,
+                }
+                if name:
+                    doc_data["name"] = name
+                if phone:
+                    doc_data["phone"] = phone
+                if email:
+                    doc_data["email"] = email
+                ref.set(doc_data)
                 created += 1
                 print(f"  생성: {code}")
 

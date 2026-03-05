@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, CreditCard, Ticket } from "lucide-react";
+import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, Ticket } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../constants";
 import { APP_BRAND, FEATURE_COUPON } from "../config/brand";
 import { getCertDisplayName } from "../services/gradingService";
@@ -261,15 +261,15 @@ export function DashboardSidebar({
           <BookOpen className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
         </button>
       )}
-      {/* 결제 관리 (쿠폰 및 정산) - 관리자만 표시 */}
+      {/* 쿠폰 관리 - 관리자만 표시 (결제 관리 화면은 추후 별도 메뉴 예정) */}
       {user?.isAdmin && (
         <button
           type="button"
           onClick={() => onNavigate('/admin/billing')}
           className={`mt-6 md:mt-8 ${currentPath === '/admin/billing' ? "text-white" : "text-white/80 hover:text-white"}`}
-          aria-label="결제 관리"
+          aria-label="쿠폰 관리"
         >
-          <CreditCard className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
+          <Ticket className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
         </button>
       )}
 

@@ -9,6 +9,7 @@ import { ExamList } from './pages/ExamList';
 import { Quiz } from './pages/Quiz';
 import { Result } from './pages/Result';
 import { Admin } from './pages/Admin';
+import AdminBilling from './pages/AdminBilling';
 import { AdminCerts } from './pages/AdminCerts';
 import { AdminQuestions } from './pages/AdminQuestions';
 import { Checkout } from './pages/Checkout';
@@ -17,24 +18,22 @@ import { User } from './types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS, getRoundLabel } from './constants';
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
-import { invalidateMyPageCache, syncQuestionIndex } from './services/db/localCacheDB';
+import { invalidateMyPageCache } from './services/db/localCacheDB';
 import { clearGuestQuizProgress } from './utils/guestQuizStorage';
 import { ensureUserSubscription, setPaymentComplete, getStoredGoogleRedirectIntent, clearStoredGoogleRedirectIntent } from './services/authService';
 import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
-import { logClientError } from './services/errorLogService';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { canResend, recordResend } from './utils/verificationResendLimit';
 import { APP_BRAND, FEATURE_COUPON } from './config/brand';
 import { CouponModal } from './components/CouponModal';
-
-type Route = '/' | '/mypage' | '/account-settings' | '/exam-list' | '/quiz' | '/result' | '/admin' | '/admin/certs' | '/admin/questions' | '/admin/billing';
-type LoginModalIntent = import('./components/LoginModal').LoginModalIntent;
+import { useAppNavigation } from './hooks/useAppNavigation';
+import { useAppBootstrap } from './hooks/useAppBootstrap';
+import type { LoginModalIntent } from './components/LoginModal';
 
 const App: React.FC = () => {
   const isMobile = useIsMobile();
   const { user, loading: authLoading, login, logout, updateUser, resendVerificationEmail, refreshUser } = useAuth();
-  const [route, setRoute] = useState<Route>('/');
   const [selectedCertId, setSelectedCertId] = useState<string | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [quizMode, setQuizMode] = useState<'exam' | 'study'>('study');
@@ -109,9 +108,22 @@ const App: React.FC = () => {
     certId: string;
   } | null>(null);
 
-  useEffect(() => {
-    document.title = `${APP_BRAND} - 합격으로 가는 가장 빠른 길`;
-  }, []);
+  const { route, setRoute, navigate, navigateToAuth } = useAppNavigation({
+    user,
+    setLoginInitialMode,
+    setShowLoginModal,
+    setLoginModalIntent,
+    setSelectedCertId,
+    setSelectedRoundId,
+    setShowCheckoutModal,
+  });
+
+  useAppBootstrap({
+    route,
+    user,
+    selectedCertId,
+    setSelectedCertId,
+  });
 
   /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
   useEffect(() => {
@@ -159,34 +171,6 @@ const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [showNextRoundPreparing, nextRoundInfo?.id, nextRoundInfo?.round, user, selectedCertId]);
 
-  // 앱 기동 시 index.json 로컬/서버 버전 비교 후 새 버전일 때만 다운로드 (BIGDATA)
-  useEffect(() => {
-    syncQuestionIndex('BIGDATA').catch(() => {});
-  }, []);
-
-  // 전역 오류 → Firestore error_logs 기록 (대시보드 오류 로그에서 확인)
-  useEffect(() => {
-    const onError = (event: ErrorEvent) => {
-      logClientError(event.error ?? event.message, 'window.onerror');
-    };
-    const onRejection = (event: PromiseRejectionEvent) => {
-      logClientError(event.reason, 'unhandledrejection');
-    };
-    window.addEventListener('error', onError);
-    window.addEventListener('unhandledrejection', onRejection);
-    return () => {
-      window.removeEventListener('error', onError);
-      window.removeEventListener('unhandledrejection', onRejection);
-    };
-  }, []);
-
-  // 시험 결과 화면을 볼 때 마이페이지 캐시 무효화 → 이후 마이페이지 진입 시 최신 데이터 로드
-  useEffect(() => {
-    if (route !== '/result' || !user?.id || !selectedCertId) return;
-    const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
-    if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
-  }, [route, user?.id, selectedCertId]);
-
   // 로그아웃 토스트 자동 숨김
   useEffect(() => {
     if (!showLogoutToast) return;
@@ -201,13 +185,6 @@ const App: React.FC = () => {
     return () => clearTimeout(t);
   }, [showLoginToast]);
 
-  // /exam-list 진입 시 selectedCertId가 비어 있으면 첫 자격증으로 설정 (흰 화면 방지)
-  useEffect(() => {
-    if (route !== '/exam-list' || selectedCertId) return;
-    const fallback = user?.subscriptions?.[0]?.id ?? user?.paidCertIds?.[0] ?? CERTIFICATIONS[0]?.id;
-    if (fallback) setSelectedCertId(fallback);
-  }, [route, selectedCertId, user?.subscriptions, user?.paidCertIds]);
-
   // /quiz 진입 시 round/cert 없으면 목록으로 복귀 (흰 화면 방지)
   useEffect(() => {
     if (route !== '/quiz') return;
@@ -216,55 +193,6 @@ const App: React.FC = () => {
     setQuizStartIndex(undefined);
     navigate(selectedCertId ? '/exam-list' : '/');
   }, [route, selectedRoundId, selectedCertId]);
-
-  // Navigation Helper
-  const navigate = (path: string) => {
-    if (path !== '/login') setLoginInitialMode(null);
-    const [pathname, search] = path.includes('?') ? path.split('?') : [path, ''];
-    const params = new URLSearchParams(search);
-    // 로그인 클릭 시 현재 화면 유지하면서 로그인 모달만 오픈
-    if (pathname === '/login') {
-      setLoginInitialMode('login');
-      setShowLoginModal(true);
-      // 퀴즈 화면에서 로그인 버튼으로 연 경우: 로그인 성공 시 현재 문제 유지
-      setLoginModalIntent(route === '/quiz' && !user ? 'guestQuizLogin' : 'standalone');
-      return;
-    }
-    if (pathname === '/exam-list') {
-      const cert = params.get('cert');
-      const round = params.get('round');
-      if (cert) setSelectedCertId(cert);
-      if (round) setSelectedRoundId(round);
-    }
-    if (pathname === '/mypage') {
-      const cert = params.get('cert');
-      if (cert) setSelectedCertId(cert);
-    }
-    // 결제: 페이지 이동 대신 모달 오픈 (현재 화면 유지 → 문제 풀이 이어하기 가능)
-    if (pathname === '/checkout') {
-      setShowCheckoutModal(true);
-      return;
-    }
-    // Basic Auth Guard: 로그인 필요 경로 → 로그인 모달
-    const needsLogin = pathname === '/mypage' || pathname === '/account-settings' || pathname.startsWith('/admin');
-    if (needsLogin && !user) {
-      setLoginInitialMode('login');
-      setShowLoginModal(true);
-      setLoginModalIntent('standalone');
-      setRoute(pathname === '/mypage' ? '/' : pathname as Route);
-      return;
-    }
-    setRoute(pathname as Route);
-    // Scroll to top on navigation
-    window.scrollTo(0, 0);
-  };
-
-  const navigateToAuth = (mode: 'login' | 'signup') => {
-    setLoginInitialMode(mode);
-    setShowLoginModal(true);
-    setLoginModalIntent('standalone');
-    window.scrollTo(0, 0);
-  };
 
   const handleLogout = async () => {
     await logout();
@@ -827,12 +755,7 @@ const App: React.FC = () => {
       case '/admin/questions':
         return user?.isAdmin ? <AdminQuestions /> : <div>Access Denied</div>;
       case '/admin/billing':
-        return user?.isAdmin ? (
-          <div className="p-6 md:p-8 max-w-4xl">
-            <h1 className="text-2xl font-black text-slate-900 mb-2">결제 관리 (쿠폰 및 정산)</h1>
-            <p className="text-slate-500">준비 중입니다.</p>
-          </div>
-        ) : <div>Access Denied</div>;
+        return user?.isAdmin ? <AdminBilling onBack={() => navigate('/admin')} /> : <div>Access Denied</div>;
       default:
         return <div>404 Not Found</div>;
     }

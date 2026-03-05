@@ -593,3 +593,25 @@ export async function setPaymentComplete(uid: string, certId: string): Promise<v
 
   await updateDoc(userRef, { memberships: nextMemberships });
 }
+
+/**
+ * 쿠폰 적용 시 유료 기간 부여 (자격증별 start_date, expiry_date 설정)
+ */
+export async function applyCouponMembership(uid: string, certCode: string, premiumDays: number): Promise<void> {
+  const cert = CERTIFICATIONS.find((c) => c.code === certCode);
+  if (!cert) throw new Error(`자격증을 찾을 수 없습니다: ${certCode}`);
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  if (!snap.exists()) throw new Error('사용자 문서가 없습니다.');
+  const data = snap.data();
+  const memberships = (data.memberships as Record<string, MembershipEntry>) || {};
+  const today = new Date().toISOString().slice(0, 10);
+  const end = new Date();
+  end.setDate(end.getDate() + premiumDays);
+  const expiryDate = end.toISOString().slice(0, 10);
+  const nextMemberships = {
+    ...memberships,
+    [certCode]: { tier: 'PREMIUM' as const, start_date: today, expiry_date: expiryDate },
+  };
+  await updateDoc(userRef, { memberships: nextMemberships });
+}

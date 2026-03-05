@@ -1,56 +1,52 @@
-# 베타 쿠폰 (beta_coupon.csv → Firestore)
+# 쿠폰 정책 (Firestore `coupons` 컬렉션)
+
+**기존 `beta_coupons` 컬렉션은 폐기합니다.** 새 컬렉션 `coupons`를 사용합니다.
+
+## 컬렉션 전환
+
+1. **beta_coupons 데이터 삭제** (선택):  
+   `cd backend && python scripts/delete_beta_coupons_collection.py`  
+   → `beta_coupons` 문서를 모두 삭제합니다.
+2. **규칙 배포**: `firebase deploy --only firestore:rules`  
+   → 규칙에 `coupons`만 허용되어 있으므로, 앱/어드민은 `coupons`만 사용합니다.
 
 ## 적용 정책
 
-- **1회용**: 쿠폰 코드당 한 번만 사용 가능. 사용 시 `used: true`로 표시되어 재사용 불가.
-- **실제 사용자 기록**: CSV의 이름·전화번호·이메일은 **관리용(수급자 목록)**이며, 실제 "누가 쿠폰을 썼는지"는 **로그인한 사용자의 이메일**로 기록됩니다.
-  - `beta_coupons/{코드}` 문서에 `redeemedBy: (로그인한 사용자 이메일)` 저장
-  - `coupon_redemptions` 컬렉션에 `userEmail`, `userId`, `couponCode`, `createdAt` 저장
-- CSV의 이름·전화번호가 실제 사용자 정보와 달라도 무관합니다.
+- **1회용**: 쿠폰 코드당 한 번만 사용 가능. 사용 시 `used: true`, `redeemedBy`(로그인 사용자 이메일), `redeemedAt` 기록.
+- **쿠폰 만료기일 (`expiryDate`)**: 이 날짜 이후에는 쿠폰 사용 불가.
+- **자격증 (`certCode`)**: 쿠폰 적용 시 유료 권한을 부여할 자격증(예: BIGDATA). 없으면 기본 BIGDATA.
+- **유료기능 기간 (`premiumDays`)**: 쿠폰 사용 시 해당 자격증에 대해 멤버십을 부여하는 **일 수**. 없으면 기본 365일.
+- **상태**: 미사용 / 사용중 / 만료(만료일 경과 시 사용 불가) / 폐기(관리자 폐기).
 
-## CSV 형식
+## Firestore 문서 구조 (`coupons/{쿠폰코드}`)
 
-프로젝트 루트의 `beta_coupon.csv`:
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `couponName` | string | 선택 | 쿠폰 이름 (목록 표시용, 15자 제한) |
+| `expiryDate` | string (YYYY-MM-DD) | 권장 | 쿠폰 사용 가능 기한. 이날 이후 사용 불가 |
+| `certCode` | string | 권장 | 적용 자격증 코드 (예: BIGDATA) |
+| `premiumDays` | number | 권장 | 유료 기능 부여 일수 |
+| `used` | boolean | O | 미사용 시 false, 사용 후 true |
+| `redeemedBy` | string | - | 사용 시 로그인 사용자 이메일 |
+| `redeemedAt` | timestamp | - | 사용 시각 |
+| `revoked` | boolean | - | true면 폐기(사용 불가) |
 
-- **열**: 이름, 전화번호, 쿠폰, 이메일
-- **쿠폰**: 나중에 난수로 생성해 채우면 됨.
-- 샘플: `김학습,01080219881,123456789,sample@example.com`
+## 어드민에서 확인·등록
 
-## Firestore 반영
-
-앱은 **Firestore `beta_coupons` 컬렉션**으로 쿠폰을 검증합니다. CSV만으로는 동작하지 않으므로, CSV 내용을 Firestore에 넣어야 합니다.
-
-1. Firebase Console → **앱이 사용하는 프로젝트**(예: aibt-99bc6) → Firestore Database → 컬렉션 `beta_coupons` 생성
-2. 각 행마다 **문서 추가**:
-   - **문서 ID**: `쿠폰` 열 값 그대로 (예: `123456789`)
-   - **필드**:
-     - `name` (string): 이름
-     - `phone` (string): 전화번호
-     - `email` (string): 이메일
-     - `used` (boolean): 미사용 시 `false` (기본)
-
-**CSV → Firestore 일괄 반영 (스크립트)**  
-프로젝트 루트의 `beta_coupon.csv`를 수정한 뒤, 아래 스크립트로 Firestore에 올릴 수 있습니다.
-
-```bash
-cd backend && python scripts/upload_beta_coupons.py
-```
-
-- Firebase 서비스 계정 키가 필요합니다. (Firebase Console → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성 → `backend/serviceAccountKey.json` 등에 저장 후 `export GOOGLE_APPLICATION_CREDENTIALS=경로` 또는 해당 경로에 두기)
-- 이미 사용된 쿠폰(used: true) 문서는 덮어쓰지 않고 건너뜁니다.
+- **결제 관리 (쿠폰 등록)**: `/admin/billing`
+- **목록**: No., 쿠폰코드, 쿠폰 이름, 만료기일, 자격증, 유료기능(일), **상태**(미사용/사용중/만료/폐기됨), 사용자(이메일), 복사, 폐기.
+- **조회**: 좌측에서 쿠폰 코드/쿠폰 이름/사용자로 검색, "만료된 쿠폰 포함" 체크 가능.
+- **신규 쿠폰 등록**: 쿠폰 코드, 쿠폰 이름, 만료기일, 자격증, 유료기능 기간(일) 입력 후 등록.
 
 ## 사용 시 기록
 
-로그인한 사용자가 쿠폰을 사용하면:
+- `coupons/{코드}`: `used: true`, `redeemedBy`, `redeemedAt` 갱신.
+- `coupon_redemptions`: `userId`, `userEmail`, `couponCode`, `createdAt` 저장.
+- 사용자 `users/{uid}.memberships`: 해당 `certCode`에 대해 `tier: 'PREMIUM'`, `start_date`, `expiry_date`(오늘 + premiumDays) 설정.
 
-- `beta_coupons/{쿠폰코드}` 문서에 `used: true`, `redeemedBy: (로그인한 사용자 이메일)`, `redeemedAt` 이 기록되고,
-- `coupon_redemptions` 컬렉션에 `userId`, `userEmail`, `couponCode`, `createdAt` 이 저장됩니다.
+## CSV → Firestore 업로드
 
-관리자는 Firestore에서 **누가 어떤 쿠폰을 사용했는지** `redeemedBy` / `coupon_redemptions` 로 확인할 수 있습니다.
-
-## 오류 시 확인
-
-- **"쿠폰 적용 중 오류"**: 화면에 구체적인 에러 메시지가 나오면 그대로 확인. 흔한 원인:
-  - **권한 오류**: Firestore 규칙이 **앱이 연결된 프로젝트**(예: aibt-99bc6)에 배포되어 있어야 함.  
-    `firebase use aibt-99bc6` 후 `firebase deploy --only firestore:rules`
-  - **문서 없음**: 해당 쿠폰 코드를 문서 ID로 가진 `beta_coupons` 문서가 Firestore에 있어야 함.
+`backend/scripts/upload_coupons.py`  
+- CSV 경로: 프로젝트 루트 `beta_coupon.csv`  
+- 열: 이름, 전화번호, **쿠폰**(필수), 이메일. 선택: 쿠폰이름, 만료기일, 자격증, 유료기간(일)  
+- `coupons` 컬렉션에 문서 생성/업데이트. 신규 쿠폰은 어드민 > 결제 관리 > 신규 쿠폰 등록으로도 등록 가능.
