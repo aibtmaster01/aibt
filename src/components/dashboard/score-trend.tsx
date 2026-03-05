@@ -195,12 +195,13 @@ export function ScoreTrend({ data, onRetryRound, onWrongAnswers }: ScoreTrendPro
           className="relative"
           style={{
             width: chartWidth ?? "100%",
-            minWidth: chartWidth ?? "100%",
+            minWidth: chartWidth ?? Math.max(200, containerWidth),
             height: isMobile ? 180 : 240,
+            minHeight: isMobile ? 180 : 240,
           }}
         >
           <ResponsiveContainer
-            width={chartWidth ?? containerWidth}
+            width={chartWidth ?? Math.max(200, containerWidth)}
             height={isMobile ? 180 : 240}
             minWidth={200}
             minHeight={160}

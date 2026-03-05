@@ -9,7 +9,9 @@
     "build:beta": "vite build --mode beta",
     "preview": "vite preview",
     "deploy": "npm run build && firebase deploy --only hosting",
-    "deploy:beta": "npm run build:beta && firebase use aibt-beta && firebase deploy --only hosting"
+    "deploy:beta": "npm run build:beta && firebase use beta && firebase deploy --only hosting",
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:prod": "firebase use default && npm run build && firebase deploy --only firestore:rules,hosting"
   },
   "dependencies": {
     "idb": "^8.0.0",

@@ -1,4 +1,4 @@
-// 배포: firebase deploy --only firestore:rules
+// 배포 (실제 서버 aibt-99bc6 반영): firebase use default && firebase deploy --only firestore:rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
