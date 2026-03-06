@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {})
       .finally(() => {
         if (cancelled) return;
-        setLoading(false);
+        // loading은 onAuthStateChanged 첫 콜백 이후에만 false로 (persistence 복구 후 로그인 모달이 잠깐 뜨는 것 방지)
         unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
           if (!firebaseUser) {
             setUser(null);

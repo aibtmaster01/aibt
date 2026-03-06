@@ -12,7 +12,31 @@ import { Question, User } from '../types';
 import { CERTIFICATIONS } from '../constants';
 
 import { getCertificationInfo } from './gradingService';
-import { generateAdaptiveExamPlan, extractTopicUnit, mapPoolDocToQuestion, type AiMockExamMode, type FirestoreQuestionDoc } from './examService';
+
+/** examService는 동적 import만 사용 (번들 초기화 순서로 인한 ReferenceError 방지) */
+async function getExamService() {
+  return import('./examService');
+}
+
+/** 로컬 타입 정의 (examService 정적 import 제거로 번들 초기화 오류 방지) */
+type AiMockExamMode = 'REAL_EXAM' | 'WEAKNESS_ATTACK';
+interface FirestoreQuestionDoc {
+  q_id?: string;
+  question_text?: string;
+  options?: string[];
+  answer?: number;
+  explanation?: string;
+  ai_explanation?: string;
+  wrong_feedback?: Record<string, string> | string[];
+  image?: string;
+  difficulty_level?: number;
+  core_concept?: string;
+  topic?: string;
+  tags?: string[];
+  trend?: string | null;
+  [key: string]: unknown;
+}
+
 import {
   getQuestionIndexFromCache,
   syncQuestionIndex,
@@ -171,6 +195,7 @@ async function fetchQuestionsByIdsWithGetDoc(certCode: string, qIds: string[]): 
     return getDoc(ref);
   });
   const snaps = await Promise.all(promises);
+  const { mapPoolDocToQuestion } = await getExamService();
   const orderMap = new Map<string, Question>();
   snaps.forEach((snap, i) => {
     const qId = qIds[i];
@@ -599,6 +624,7 @@ async function fetchQuestionsByIds(certCode: string, qIds: string[]): Promise<Qu
     return getDoc(ref);
   });
   const snaps = await Promise.all(promises);
+  const { mapPoolDocToQuestion } = await getExamService();
   const orderMap = new Map<string, Question>();
   snaps.forEach((snap, i) => {
     if (snap.exists()) {
@@ -647,6 +673,7 @@ export async function getAnalysisContext(
   const isNew = isNewUser(user);
   const targetExamDate = getTargetExamDate(user, certId);
 
+  const { generateAdaptiveExamPlan } = await getExamService();
   const plan = await generateAdaptiveExamPlan(uid, certCode, targetExamDate);
   const mode = plan.mode as AiExamMode;
   const top1Unit = plan.plan[0]?.core_concept ?? null;

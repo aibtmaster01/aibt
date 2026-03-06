@@ -12,6 +12,9 @@ export const CERT_IDS_WITH_QUESTIONS: string[] = ['c1', 'c2'];
 /** 선택 불가(비활성) 자격증 ID - 목록에는 표시되나 회색 처리, 선택 불가 */
 export const DISABLED_CERT_IDS: string[] = ['c2', 'c3']; // SQLD, ADsP
 
+/** 오답 가이드 비프리미엄 문구 (Quiz 등에서 examService 정적 로드 없이 사용) */
+export const WRONG_FEEDBACK_PLACEHOLDER = '열공모드 가입 후 오답인 이유 확인하기';
+
 /** 문제풀이 화면 테마: 학습 모드 = 주황, 실전 모드 = 파란 서브메인 */
 export const QUIZ_THEME = {
   study: { bg: 'bg-[#0034d3]', bgLight: 'bg-[#99ccff]', text: 'text-[#0034d3]', tag: 'bg-[#99ccff] text-[#0034d3]' },

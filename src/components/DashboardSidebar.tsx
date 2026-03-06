@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, Ticket } from "lucide-react";
+import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, Ticket, HelpCircle } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../constants";
 import { APP_BRAND, FEATURE_COUPON } from "../config/brand";
 import { getCertDisplayName } from "../services/gradingService";
@@ -21,6 +21,8 @@ export interface DashboardSidebarProps {
   onLogout?: () => void;
   /** 베타 전용: 쿠폰 입력 모달 열기 */
   onOpenCoupon?: () => void;
+  /** 베타 전용: 오리엔테이션(핵심 기능 가이드) 팝업 열기 */
+  onOpenOrientation?: () => void;
 }
 
 const certIconMap: Record<string, React.ReactNode> = {
@@ -36,6 +38,7 @@ export function DashboardSidebar({
   onNavigate,
   onLogout,
   onOpenCoupon,
+  onOpenOrientation,
 }: DashboardSidebarProps) {
   const [listPopupOpen, setListPopupOpen] = useState(false);
   const [profilePopupOpen, setProfilePopupOpen] = useState(false);
@@ -274,6 +277,18 @@ export function DashboardSidebar({
       )}
 
       <div className="flex-1 min-h-[24px]" />
+
+      {/* 베타: 핵심 기능 가이드(오리엔테이션) 버튼 */}
+      {user && onOpenOrientation && (
+        <button
+          type="button"
+          onClick={onOpenOrientation}
+          className="text-white/80 hover:text-white mb-4"
+          aria-label="핵심 기능 가이드"
+        >
+          <HelpCircle className="w-6 h-6 md:w-8 md:h-8" />
+        </button>
+      )}
 
       {/* 비로그인 시 하단 로그인 버튼 */}
       {!user && (

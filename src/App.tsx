@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check } from 'lucide-react';
+import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check, Loader2, Sparkles } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
 import { EmptyState } from './components/dashboard/empty-state';
@@ -21,12 +21,13 @@ import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache } from './services/db/localCacheDB';
 import { clearGuestQuizProgress } from './utils/guestQuizStorage';
 import { ensureUserSubscription, setPaymentComplete, getStoredGoogleRedirectIntent, clearStoredGoogleRedirectIntent } from './services/authService';
-import { getQuestionsForRound, fetchSubjectStrengthTraining50, fetchWeakTypeFocus50, fetchWeakConceptFocus50, fetchQuestionsFromPools } from './services/examService';
+import { getExamService } from './services/examServiceLoader';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { canResend, recordResend } from './utils/verificationResendLimit';
 import { APP_BRAND, FEATURE_COUPON } from './config/brand';
 import { CouponModal } from './components/CouponModal';
+import { OrientationPopup } from './components/OrientationPopup';
 import { useAppNavigation } from './hooks/useAppNavigation';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import type { LoginModalIntent } from './components/LoginModal';
@@ -74,6 +75,8 @@ const App: React.FC = () => {
   /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
+  /** 베타: 구글 리다이렉트 복귀 시 쿠폰 입력 단계로 모달 열기용 */
+  const [loginModalInitialCouponStep, setLoginModalInitialCouponStep] = useState<{ userId: string; userEmail: string } | null>(null);
   /** 로그인 모달 진입 시 처음 보여줄 탭 */
   const [loginInitialMode, setLoginInitialMode] = useState<'login' | 'signup' | null>(null);
   /** 미인증 사용자: 인증 메일 재발송 모달 */
@@ -107,6 +110,11 @@ const App: React.FC = () => {
     type: 'subject_strength' | 'weak_type' | 'weak_concept';
     certId: string;
   } | null>(null);
+  /** 베타: 오리엔테이션 팝업. 'forced' = 쿠폰 미등록 강제 노출, 'fromLNB' = LNB에서 연 경우 */
+  const [showOrientationPopup, setShowOrientationPopup] = useState<'forced' | 'fromLNB' | null>(null);
+
+  const isBeta = FEATURE_COUPON || APP_BRAND === 'AiBT';
+  const hasCoupon = user?.isPremium === true || (user?.paidCertIds?.length ?? 0) > 0;
 
   const { route, setRoute, navigate, navigateToAuth } = useAppNavigation({
     user,
@@ -165,7 +173,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!showNextRoundPreparing || !nextRoundInfo || nextRoundInfo.round < 4 || !user || !selectedCertId) return;
     let cancelled = false;
-    getQuestionsForRound(selectedCertId, nextRoundInfo.round, user)
+    getExamService()
+      .then((m) => m.getQuestionsForRound(selectedCertId, nextRoundInfo!.round, user))
       .then((q) => { if (!cancelled) setNextRoundFetchedQuestions(q); })
       .catch(() => { if (!cancelled) setNextRoundFetchedQuestions([]); });
     return () => { cancelled = true; };
@@ -300,9 +309,10 @@ const App: React.FC = () => {
     setPreparing(true);
     try {
       if (type === 'subject_strength') {
+        const exam = await getExamService();
         const [_, result] = await Promise.all([
           new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchSubjectStrengthTraining50(user.id, certId),
+          exam.fetchSubjectStrengthTraining50(user.id, certId),
         ]);
         setPreparing(false);
         if (result.questions.length < 20) {
@@ -317,9 +327,10 @@ const App: React.FC = () => {
         setPendingGuestSession(null);
         navigate('/quiz');
       } else if (type === 'weak_type') {
+        const exam = await getExamService();
         const [_, result] = await Promise.all([
           new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchWeakTypeFocus50(user.id, certId),
+          exam.fetchWeakTypeFocus50(user.id, certId),
         ]);
         setPreparing(false);
         if (result.questions.length === 0) {
@@ -334,9 +345,10 @@ const App: React.FC = () => {
         setPendingGuestSession(null);
         navigate('/quiz');
       } else {
+        const exam = await getExamService();
         const [_, result] = await Promise.all([
           new Promise<void>((r) => setTimeout(r, delayMs)),
-          fetchWeakConceptFocus50(user.id, certId),
+          exam.fetchWeakConceptFocus50(user.id, certId),
         ]);
         setPreparing(false);
         if (result.insufficient || result.questions.length < 50) {
@@ -451,7 +463,8 @@ const App: React.FC = () => {
         alert('해당 시험 결과를 불러올 수 없습니다.');
         return;
       }
-      const questions = await fetchQuestionsFromPools(certCode, answers.map((a) => a.qid));
+      const exam = await getExamService();
+      const questions = await exam.fetchQuestionsFromPools(certCode, answers.map((a) => a.qid));
       const sessionHistory = answers.map((a) => ({
         qid: a.qid,
         selected: 1,
@@ -500,9 +513,14 @@ const App: React.FC = () => {
     if (user && pendingVerificationBanner) setPendingVerificationBanner(null);
   }, [user, pendingVerificationBanner]);
 
-  // 구글 로그인 리다이렉트 복귀 시 guestContinue intent 복원 (팝업 대신 전체 화면 이동한 경우)
+  // 구글 로그인 리다이렉트 복귀 시 guestContinue intent 복원 (팝업 대신 전체 화면 이동한 경우). 베타는 게스트 비허용이라 복원하지 않음.
   React.useEffect(() => {
     if (authLoading || !user) return;
+    if (isBeta) {
+      const intent = getStoredGoogleRedirectIntent();
+      if (intent?.intent === 'guestContinue') clearStoredGoogleRedirectIntent();
+      return;
+    }
     const intent = getStoredGoogleRedirectIntent();
     if (!intent || intent.intent !== 'guestContinue') return;
     clearStoredGoogleRedirectIntent();
@@ -521,7 +539,40 @@ const App: React.FC = () => {
     setLoginModalIntent(null);
     setRoute('/quiz');
     setShowGuestContinueModal(true);
-  }, [user, authLoading]);
+  }, [user, authLoading, isBeta]);
+
+  // 베타: auth 초기화 완료 후 비로그인일 때만 로그인 모달 노출 (AuthContext에서 loading은 persistence 복구 후에만 false)
+  React.useEffect(() => {
+    if (!authLoading && isBeta && !user) {
+      setShowLoginModal(true);
+      setLoginModalIntent('standalone');
+    }
+  }, [authLoading, isBeta, user]);
+
+  // 베타: 로그인했지만 쿠폰 미등록 시 오리엔테이션 팝업 강제 노출
+  React.useEffect(() => {
+    if (!authLoading && user && isBeta && !hasCoupon && showOrientationPopup === null) {
+      setShowOrientationPopup('forced');
+    }
+  }, [authLoading, user, isBeta, hasCoupon, showOrientationPopup]);
+
+  // 베타: 구글 로그인 리다이렉트 복귀 시 — 쿠폰 있으면 무시, 없으면 오리엔테이션만 표시 (로그인 모달과 중복 방지)
+  React.useEffect(() => {
+    if (authLoading || !user || !isBeta) return;
+    try {
+      if (sessionStorage.getItem('finset_google_redirect_pending') !== '1') return;
+    } catch {
+      return;
+    }
+    const isPremium = user.isPremium || (user.paidCertIds?.length ?? 0) > 0;
+    try {
+      sessionStorage.removeItem('finset_google_redirect_pending');
+    } catch {
+      // ignore
+    }
+    if (isPremium) return;
+    setShowOrientationPopup('forced');
+  }, [user, authLoading, isBeta]);
 
   // Check status for current selected cert
   const isCurrentCertPremium = user ? (user.isPremium || (selectedCertId && user.paidCertIds?.includes(selectedCertId))) : false;
@@ -749,7 +800,7 @@ const App: React.FC = () => {
           />
         ) : null;
       case '/admin':
-        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar={false} onNavigate={navigate} /> : <div>Access Denied</div>;
+        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar onNavigate={navigate} /> : <div>Access Denied</div>;
       case '/admin/certs':
         return user?.isAdmin ? <AdminCerts /> : <div>Access Denied</div>;
       case '/admin/questions':
@@ -771,6 +822,12 @@ const App: React.FC = () => {
 
   // 랜딩만 사이드바 없음, 그 외 모든 화면에 좌측 사이드바 노출
   const isLanding = route === '/' && !user;
+  const handleLoginModalClose = () => {
+    setShowLoginModal(false);
+    setLoginModalIntent(null);
+    setLoginModalInitialCouponStep(null);
+  };
+
   const handleLoginModalAuthSuccess = (options?: {
     isNewUser?: boolean;
     needsVerificationBanner?: boolean;
@@ -780,6 +837,7 @@ const App: React.FC = () => {
     const intent = loginModalIntent;
     setShowLoginModal(false);
     setLoginModalIntent(null);
+    setLoginModalInitialCouponStep(null);
     if (options?.needsVerificationBanner && options?.email && options?.password) {
       setPendingVerificationBanner({ email: options.email, password: options.password });
       setVerificationBannerError('');
@@ -834,7 +892,7 @@ const App: React.FC = () => {
         {showLoginModal && (
           <LoginModal
             initialMode={loginInitialMode ?? 'login'}
-            persistent={loginModalIntent === 'guestContinue'}
+            persistent={isBeta && !user ? true : loginModalIntent === 'guestContinue'}
             intent={loginModalIntent ?? undefined}
             intentDataForGoogle={
               loginModalIntent === 'guestContinue' && pendingGuestSession
@@ -847,10 +905,20 @@ const App: React.FC = () => {
                   }
                 : undefined
             }
-            onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
+            onBack={handleLoginModalClose}
             onAuthSuccess={handleLoginModalAuthSuccess}
+            initialBetaCouponStep={!!loginModalInitialCouponStep}
+            initialBetaUserId={loginModalInitialCouponStep?.userId ?? ''}
+            initialBetaUserEmail={loginModalInitialCouponStep?.userEmail ?? ''}
+            onEnterBetaCouponStep={(data) => setLoginModalInitialCouponStep(data)}
           />
         )}
+        {isBeta && !user && (
+          <div className="min-h-screen bg-[#edf1f5] flex items-center justify-center p-6">
+            <p className="text-slate-500 text-sm text-center">로그인 후 이용해 주세요.</p>
+          </div>
+        )}
+        {!isBeta && renderContent()}
         {pendingVerificationBanner && !user && (
           <div className="bg-amber-400 text-amber-950 border-b border-amber-500/50 shadow-sm">
             <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -894,7 +962,6 @@ const App: React.FC = () => {
             )}
           </div>
         )}
-        {renderContent()}
         {showCheckoutModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
             <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#edf1f5] rounded-3xl shadow-2xl animate-slide-up my-auto">
@@ -960,8 +1027,12 @@ const App: React.FC = () => {
                 }
               : undefined
           }
-          onBack={() => { setShowLoginModal(false); setLoginModalIntent(null); }}
+          onBack={handleLoginModalClose}
           onAuthSuccess={handleLoginModalAuthSuccess}
+          initialBetaCouponStep={!!loginModalInitialCouponStep}
+          initialBetaUserId={loginModalInitialCouponStep?.userId ?? ''}
+          initialBetaUserEmail={loginModalInitialCouponStep?.userEmail ?? ''}
+          onEnterBetaCouponStep={(data) => setLoginModalInitialCouponStep(data)}
         />
       )}
       {showQuizLoginSuccessModal && (
@@ -979,7 +1050,27 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      {showOrientationPopup && (
+        <OrientationPopup
+          forced={showOrientationPopup === 'forced'}
+          fromLNB={showOrientationPopup === 'fromLNB'}
+          onClose={() => setShowOrientationPopup(null)}
+          onCouponRegistered={async () => {
+            try {
+              await refreshUser();
+            } finally {
+              setShowOrientationPopup(null);
+              setShowLoginModal(false);
+              setLoginModalInitialCouponStep(null);
+              navigate('/exam-list');
+            }
+          }}
+          userId={user?.id}
+          userEmail={user?.email}
+        />
+      )}
       <div className="h-screen bg-[#edf1f5] flex overflow-hidden">
+        {/* 항상 파란색 LNB 표시 (Admin 포함). Admin 내부는 hideSidebar로 흰색 LNB 비표시 */}
         <DashboardSidebar
           user={user}
           certId={selectedCertId}
@@ -987,6 +1078,7 @@ const App: React.FC = () => {
           onNavigate={navigate}
           onLogout={handleLogout}
           onOpenCoupon={FEATURE_COUPON ? () => setShowCouponModal(true) : undefined}
+          onOpenOrientation={isBeta && user && hasCoupon ? () => setShowOrientationPopup('fromLNB') : undefined}
         />
         {showCouponModal && (
           <CouponModal onClose={() => setShowCouponModal(false)} />
@@ -1174,13 +1266,19 @@ const App: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const info = nextRoundInfo;
                   setShowNextRoundModeModal(false);
+                  setNextRoundInfo(null);
                   setNextRoundSelectedMode('study');
-                  setNextRoundPreparingCountdown(5);
-                  setNextRoundPreparingPhase('countdown');
-                  setNextRoundFetchedQuestions(null);
-                  // 모달이 닫힌 다음 틱에 딤+준비 오버레이 표시 (렌더 타이밍 보장)
-                  setTimeout(() => setShowNextRoundPreparing(true), 0);
+                  if (info.round >= 4) {
+                    setNextRoundPreparingCountdown(5);
+                    setNextRoundPreparingPhase('countdown');
+                    setNextRoundFetchedQuestions(null);
+                    setNextRoundInfo(info);
+                    setTimeout(() => setShowNextRoundPreparing(true), 0);
+                  } else {
+                    handleSelectRound(info.id, 'study');
+                  }
                 }}
                 className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
               >
@@ -1195,12 +1293,19 @@ const App: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const info = nextRoundInfo;
                   setShowNextRoundModeModal(false);
+                  setNextRoundInfo(null);
                   setNextRoundSelectedMode('exam');
-                  setNextRoundPreparingCountdown(5);
-                  setNextRoundPreparingPhase('countdown');
-                  setNextRoundFetchedQuestions(null);
-                  setTimeout(() => setShowNextRoundPreparing(true), 0);
+                  if (info.round >= 4) {
+                    setNextRoundPreparingCountdown(5);
+                    setNextRoundPreparingPhase('countdown');
+                    setNextRoundFetchedQuestions(null);
+                    setNextRoundInfo(info);
+                    setTimeout(() => setShowNextRoundPreparing(true), 0);
+                  } else {
+                    handleSelectRound(info.id, 'exam');
+                  }
                 }}
                 className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-brand-400 hover:bg-brand-50/50 transition-colors"
               >
@@ -1224,25 +1329,52 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 결과 화면 다음 회차 5초 준비 오버레이 (딤 + 팝업) */}
-      {showNextRoundPreparing && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="text-center text-white px-8 py-10 rounded-3xl bg-slate-800/95 border border-slate-600 shadow-2xl min-w-[280px]">
-            {nextRoundPreparingPhase === 'countdown' ? (
-              <>
-                <p className="text-slate-300 text-sm mb-3">맞춤형 모의고사를 준비하고 있어요</p>
-                <p className="text-5xl font-black text-white tabular-nums">{nextRoundPreparingCountdown}</p>
-                <p className="text-slate-400 text-xs mt-2">초 후 시작</p>
-              </>
-            ) : (
-              <>
-                <p className="text-xl font-bold text-white mb-1">모의고사가 준비되었습니다</p>
-                <p className="text-slate-300 text-sm">곧 시작됩니다</p>
-              </>
-            )}
+      {/* 결과 화면 다음 회차(약점 공략) 준비 오버레이 — 목록과 동일한 큐레이션 효과 */}
+      {showNextRoundPreparing && nextRoundInfo && nextRoundInfo.round >= 4 && (() => {
+        const qs = nextRoundFetchedQuestions ?? [];
+        const includedConcepts = Array.isArray(qs)
+          ? [...new Set(qs.map((q) => q.core_concept).filter((c): c is string => Boolean(c)))]
+          : [];
+        const displayName = user?.givenName ?? user?.name ?? user?.email?.split('@')[0] ?? '회원';
+        const top2Concepts = includedConcepts.slice(0, 2);
+        const subMessage = top2Concepts.length > 0
+          ? `${displayName}님의 취약개념 ${top2Concepts.join(', ')} 개념을 포함해 맞춤 문항을 제작하고 있어요.`
+          : '당신의 취약 유형·취약 개념을 반영해 맞춤 문항을 제작하고 있어요.';
+        return (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-4">
+            <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden">
+              <div className="px-8 py-10 text-center">
+                {nextRoundPreparingPhase === 'countdown' ? (
+                  <>
+                    <div className="flex justify-center mb-6">
+                      <div className="w-16 h-16 rounded-2xl bg-[#1e56cd]/20 border border-[#99ccff]/30 flex items-center justify-center">
+                        <Loader2 className="w-8 h-8 text-[#99ccff] animate-spin" strokeWidth={2.5} />
+                      </div>
+                    </div>
+                    <h3 className="text-[#e2e8f0] font-bold text-lg tracking-tight mb-3">모의고사 큐레이션 중</h3>
+                    <p className="text-slate-300 text-sm leading-relaxed mb-1">학습데이터를 기반으로 모의고사를 큐레이션하는 중입니다.</p>
+                    <p className="text-[#99ccff] text-sm leading-relaxed font-medium mb-6">{subMessage}</p>
+                    <p className="text-slate-500 text-xs font-medium">잠시만 기다려 주세요</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-center mb-5">
+                      <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center">
+                        <Sparkles className="w-8 h-8 text-emerald-300" strokeWidth={2} />
+                      </div>
+                    </div>
+                    <h3 className="text-white font-bold text-xl mb-1">맞춤형 모의고사가 준비되었습니다</h3>
+                    {top2Concepts.length > 0 && (
+                      <p className="text-slate-300 text-sm mb-3">{displayName}님의 취약개념 {top2Concepts.join(', ')} 개념을 포함했어요</p>
+                    )}
+                    <p className="text-slate-400 text-sm font-medium">곧 퀴즈 화면으로 이동합니다</p>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 결과 화면 "다시 풀기" → AI 학습 모드 / 실전 모드 선택 후 바로 퀴즈 시작 */}
       {showRetryModeModal && selectedRoundId && (

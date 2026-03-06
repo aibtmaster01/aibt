@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:beta": "VITE_APP_BRAND=AiBT VITE_FEATURE_COUPON=true vite",
     "build": "vite build",
     "build:beta": "vite build --mode beta",
     "preview": "vite preview",

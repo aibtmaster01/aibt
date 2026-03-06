@@ -5,7 +5,6 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { getQuestionIndexFromCache, syncQuestionIndex, type QuestionIndexItem } from './db/localCacheDB';
-import { fetchQuestionsFromPools } from './examService';
 import type { Question } from '../types';
 
 const QUESTION_POOL_ID_BY_CERT: Record<string, string> = {
@@ -80,12 +79,13 @@ export function getIndexItemByQid(
   return items?.find((it) => it.q_id === qId);
 }
 
-/** 현재 페이지 q_id 목록으로 문제 전체 로드 */
+/** 현재 페이지 q_id 목록으로 문제 전체 로드 (examService 동적 로드로 순환 의존성 방지) */
 export async function fetchQuestionsForAdmin(
   certCode: string,
   qIds: string[]
 ): Promise<Question[]> {
   if (qIds.length === 0) return [];
+  const { fetchQuestionsFromPools } = await import('./examService');
   return fetchQuestionsFromPools(certCode, qIds);
 }
 

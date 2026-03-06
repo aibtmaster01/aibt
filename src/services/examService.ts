@@ -28,8 +28,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question, User, type ExamAnswerEntry, type UserRound } from '../types';
-import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
-import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
+import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, WRONG_FEEDBACK_PLACEHOLDER } from '../constants';
 import {
   hasQuestionMetadataForCert,
   getQuestionMetadataByCert,
@@ -40,6 +39,7 @@ import {
   type QuestionIndexItem,
 } from './db/localCacheDB';
 import { getCertificationInfo } from './gradingService';
+import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
 
 const IN_QUERY_LIMIT = 30; // Firestore 'in' 쿼리 최대 30개 (대량 로딩 병렬화)
 
@@ -59,7 +59,7 @@ interface StaticExamDoc {
   timeLimit?: number;
 }
 
-/** Firestore 문제 문서 실제 규격 (question_text, difficulty_level, q_id, core_concept/topic 등) */
+/** Firestore 문제 문서 실제 규격 */
 export interface FirestoreQuestionDoc {
   q_id?: string;
   question_text?: string;
@@ -71,9 +71,8 @@ export interface FirestoreQuestionDoc {
   wrong_feedback?: Record<string, string> | string[];
   image?: string;
   difficulty_level?: number;
-  /** 통계/큐레이션 1단계 분류: 핵심 개념 (우선 참조) */
   core_concept?: string;
-  /** 전체 경로 3단계 - 표시/하위 호환용 */
+  hierarchy?: string;
   topic?: string;
   random_id?: number;
   tags?: string[];
@@ -83,35 +82,13 @@ export interface FirestoreQuestionDoc {
   problem_types?: string[];
   subject_number?: number;
   core_id?: string;
-  /** 세부 개념 ID (예: "22-2") - proficiency·대시보드 집계용 */
   sub_core_id?: string;
   round?: number;
-  /** 문제 본문 표 (HTML 또는 { headers, rows }) */
   table_data?: string | { headers: string[]; rows: string[][] } | null;
-  /** 난이도/함정 등 큐레이션용 (difficulty, trap_score, comp_diff 등) */
   stats?: Record<string, number>;
 }
 
-export type ExamAccessResult = { allowed: boolean; reason?: string };
-
-/** core_concept별 stat (stats.core_concept_stats 항목 또는 약점 계획용) */
-interface UserWeaknessStat {
-  proficiency?: number;
-  misconception_count?: number;
-  last_attempted_at?: { toDate: () => Date };
-}
-
-/** users/{uid}/stats/{certCode} 문서 - core_concept_stats, tag_stats, subject_stats 등 (채점 시 갱신) */
-interface UserStatsForCert {
-  core_concept_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number }>;
-  tag_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number }>;
-  /** 과목별 이해도(Elo)·정답수 등 - 채점 시 subject_number 키로 갱신 */
-  subject_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number }>;
-  confused_qids?: string[];
-  problem_type_stats?: Record<string, unknown>;
-  /** 세부 개념별 통계 (취약 개념 분석 상위 3개와 동일 소스) */
-  sub_core_id_stats?: Record<string, { total?: number; proficiency?: number }>;
-}
+export type AiMockExamMode = 'REAL_EXAM' | 'WEAKNESS_ATTACK';
 
 /** AI 모의고사 계획 - core_concept별 출제 조건 */
 export interface WeaknessPlanItem {
@@ -127,133 +104,50 @@ export interface AdaptiveExamPlan {
   randomCount: number;
 }
 
-/**
- * 우선순위 점수 계산 (Priority Score)
- * Priority = (100 - Proficiency) × 0.5 + DaysSince × 0.3 + MisconceptionCount × 5 × 0.2
- * - Proficiency: 0~100 (eloToPercent 변환 후 사용 시)
- * - DaysSince: 마지막 시도 경과일
- * - MisconceptionCount: 헷갈림(오개념) 누적 횟수
- */
-function calculatePriority(stat: UserWeaknessStat): number {
+interface UserWeaknessStat {
+  proficiency?: number;
+  misconception_count?: number;
+  last_attempted_at?: { toDate: () => Date };
+}
+
+/** users/{uid}/stats/{certCode} 문서 */
+export interface UserStatsForCert {
+  core_concept_stats?: Record<string, { correct?: number; total?: number; misconception_count?: number; proficiency?: number; last_attempted_at?: { toDate: () => Date } }>;
+  hierarchy_stats?: Record<string, { proficiency?: number; misconception_count?: number; total?: number; correct?: number; last_attempted_at?: { toDate: () => Date } }>;
+}
+
+function _calculatePriority(stat: UserWeaknessStat): number {
   const proficiency = stat.proficiency ?? 0;
   const misconceptionCount = stat.misconception_count ?? 0;
-
   let daysSince = 14;
   if (stat.last_attempted_at && typeof stat.last_attempted_at.toDate === 'function') {
     const lastDate = stat.last_attempted_at.toDate();
     daysSince = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
   }
-
   return (100 - proficiency) * 0.5 + daysSince * 0.3 + misconceptionCount * 5 * 0.2;
 }
 
-/**
- * 단원명 정규화 (stats/ question_pools 문서 ID 매칭용)
- * 공백·대소문자 차이로 매칭 실패 방지
- */
-export function normalizeUnitKey(s: string | undefined | null): string {
-  if (!s || typeof s !== 'string') return '';
-  return s.trim().replace(/\s+/g, ' ').toLowerCase();
+async function _fetchUserWeaknessStats(uid: string, certCode: string): Promise<Record<string, UserWeaknessStat>> {
+  const ref = doc(db, 'users', uid, 'stats', certCode);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return {};
+  const data = snap.data() as UserStatsForCert;
+  const conceptStats = data.core_concept_stats ?? data.hierarchy_stats ?? {};
+  const out: Record<string, UserWeaknessStat> = {};
+  for (const [key, entry] of Object.entries(conceptStats)) {
+    if (!key) continue;
+    const e = entry as { proficiency?: number; misconception_count?: number; last_attempted_at?: { toDate: () => Date } };
+    out[key] = { proficiency: e.proficiency, misconception_count: e.misconception_count, last_attempted_at: e.last_attempted_at };
+  }
+  return out;
 }
 
-/**
- * topic에서 학습 단원 추출 (stats/ question_pools 키와 매칭용)
- * "BIGDATA > 상관분석 > 시각화" → "상관분석"
- */
 export function extractTopicUnit(topic: string | undefined): string | null {
   if (!topic || typeof topic !== 'string') return null;
   const parts = topic.split(' > ').map((s) => s.trim()).filter(Boolean);
   return parts.length >= 2 ? parts[1] : null;
 }
 
-/**
- * users/{uid}/stats/{certCode}에서 core_concept_stats 기반 약점 스탯 Fetch (구 hierarchy_stats 폴백)
- */
-async function fetchUserWeaknessStats(
-  uid: string,
-  certCode: string
-): Promise<Record<string, UserWeaknessStat>> {
-  const ref = doc(db, 'users', uid, 'stats', certCode);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return {};
-  const data = snap.data() as UserStatsForCert;
-  const conceptStats = data.core_concept_stats ?? (data as { hierarchy_stats?: Record<string, unknown> }).hierarchy_stats ?? {};
-  const out: Record<string, UserWeaknessStat> = {};
-  for (const [key, entry] of Object.entries(conceptStats)) {
-    if (!key) continue;
-    const e = entry as { proficiency?: number; misconception_count?: number };
-    out[key] = {
-      proficiency: e.proficiency,
-      misconception_count: e.misconception_count,
-    };
-  }
-  return out;
-}
-
-/**
- * AI 모의고사 계획 생성 (D-Day 기반 비율 조절)
- */
-export async function generateAdaptiveExamPlan(
-  uid: string,
-  certCode: string,
-  targetExamDate: string | null
-): Promise<AdaptiveExamPlan> {
-  const TOTAL_QUESTIONS = 80;
-
-  let isRealExamMode = false;
-  if (targetExamDate) {
-    const daysLeft = Math.floor(
-      (new Date(targetExamDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-    );
-    if (daysLeft <= 7) isRealExamMode = true;
-  }
-
-  const targetRatio = isRealExamMode ? 0.4 : 0.8;
-  const weaknessQCount = Math.floor(TOTAL_QUESTIONS * targetRatio);
-  const randomQCount = TOTAL_QUESTIONS - weaknessQCount;
-
-  const userStats = await fetchUserWeaknessStats(uid, certCode);
-
-  const rankedTopics = Object.entries(userStats)
-    .map(([core_concept, stat]) => ({
-      core_concept,
-      proficiency: stat.proficiency ?? 0,
-      priorityScore: calculatePriority(stat),
-    }))
-    .sort((a, b) => b.priorityScore - a.priorityScore)
-    .slice(0, 3);
-
-  const weaknessPlan: WeaknessPlanItem[] = rankedTopics.map((topic) => {
-    const targetDifficulty = topic.proficiency < 50 ? [1, 2] : [3, 4, 5];
-    return {
-      core_concept: topic.core_concept,
-      difficultyLevels: targetDifficulty,
-      count: Math.floor(weaknessQCount / 3),
-    };
-  });
-
-  return {
-    mode: isRealExamMode ? 'REAL_EXAM_BALANCE' : 'WEAKNESS_ATTACK',
-    plan: weaknessPlan,
-    randomCount: randomQCount + (weaknessQCount % 3),
-  };
-}
-
-/** Fisher-Yates Shuffle */
-function shuffleArray<T>(arr: T[]): T[] {
-  const out = [...arr];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
-
-/**
- * Firestore 문제 문서 → Question 변환 (실제 필드 규격 반영)
- * - 모든 큐레이션/통계 기준: core_concept 우선, 없을 때만 topic에서 단원 추출
- */
 export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc): Question {
   const baseExplanation = data.explanation ?? '';
   const aiExplanation = data.ai_explanation ?? '';
@@ -276,8 +170,7 @@ export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc):
     core_concept: coreConcept ?? undefined,
     tags: Array.isArray(data.tags) ? data.tags : [],
     trend: data.trend ?? null,
-    estimated_time_sec:
-      typeof data.estimated_time_sec === 'number' ? data.estimated_time_sec : 0,
+    estimated_time_sec: typeof data.estimated_time_sec === 'number' ? data.estimated_time_sec : 0,
     trap_score: typeof data.trap_score === 'number' ? data.trap_score : 0,
     problem_types: Array.isArray(data.problem_types) ? data.problem_types : undefined,
     subject_number: typeof data.subject_number === 'number' ? data.subject_number : undefined,
@@ -288,6 +181,54 @@ export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc):
     tableData: data.table_data ?? undefined,
   };
 }
+
+export async function generateAdaptiveExamPlan(
+  uid: string,
+  certCode: string,
+  targetExamDate: string | null
+): Promise<AdaptiveExamPlan> {
+  const TOTAL_QUESTIONS = 80;
+  let isRealExamMode = false;
+  if (targetExamDate) {
+    const daysLeft = Math.floor((new Date(targetExamDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    if (daysLeft <= 7) isRealExamMode = true;
+  }
+  const targetRatio = isRealExamMode ? 0.4 : 0.8;
+  const weaknessQCount = Math.floor(TOTAL_QUESTIONS * targetRatio);
+  const randomQCount = TOTAL_QUESTIONS - weaknessQCount;
+  const userStats = await _fetchUserWeaknessStats(uid, certCode);
+  const rankedTopics = Object.entries(userStats)
+    .map(([core_concept, stat]) => ({ core_concept, proficiency: stat.proficiency ?? 0, priorityScore: _calculatePriority(stat) }))
+    .sort((a, b) => b.priorityScore - a.priorityScore)
+    .slice(0, 3);
+  const weaknessPlan: WeaknessPlanItem[] = rankedTopics.map((topic) => {
+    const targetDifficulty = topic.proficiency < 50 ? [1, 2] : [3, 4, 5];
+    return { core_concept: topic.core_concept, difficultyLevels: targetDifficulty, count: Math.floor(weaknessQCount / 3) };
+  });
+  return { mode: isRealExamMode ? 'REAL_EXAM_BALANCE' : 'WEAKNESS_ATTACK', plan: weaknessPlan, randomCount: randomQCount + (weaknessQCount % 3) };
+}
+
+export type ExamAccessResult = { allowed: boolean; reason?: string };
+
+/**
+ * 단원명 정규화 (stats/ question_pools 문서 ID 매칭용)
+ * 공백·대소문자 차이로 매칭 실패 방지
+ */
+export function normalizeUnitKey(s: string | undefined | null): string {
+  if (!s || typeof s !== 'string') return '';
+  return s.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Fisher-Yates Shuffle */
+function shuffleArray<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 
 /**
  * 계획(plan) 기반 약점 문제 Fetch
@@ -511,8 +452,6 @@ async function fetchFromCollectionGroupFallback(
 }
 
 const TOTAL_QUESTIONS = 80;
-
-export type AiMockExamMode = 'REAL_EXAM' | 'WEAKNESS_ATTACK';
 
 /** 큐레이션된 문제 목록의 총 예상 풀이 시간(초) */
 export function getTotalEstimatedTimeSec(questions: Question[]): number {
@@ -1075,8 +1014,8 @@ export function checkExamAccess(params: {
 
 /** 오답 가이드 플레이스홀더 (Quiz에서 게스트 오답 영역 노출용) */
 export const PREMIUM_EXPLANATION_PLACEHOLDER = '가입 후 확인하기';
-/** 오답 가이드 비프리미엄 문구 (게스트/무료 공통) */
-export const WRONG_FEEDBACK_PLACEHOLDER = '열공모드 가입 후 오답인 이유 확인하기';
+/** 오답 가이드 비프리미엄 문구 (constants에서 re-export, 순환 의존성 방지) */
+export { WRONG_FEEDBACK_PLACEHOLDER };
 
 /**
  * [3] 데이터 마스킹 정책
@@ -1281,7 +1220,6 @@ export async function getQuestionsForRound(
   } else {
     /** 맞춤형: round >= 6 → 큐레이션 기반 생성 후 user_rounds 저장 */
     if (!user) throw new Error('맞춤형 모의고사는 로그인이 필요합니다.');
-    const { fetchAdaptiveQuestions } = await import('./aiRoundCurationService');
     questions = await fetchAdaptiveQuestions(user.id, certId, user, round);
     sourceRounds = [round];
   }
@@ -1308,6 +1246,21 @@ export async function getQuestionsForRound(
   }
 
   return maskQuestionData(questions, grade);
+}
+
+/**
+ * Round 6+ 맞춤형 문제 Fetch — aiRoundCurationService를 동적 로드해 순환 의존성 제거.
+ * Quiz 등에서는 이 함수만 사용하고 aiRoundCurationService를 직접 import하지 말 것.
+ */
+export async function fetchAdaptiveQuestions(
+  uid: string,
+  certId: string,
+  user: User | null,
+  round: number,
+  curationMode?: 'REAL_EXAM' | 'WEAKNESS_ATTACK'
+): Promise<Question[]> {
+  const m = await import('./aiRoundCurationService');
+  return m.fetchAdaptiveQuestions(uid, certId, user, round, curationMode);
 }
 
 const WEAKNESS_RETRY_MAX = 50;

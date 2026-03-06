@@ -312,6 +312,11 @@ export async function loginWithGoogle(intentData?: GoogleRedirectIntent): Promis
           // ignore
         }
       }
+      try {
+        sessionStorage.setItem('finset_google_redirect_pending', '1');
+      } catch {
+        // ignore
+      }
       await signInWithRedirect(auth, provider);
       return;
     }

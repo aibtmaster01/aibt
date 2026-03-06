@@ -49,7 +49,7 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [searchType, setSearchType] = useState<'code' | 'name' | 'user'>('code');
   const [searchQuery, setSearchQuery] = useState('');
-  const [includeExpired, setIncludeExpired] = useState(false);
+  const [hideRevoked, setHideRevoked] = useState(true);
   const [detailRow, setDetailRow] = useState<CouponRow | null>(null);
   const [bulkExpiryDate, setBulkExpiryDate] = useState('');
   const [bulkCertCode, setBulkCertCode] = useState('BIGDATA');
@@ -62,6 +62,20 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
   const COUPON_NAME_MAX = 15;
 
   const { certInfos } = useAllCertificationInfos();
+
+  const certName = useCallback(
+    (code: string) => getCertDisplayName(CERTIFICATIONS.find((c) => c.code === code) ?? CERTIFICATIONS[0], certInfos[code] ?? null),
+    [certInfos]
+  );
+
+  const formatTimestamp = useCallback((v: CouponRow['createdAt'] | CouponRow['redeemedAt']): string => {
+    if (!v) return '—';
+    if (typeof v === 'object' && v !== null && 'toDate' in v && typeof (v as { toDate?: () => Date }).toDate === 'function') {
+      const d = (v as { toDate: () => Date }).toDate();
+      return d.toISOString().slice(0, 10);
+    }
+    return '—';
+  }, []);
 
   const reloadCoupons = useCallback(async () => {
     const snap = await getDocs(collection(db, 'coupons'));
@@ -100,6 +114,59 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
     }
     navigator.clipboard.writeText(text).then(() => showToast('success', `${unique.length}명 이메일 복사됨`)).catch(() => showToast('error', '복사 실패'));
   }, [coupons, selectedIds, showToast]);
+
+  const downloadSelectedCsv = useCallback(() => {
+    const selected = coupons.filter((c) => selectedIds.has(c.id));
+    if (selected.length === 0) {
+      showToast('error', '다운로드할 쿠폰을 선택해 주세요.');
+      return;
+    }
+
+    const escapeCsv = (v: unknown) => {
+      const s = (v ?? '').toString();
+      // Excel 호환을 위해 항상 쌍따옴표로 감싸고 내부 따옴표는 이스케이프
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+
+    const rows = selected
+      .slice()
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((row) => {
+        const status = (() => {
+          if (row.revoked) return '폐기됨';
+          if (row.expiryDate && row.expiryDate < today()) return '만료';
+          if (row.used) return '사용중';
+          return '미사용';
+        })();
+        return [
+          row.id,
+          (row.couponName ?? '').slice(0, COUPON_NAME_MAX) || '—',
+          row.expiryDate ?? '—',
+          row.certCode ? certName(row.certCode) : '—',
+          status,
+          row.redeemedBy ?? '—',
+          formatTimestamp(row.createdAt),
+          formatTimestamp(row.redeemedAt),
+        ];
+      });
+
+    const header = ['쿠폰코드', '쿠폰 이름', '만료기일', '자격증명', '상태', '사용자 이메일', '생성일', '사용시작일'];
+    const csv = [
+      '\uFEFF' + header.map(escapeCsv).join(','), // BOM 포함 (엑셀 한글 깨짐 방지)
+      ...rows.map((r) => r.map(escapeCsv).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `coupons_selected_${today()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('success', `CSV 다운로드: ${selected.length}건`);
+  }, [COUPON_NAME_MAX, certName, coupons, formatTimestamp, selectedIds, showToast]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -267,15 +334,10 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
     }
   };
 
-  const certName = (code: string) => getCertDisplayName(CERTIFICATIONS.find((c) => c.code === code) ?? CERTIFICATIONS[0], certInfos[code] ?? null);
-
   const filteredCoupons = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const now = today();
     let list = coupons;
-    if (!includeExpired) {
-      list = list.filter((c) => !c.expiryDate || c.expiryDate >= now);
-    }
+    if (hideRevoked) list = list.filter((c) => !c.revoked);
     if (q) {
       list = list.filter((c) => {
         if (searchType === 'code') return c.id.toLowerCase().includes(q);
@@ -285,22 +347,13 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
       });
     }
     return [...list].sort((a, b) => a.id.localeCompare(b.id));
-  }, [coupons, searchQuery, searchType, includeExpired]);
+  }, [coupons, searchQuery, searchType, hideRevoked]);
 
   const getStatus = (row: CouponRow): '폐기됨' | '만료' | '사용중' | '미사용' => {
     if (row.revoked) return '폐기됨';
     if (row.expiryDate && row.expiryDate < today()) return '만료';
     if (row.used) return '사용중';
     return '미사용';
-  };
-
-  const formatTimestamp = (v: CouponRow['createdAt'] | CouponRow['redeemedAt']): string => {
-    if (!v) return '—';
-    if (typeof v === 'object' && v !== null && 'toDate' in v && typeof (v as { toDate?: () => Date }).toDate === 'function') {
-      const d = (v as { toDate: () => Date }).toDate();
-      return d.toISOString().slice(0, 10);
-    }
-    return '—';
   };
 
   return (
@@ -336,11 +389,11 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
               <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
                 <input
                   type="checkbox"
-                  checked={includeExpired}
-                  onChange={(e) => setIncludeExpired(e.target.checked)}
+                  checked={hideRevoked}
+                  onChange={(e) => setHideRevoked(e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-[#0034d3] focus:ring-[#0034d3]"
                 />
-                만료된 쿠폰 포함
+                폐기된 쿠폰 숨김
               </label>
               <button
                 type="button"
@@ -363,6 +416,14 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
                 className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 이메일 복사 {selectedIds.size > 0 ? `(${selectedIds.size}명)` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={downloadSelectedCsv}
+                disabled={selectedIds.size === 0}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                CSV 다운로드 {selectedIds.size > 0 ? `(${selectedIds.size}건)` : ''}
               </button>
               <button
                 type="button"
@@ -418,7 +479,14 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
                   </tr>
                 ) : (
                   filteredCoupons.map((row, idx) => (
-                    <tr key={row.id} className="hover:bg-slate-50/60">
+                    <tr
+                      key={row.id}
+                      className={
+                        row.revoked
+                          ? 'bg-slate-50 text-slate-400 opacity-80'
+                          : 'hover:bg-slate-50/60'
+                      }
+                    >
                       <td className="w-12 px-4 py-3">
                         <input
                           type="checkbox"
@@ -428,7 +496,16 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
                         />
                       </td>
                       <td className="w-14 px-4 py-3 text-center text-slate-500 font-medium">{idx + 1}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800">{row.id}</td>
+                      <td className="px-4 py-3 font-medium">
+                        <span className={row.revoked ? 'text-slate-400 line-through' : 'text-slate-800'}>
+                          {row.id}
+                        </span>
+                        {!hideRevoked && row.revoked && (
+                          <span className="ml-2 inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-bold text-red-700">
+                            폐기됨
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap" style={{ minWidth: '15ch' }}>
                         {(row.couponName ?? '').slice(0, COUPON_NAME_MAX) || '—'}
                       </td>
@@ -437,7 +514,13 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
                       <td className="px-4 py-3">
                         {(() => {
                           const status = getStatus(row);
-                          if (status === '폐기됨') return <span className="text-red-600 font-bold">폐기됨</span>;
+                          if (status === '폐기됨') {
+                            return (
+                              <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-bold text-red-700">
+                                폐기됨
+                              </span>
+                            );
+                          }
                           if (status === '만료') return <span className="text-slate-500 font-medium">만료</span>;
                           if (status === '사용중') return <span className="text-amber-600 font-bold">사용중</span>;
                           return <span className="text-slate-500">미사용</span>;

@@ -3,7 +3,7 @@ import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebas
 import { db } from '../firebase';
 import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
 import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
-import { getQuestionsForRound } from '../services/examService';
+import { getExamService } from '../services/examServiceLoader';
 import { eloToPercent } from '../services/gradingService';
 import { User } from '../types';
 import type { ExamRound } from '../types';
@@ -265,7 +265,8 @@ export const ExamList: React.FC<ExamListProps> = ({
       setPreparingPhase('countdown');
       if (user && certId) {
         staticPreFetchedQuestionsRef.current = null;
-        getQuestionsForRound(certId, nextRound.round, user)
+        getExamService()
+          .then((m) => m.getQuestionsForRound(certId, nextRound.round, user))
           .then((qs) => { staticPreFetchedQuestionsRef.current = qs; })
           .catch(() => { staticPreFetchedQuestionsRef.current = []; });
       }
@@ -393,7 +394,8 @@ export const ExamList: React.FC<ExamListProps> = ({
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
-      getQuestionsForRound(certId, roundNum, user)
+      getExamService()
+        .then((m) => m.getQuestionsForRound(certId, roundNum, user))
         .then((qs) => { staticPreFetchedQuestionsRef.current = qs; })
         .catch(() => { staticPreFetchedQuestionsRef.current = []; });
     }

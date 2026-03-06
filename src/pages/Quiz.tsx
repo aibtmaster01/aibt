@@ -1,17 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Question, User } from '../types';
-import {
-  getQuestionsForRound,
-  checkExamAccess,
-  markWeaknessTrialUsed,
-} from '../services/examService';
-import { fetchAdaptiveQuestions } from '../services/aiRoundCurationService';
-import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT } from '../constants';
+import { getExamService } from '../services/examServiceLoader';
+import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT, WRONG_FEEDBACK_PLACEHOLDER } from '../constants';
 import { getCertificationInfo } from '../services/gradingService';
 import type { CertificationInfo } from '../types';
 import { saveGuestQuizProgress, loadGuestQuizProgress } from '../utils/guestQuizStorage';
 import { CheckCircle, XCircle, AlertTriangle, StickyNote, ChevronLeft, ChevronRight, ChevronDown, Crown, Lightbulb, AlertCircle, Search, RotateCcw, X, Pin, Menu, LogOut } from 'lucide-react';
-import { WRONG_FEEDBACK_PLACEHOLDER } from '../services/examService';
 import { RichText } from '../components/RichText';
 import { to1BasedAnswer } from '../utils/questionUtils';
 import { ErrorView } from '../components/ErrorView';
@@ -151,8 +145,9 @@ export const Quiz: React.FC<QuizProps> = ({
           }
           return;
         }
+        const exam = await getExamService();
         if (!weaknessRetryMode) {
-          const access = checkExamAccess({
+          const access = exam.checkExamAccess({
             user,
             certId,
             round,
@@ -186,9 +181,9 @@ export const Quiz: React.FC<QuizProps> = ({
             return;
           }
           const roundNum = roundInfo?.round ?? 6;
-          qs = await fetchAdaptiveQuestions(user.id, certId, user, roundNum);
+          qs = await exam.fetchAdaptiveQuestions(user.id, certId, user, roundNum);
         } else {
-          qs = await getQuestionsForRound(certId, round, user);
+          qs = await exam.getQuestionsForRound(certId, round, user);
         }
 
         if (!cancelled) {
@@ -222,7 +217,7 @@ export const Quiz: React.FC<QuizProps> = ({
             }
           }
           if (qs.length > 0 && isWeaknessRound && user && !user.weaknessTrialUsedByCert?.[certId]) {
-            markWeaknessTrialUsed(user.id, certId).then(() => {
+            exam.markWeaknessTrialUsed(user.id, certId).then(() => {
               onUpdateUser?.((u) => ({
                 ...u,
                 weaknessTrialUsedByCert: { ...(u.weaknessTrialUsedByCert ?? {}), [certId]: true },
