@@ -147,6 +147,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setLoading(false);
         submittingRef.current = false;
         if (IS_BETA_GOOGLE_ONLY) {
+          /** standalone(로그아웃 후 로그인 버튼 등): 쿠폰 단계 없이 구글 로그인만 하고 닫기 */
+          if (intent === 'standalone') {
+            (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+            return;
+          }
           /** 이미 쿠폰 등록된 회원(재로그인)이면 쿠폰 입력 단계 건너뛰기 */
           const hasCoupon = appUser.isPremium === true || (appUser.paidCertIds?.length ?? 0) > 0;
           if (hasCoupon) {

@@ -1,4 +1,5 @@
-// 배포 (실제 서버 aibt-99bc6 반영): firebase use default && firebase deploy --only firestore:rules
+// 배포: firebase use default && firebase deploy --only firestore:rules
+// (problem_reports 컬렉션 규칙 포함 — 배포 후 퀴즈 신고 기능 정상 동작)
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -20,6 +21,13 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // config/beta: BETATEST 쿠폰 사용 중지 여부. 로그인 사용자 읽기(팝업 판단), 관리자만 쓰기
+    match /config/beta {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true;
+    }
     // certifications: 관리자는 certification_info/config 시험일정 수정 가능 (자격증 관리 페이지)
     // exists()로 사용자 문서 존재 시에만 get() 호출해 권한 오류 방지
     match /certifications/{certCode}/certification_info/config {
@@ -37,6 +45,17 @@ service cloud.firestore {
     }
     // certifications 나머지: 읽기만
     match /certifications/{path=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+    // certifications_beta 문항: 로그인 사용자 신고(reports 배열 추가)용 update 허용
+    match /certifications_beta/{certCode}/question_pools/{poolId}/questions/{questionId} {
+      allow read: if true;
+      allow update: if request.auth != null;
+      allow create, delete: if false;
+    }
+    // certifications_beta 나머지: 읽기만 (인덱스·문항 업로드는 Admin SDK)
+    match /certifications_beta/{path=**} {
       allow read: if true;
       allow write: if false;
     }
@@ -76,6 +95,23 @@ service cloud.firestore {
       allow create, delete: if request.auth != null
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true;
+    }
+    // problem_attempt_stats: 채점 시 인증 사용자 쓰기, 관리자 읽기 (품질/베타 지표용)
+    match /problem_attempt_stats/{docId} {
+      allow read: if request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
+    }
+    // problem_reports: 퀴즈 내 문제 신고. 로그인 사용자 생성, 관리자만 읽기 (베타 지표·신고 확인용)
+    // 배포: firebase deploy --only firestore:rules
+    match /problem_reports/{reportId} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true;
+      allow update, delete: if false;
     }
   }
 }

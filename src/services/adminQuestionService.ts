@@ -1,11 +1,13 @@
 /**
  * 관리자 문제관리: 인덱스 필터, 문제 목록 조회, 문제 수정, 이미지 업로드
  */
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, updateDoc, arrayUnion, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { getQuestionIndexFromCache, syncQuestionIndex, type QuestionIndexItem } from './db/localCacheDB';
 import type { Question } from '../types';
+import { getCertificationsCollection } from '../config/brand';
+import { CERTIFICATIONS } from '../constants';
 
 const QUESTION_POOL_ID_BY_CERT: Record<string, string> = {
   BIGDATA: 'contents_1681',
@@ -93,7 +95,61 @@ export async function fetchQuestionsForAdmin(
 function getQuestionDocRef(certCode: string, qId: string) {
   const poolId = QUESTION_POOL_ID_BY_CERT[certCode];
   if (!poolId) return null;
-  return doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId);
+  return doc(db, getCertificationsCollection(certCode), certCode, 'question_pools', poolId, 'questions', qId);
+}
+
+/** 신고 유형 (problem_reports 저장용) */
+export type ProblemReportType = 'wrong_answer' | 'typo_or_error' | 'out_of_scope';
+
+/** (베타) 문제 신고 — problem_reports 컬렉션에 저장, 콘솔 즉시 로그. userElo는 읽기 실패 시 null로 둠. */
+export async function submitProblemReport(
+  certCode: string,
+  qid: string,
+  reportType: ProblemReportType,
+  userId: string | null
+): Promise<void> {
+  let userElo: number | null = null;
+  if (userId) {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', userId));
+      const data = userSnap.data();
+      const certId = CERTIFICATIONS.find((c) => c.code === certCode)?.id;
+      const eloByCert = (data?.elo_rating_by_cert as Record<string, number>) ?? {};
+      userElo = certId != null ? (eloByCert[certId] ?? null) : null;
+    } catch {
+      userElo = null;
+    }
+  }
+  const payload = {
+    certCode,
+    qid,
+    reportType,
+    userId: userId ?? null,
+    userElo,
+    createdAt: serverTimestamp(),
+  };
+  const docRef = await addDoc(collection(db, 'problem_reports'), payload);
+  console.log('[문제 신고] 접수됨 — 확인하세요:', { id: docRef.id, ...payload, createdAt: '(serverTimestamp)' });
+}
+
+/** (레거시) 문항 문서 reports 배열에 추가. 신규는 submitProblemReport 사용 권장 */
+export async function submitQuestionReport(
+  certCode: string,
+  qId: string,
+  text: string,
+  userId?: string | null
+): Promise<void> {
+  const ref = getQuestionDocRef(certCode, qId);
+  if (!ref) throw new Error('해당 자격증/문항을 찾을 수 없습니다.');
+  const trimmed = text.trim().slice(0, 100);
+  if (!trimmed) throw new Error('신고 내용을 입력해 주세요.');
+  await updateDoc(ref, {
+    reports: arrayUnion({
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+      userId: userId ?? null,
+    }),
+  });
 }
 
 /** 저장 시 wrong_feedback: 1-based Record → 0-based 배열로 저장 (JSON/기존 형식 호환) */

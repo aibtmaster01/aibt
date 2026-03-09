@@ -10,6 +10,7 @@ import { CERTIFICATIONS } from '../constants';
 import { getCertDisplayName } from '../services/gradingService';
 import { useAllCertificationInfos } from '../hooks/useCertificationInfo';
 import type { CouponDoc } from '../services/couponService';
+import { getBetatestCouponEnabled, setBetatestCouponEnabled, BETATEST_COUPON_CODE } from '../services/couponService';
 import { Plus, Copy, Ban, Search, Eye } from 'lucide-react';
 
 interface CouponRow extends CouponDoc {
@@ -58,6 +59,9 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
   const [bulkCodeMode, setBulkCodeMode] = useState<'auto' | 'manual'>('auto');
   const [bulkCodesList, setBulkCodesList] = useState<string[]>([]);
   const [bulkCodesText, setBulkCodesText] = useState('');
+  const [betatestEnabled, setBetatestEnabled] = useState<boolean>(true);
+  const [betatestConfigLoading, setBetatestConfigLoading] = useState(true);
+  const [betatestToggling, setBetatestToggling] = useState(false);
 
   const COUPON_NAME_MAX = 15;
 
@@ -103,6 +107,13 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
     };
     load();
   }, [showToast]);
+
+  useEffect(() => {
+    getBetatestCouponEnabled()
+      .then(setBetatestEnabled)
+      .catch(() => setBetatestEnabled(true))
+      .finally(() => setBetatestConfigLoading(false));
+  }, []);
 
   const handleCopySelected = useCallback(() => {
     const emails = coupons.filter((c) => selectedIds.has(c.id) && c.redeemedBy).map((c) => c.redeemedBy as string);
@@ -250,17 +261,19 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
       return;
     }
     const couponName = newCouponName.trim().slice(0, COUPON_NAME_MAX);
+    const isBetatest = code.toUpperCase() === BETATEST_COUPON_CODE;
     setSubmitting(true);
     try {
       await setDoc(doc(db, 'coupons', code), {
-        couponName: couponName || undefined,
+        couponName: couponName || (isBetatest ? '배포용 베타테스트' : undefined),
         expiryDate: newExpiryDate,
         certCode: newCertCode,
         premiumDays: newPremiumDays,
         used: false,
+        ...(isBetatest && { reusable: true }),
         createdAt: serverTimestamp(),
       });
-      showToast('success', `쿠폰 ${code} 등록되었습니다.`);
+      showToast('success', `쿠폰 ${code} 등록되었습니다.${isBetatest ? ' (배포용·재사용 가능)' : ''}`);
       setModal(null);
       setNewCode('');
       setNewCouponName('');
@@ -356,9 +369,89 @@ export default function AdminBilling({ onBack }: AdminBillingProps) {
     return '미사용';
   };
 
+  const handleBetatestToggle = async () => {
+    setBetatestToggling(true);
+    try {
+      const next = !betatestEnabled;
+      await setBetatestCouponEnabled(next);
+      setBetatestEnabled(next);
+      showToast('success', next ? 'BETATEST 쿠폰 사용이 허용되었습니다.' : 'BETATEST 쿠폰 사용이 중지되었습니다. 베타테스트 이용자 로그인 시 안내 팝업이 표시됩니다.');
+    } catch (e) {
+      showToast('error', (e as Error).message || '설정 변경에 실패했습니다.');
+    } finally {
+      setBetatestToggling(false);
+    }
+  };
+
+  const handleCreateBetatestCoupon = async () => {
+    const code = BETATEST_COUPON_CODE;
+    if (coupons.some((c) => c.id.toUpperCase() === code)) {
+      showToast('error', 'BETATEST 쿠폰이 이미 존재합니다.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const expiry = new Date();
+      expiry.setFullYear(expiry.getFullYear() + 1);
+      await setDoc(doc(db, 'coupons', code), {
+        couponName: '배포용 베타테스트',
+        expiryDate: expiry.toISOString().slice(0, 10),
+        certCode: 'BIGDATA',
+        premiumDays: 365,
+        used: false,
+        reusable: true,
+        createdAt: serverTimestamp(),
+      });
+      showToast('success', '배포용 쿠폰 BETATEST가 생성되었습니다. 여러 사람이 중복 사용할 수 있습니다.');
+      await reloadCoupons();
+    } catch (e) {
+      showToast('error', (e as Error).message || '생성에 실패했습니다.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const hasBetatestCoupon = coupons.some((c) => c.id.toUpperCase() === BETATEST_COUPON_CODE);
+
   return (
     <div className="p-6 md:p-8 max-w-6xl">
       <h1 className="text-2xl font-black text-slate-900 mb-6">쿠폰 관리</h1>
+
+      {/* 배포용 쿠폰 (BETATEST): 사용 중지 토글 */}
+      <div className="mb-6 p-4 rounded-xl border border-slate-200 bg-slate-50/50">
+        <h2 className="text-sm font-bold text-slate-700 mb-2">배포용 쿠폰 (BETATEST)</h2>
+        <p className="text-xs text-slate-500 mb-3">
+          코드 <code className="bg-white px-1.5 py-0.5 rounded font-mono">BETATEST</code>는 여러 사람이 중복 사용할 수 있습니다. 사용 중지하면 BETATEST로 이용 중이던 사용자가 로그인 시 &quot;베타테스트 기간이 종료되었습니다&quot; 안내 팝업을 봅니다.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          {betatestConfigLoading ? (
+            <span className="text-slate-500 text-sm">로딩 중...</span>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handleBetatestToggle}
+                disabled={betatestToggling}
+                className={`px-4 py-2 rounded-lg text-sm font-bold ${betatestEnabled ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'}`}
+              >
+                {betatestToggling ? '처리 중...' : betatestEnabled ? 'BETATEST 쿠폰 사용 중지' : 'BETATEST 쿠폰 다시 사용 허용'}
+              </button>
+              <span className="text-sm text-slate-600">
+                현재: {betatestEnabled ? '사용 허용됨' : '사용 중지됨'}
+              </span>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={handleCreateBetatestCoupon}
+            disabled={submitting || hasBetatestCoupon}
+            title={hasBetatestCoupon ? 'BETATEST 쿠폰이 이미 등록되어 있습니다.' : undefined}
+            className="px-4 py-2 rounded-lg bg-[#0034d3] text-white text-sm font-bold hover:bg-[#003087] disabled:opacity-50 disabled:cursor-default"
+          >
+            {hasBetatestCoupon ? 'BETATEST 쿠폰 (등록됨)' : 'BETATEST 쿠폰 생성'}
+          </button>
+        </div>
+      </div>
 
       {loading ? (
         <p className="text-slate-500">로딩 중...</p>

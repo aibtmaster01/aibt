@@ -8,8 +8,8 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   sendEmailVerification,
-  signInWithRedirect,
   signInWithPopup,
+  signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
   type User as FirebaseAuthUser,
@@ -93,6 +93,9 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
     (docData.purchased_schedule_ids_by_cert as Record<string, string[]>) ??
     undefined;
 
+  const prepLevel = docData.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
+  const usedBetatestCoupon = docData.usedBetatestCoupon === true;
+
   const baseUser = {
     familyName,
     givenName,
@@ -101,6 +104,8 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
     createdAt,
     weaknessTrialUsedByCert: weaknessTrialUsed,
     purchasedScheduleIdsByCert,
+    ...(prepLevel != null && { prepLevel }),
+    ...(usedBetatestCoupon && { usedBetatestCoupon: true }),
   };
 
   const isVerified = (docData.is_verified as boolean) !== false;
@@ -287,38 +292,27 @@ export interface GoogleRedirectIntent {
   questions: { id: string; [key: string]: unknown }[];
 }
 
-function isPopupBlockedOrClosed(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  return (
-    code === 'auth/popup-closed-by-user' ||
-    code === 'auth/cancelled-popup-request' ||
-    code === 'auth/popup-blocked' ||
-    code === 'auth/web-storage-unsupported'
-  );
-}
-
-/** Google 로그인: 팝업 우선, 실패 시 리다이렉트. intentData 있으면 리다이렉트 전 sessionStorage에 저장해 복귀 시 게스트 이어하기 복원용. */
+/** Google 로그인: 팝업 방식. intentData는 게스트 이어하기 등 복귀 시 복원용으로 sessionStorage에 저장. */
 export async function loginWithGoogle(intentData?: GoogleRedirectIntent): Promise<User | void> {
   const provider = new GoogleAuthProvider();
+  if (intentData) {
+    try {
+      sessionStorage.setItem(GOOGLE_REDIRECT_INTENT_KEY, JSON.stringify(intentData));
+    } catch {
+      // ignore
+    }
+  }
   try {
-    const result = await signInWithPopup(auth, provider);
-    return await completeGoogleSignIn(result.user);
+    const credential = await signInWithPopup(auth, provider);
+    return completeGoogleSignIn(credential.user);
   } catch (err: unknown) {
-    if (isPopupBlockedOrClosed(err)) {
-      if (intentData) {
-        try {
-          sessionStorage.setItem(GOOGLE_REDIRECT_INTENT_KEY, JSON.stringify(intentData));
-        } catch {
-          // ignore
-        }
-      }
-      try {
-        sessionStorage.setItem('finset_google_redirect_pending', '1');
-      } catch {
-        // ignore
-      }
-      await signInWithRedirect(auth, provider);
-      return;
+    if (err instanceof AuthError) throw err;
+    const code = (err as { code?: string })?.code;
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new AuthError('로그인 창이 닫혔습니다.', 'POPUP_CLOSED');
+    }
+    if (code === 'auth/operation-not-allowed') {
+      throw new AuthError('Google 로그인이 비활성화되어 있습니다.', 'GOOGLE_DISABLED');
     }
     throw err;
   }
@@ -363,6 +357,11 @@ export async function deleteUnverifiedUser(email: string, password: string): Pro
     // Firestore 문서 없을 수 있음
   }
   await deleteUser(u);
+}
+
+/** Firebase 사용자로 Firestore 사용자 조회/생성 (리다이렉트 복귀 후 세션 복구용). */
+export async function ensureAppUserFromFirebaseUser(fbUser: FirebaseAuthUser): Promise<User> {
+  return completeGoogleSignIn(fbUser);
 }
 
 /** 리다이렉트 복귀 시 한 번만 호출. Google 로그인 결과가 있으면 User 반환, 없으면 null. */
@@ -524,6 +523,34 @@ export async function updateDisplayName(uid: string, familyName: string, givenNa
   await updateProfile(u, { displayName: fullName });
   const userRef = doc(db, 'users', uid);
   await updateDoc(userRef, { familyName: f, givenName: g, name: fullName });
+}
+
+/** (베타 로컬) 학습 준비 수준 저장 — 쿠폰 입력 완료 시에만 호출 */
+export async function updateUserPrepLevel(
+  uid: string,
+  level: 'beginner' | 'intermediate' | 'advanced'
+): Promise<void> {
+  const userRef = doc(db, 'users', uid);
+  await updateDoc(userRef, { prep_level: level });
+}
+
+/** (베타 로컬) 쿠폰 완료 시 1회만 초기 Elo 세팅. 이미 해당 cert Elo가 있으면 건너뜀 */
+const INITIAL_ELO_BY_PREP: Record<'beginner' | 'intermediate' | 'advanced', number> = {
+  beginner: 1000,
+  intermediate: 1300,
+  advanced: 1600,
+};
+export async function setInitialEloByPrepLevel(
+  uid: string,
+  certId: string,
+  prepLevel: 'beginner' | 'intermediate' | 'advanced'
+): Promise<void> {
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  const eloByCert = (snap.data()?.elo_rating_by_cert as Record<string, number>) ?? {};
+  if (eloByCert[certId] != null) return;
+  const initial = INITIAL_ELO_BY_PREP[prepLevel];
+  await setDoc(userRef, { elo_rating_by_cert: { ...eloByCert, [certId]: initial } }, { merge: true });
 }
 
 /** 비밀번호 변경 (재인증 필요) */

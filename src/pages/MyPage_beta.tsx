@@ -1,3 +1,8 @@
+/**
+ * 베타 로컬 전용 마이페이지.
+ * - 예측 합격률: 모의고사 3회 이상 응시 시에만 표시 (실서버는 1회부터 표시).
+ * App.tsx에서 isBetaLocal일 때만 사용하며, 베타 실서버에는 영향 없음.
+ */
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -68,7 +73,7 @@ function getProblemTypeDescription(
   return DEFAULT_TYPE_DESCRIPTIONS[label] ?? "해당 유형에 대한 설명이 등록되지 않았습니다.";
 }
 
-export interface MyPageProps {
+export interface MyPageBetaProps {
   user: User;
   /** URL ?cert=xxx 로 진입 시 표시할 자격증 (예: 사이드바 목록에서 자격증 선택) */
   initialCertId?: string;
@@ -92,7 +97,9 @@ export interface MyPageProps {
   onLogout?: () => void;
 }
 
-export const MyPage: React.FC<MyPageProps> = ({
+const BETA_LOCAL_MIN_EXAMS_FOR_PASS_RATE = 3;
+
+export const MyPageBeta: React.FC<MyPageBetaProps> = ({
   user,
   initialCertId,
   onNavigate,
@@ -268,10 +275,11 @@ export const MyPage: React.FC<MyPageProps> = ({
   }, [user?.id, activeCert?.code]);
 
   useEffect(() => {
-    // 결과 화면에서 ?cert= 로 진입한 경우 지연 후 강제 새로고침 (2회차 저장 반영 타이밍 완화)
+    // 결과 화면에서 ?cert= 또는 ?refresh=1 로 진입한 경우 서버에서 강제 새로고침 (2회차 저장 반영)
     const fromResult = Boolean(initialCertIdRef.current);
-    if (fromResult) {
-      const t = setTimeout(() => loadMyPageData(true), 400);
+    const fromRefreshParam = typeof window !== 'undefined' && window.location.search.includes('refresh=1');
+    if (fromResult || fromRefreshParam) {
+      const t = setTimeout(() => loadMyPageData(true), fromRefreshParam ? 100 : 400);
       return () => clearTimeout(t);
     }
     loadMyPageData();
@@ -339,10 +347,12 @@ export const MyPage: React.FC<MyPageProps> = ({
       : "-";
 
   const hasLearningHistory = trend.length > 0;
+  /** 베타 로컬: 3회 이상 응시 시에만 예측 합격률 표시 */
+  const canShowPassRate = trend.length >= BETA_LOCAL_MIN_EXAMS_FOR_PASS_RATE;
   /** 실력진단 3회 미만이면 합격률 대신 진행 카드 표시 */
   const showDiagnosticProgressCard = diagnosticProgress?.status === 'in_progress';
-  /** 데이터 없을 땐 목업 미노출. 진행 카드일 때는 합격률 숫자 미표시 */
-  const displayRecentPassRate = hasLearningHistory && !showDiagnosticProgressCard && recentPassRate != null ? recentPassRate : 0;
+  /** 베타 로컬: 3회 미만이면 합격률 숫자 미표시. 진행 카드일 때도 미표시 */
+  const displayRecentPassRate = hasLearningHistory && !showDiagnosticProgressCard && recentPassRate != null && canShowPassRate ? recentPassRate : 0;
   const displayTrend = hasLearningHistory ? trend : [];
   const displaySubjectScores = hasLearningHistory ? subjectScores : [];
   /** 학습 이력 있으면 유료 여부와 관계없이 실제 유형/취약 데이터 표시 (샘플 문구·물음표 제거) */
@@ -579,6 +589,27 @@ export const MyPage: React.FC<MyPageProps> = ({
                     <p className="text-gray-700 text-sm px-2 text-center leading-relaxed">
                       {encouragementMessage}
                     </p>
+                  </div>
+                  {!isExpired && (
+                    <div className="mt-auto w-full pt-4">
+                      <button
+                        type="button"
+                        onClick={() => onSelectExam(activeCertId)}
+                        className="w-full bg-[#1e56cd] text-white px-6 py-4 rounded-full text-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-[#1e56cd]/90"
+                      >
+                        학습 시작하기 <ChevronRight className="w-5 h-5" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : !canShowPassRate ? (
+                <>
+                  <p className="text-gray-700 text-base font-bold mb-1 text-center w-full">예측 합격률</p>
+                  <p className="text-slate-500 text-sm mb-3 text-center w-full px-2">
+                    {trend.length}회 응시했습니다. 3회 이상 모의고사를 응시하면 예측 합격률을 확인할 수 있어요.
+                  </p>
+                  <div className="flex-1 flex items-center justify-center w-full">
+                    <p className="text-slate-600 text-sm text-center">모의고사를 더 풀어보세요!</p>
                   </div>
                   {!isExpired && (
                     <div className="mt-auto w-full pt-4">

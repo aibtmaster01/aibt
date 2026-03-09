@@ -15,6 +15,8 @@ import type {
 /** 예측 합격률 + 학습 기록용 목업 (trendData, recentPassRate) */
 export const mockTrendData: FetchUserTrendDataResult = {
   recentPassRate: 62,
+  diagnosticProgress: { completed: 3, total: 3, status: 'completed' },
+  encouragementMessage: '',
   trendData: [
     { name: "1회", score: 55, date: "01.15", isPass: false, examId: "mock-1", roundId: "r1", totalQuestions: 20, correctCount: 11 },
     { name: "2회", score: 58, date: "01.18", isPass: false, examId: "mock-2", roundId: "r2", totalQuestions: 20, correctCount: 12 },

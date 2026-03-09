@@ -9,11 +9,12 @@
  * - Elo 유지
  */
 
-import { doc, getDoc, setDoc, updateDoc, Timestamp, increment } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, Timestamp, increment, query, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question } from '../types';
 import type { Certification, CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { CERTIFICATIONS } from '../constants';
+import { useBetaCertifications } from '../config/brand';
 
 /** 자격증 표시 이름: certification_info.exam_name 우선, 없으면 constants cert.name */
 export function getCertDisplayName(cert: Certification | null | undefined, certInfo: CertificationInfo | null | undefined): string {
@@ -25,6 +26,11 @@ const K_FACTOR = 32;
 const DEFAULT_ELO = 1200;
 /** Elo 기반 proficiency 계산 시 문제 난이도 (고정) */
 const PROBLEM_DIFFICULTY_ELO = 1200;
+
+/** 실제 시험 출제 난이도 기준 (0~1). 이 수준이면 보정 없음 */
+const REFERENCE_DIFFICULTY = 0.6;
+/** 난이도 가중치: w_i = 1 + BETA * (d_i - REF). 0.6 근처 문항이 합격률에 직결 */
+const DIFFICULTY_WEIGHT_BETA = 0.5;
 /** proficiency 갱신 민감도 (최신 결과 반영) */
 const PROFICIENCY_K_FACTOR = 32;
 
@@ -37,23 +43,48 @@ const MIN_SUBJECT_SCORE_FOR_STABILITY = 40;
 const STABILITY_FACTOR_WITH_FAIL = 0.8;
 const STABILITY_FACTOR_NO_FAIL = 1.0;
 
-/** Expected score: 1 / (1 + 10^((problemElo - userProficiency) / 400)) */
+/** difficulty_level 1~5 → 0~1 (실제 시험 ≈ 0.6). 없으면 0.6 */
+function getDifficulty01(q: Question | undefined): number {
+  const level = q?.difficulty_level;
+  if (level != null && level >= 1 && level <= 5) return 0.2 * level;
+  return REFERENCE_DIFFICULTY;
+}
+
+/** Expected (맞출 확률): 1 / (1 + 10^((problemElo - userProficiency) / 400)) */
 function expectedScore(userProficiency: number, problemElo: number = PROBLEM_DIFFICULTY_ELO): number {
   return 1 / (1 + Math.pow(10, (problemElo - userProficiency) / 400));
 }
 
-/**
- * Elo 스타일 proficiency 갱신: New = Old + K * (Outcome - Expected), Outcome 0 or 1
- * Lucky-Guess 보정: 맞춤(outcome=1)이면서 헷갈림(isConfused=true) 체크 시 "운으로 맞춘 것"으로 간주,
- * Elo 상승 폭에 0.2(20%)만 반영
- */
-function nextProficiency(oldProficiency: number, outcome: number, isConfused?: boolean): number {
-  const expected = expectedScore(oldProficiency);
-  let delta = outcome - expected;
-  if (outcome === 1 && isConfused === true) {
-    delta *= 0.2;
+/** 3차원 플래그 기반 가중치 (베타 보수적). Δ_final = Δ_base × WeightMultiplier */
+function getWeightMultiplier(
+  outcome: number,
+  isDontKnow: boolean,
+  isLucked: boolean,
+  isConfused: boolean
+): number {
+  if (outcome === 0) {
+    if (isDontKnow) return 1.3;
+    if (isConfused) return 1.1;
+    return 1.0;
   }
-  const newP = oldProficiency + PROFICIENCY_K_FACTOR * delta;
+  if (isLucked) return 0.2;
+  if (isConfused) return 0.4;
+  return 1.0;
+}
+
+/**
+ * Elo 스타일 proficiency 갱신: Δ_base = K×(Outcome−Expected), Δ_final = Δ_base × WeightMultiplier
+ * 3차원 플래그: isDontKnow(모르겠어요), isConfused(풀이시간≥예상×2.5), isLucked(찍기)
+ */
+function nextProficiencyWithWeight(
+  oldProficiency: number,
+  outcome: number,
+  weightMultiplier: number
+): number {
+  const expected = expectedScore(oldProficiency);
+  const deltaBase = outcome - expected;
+  const deltaFinal = deltaBase * weightMultiplier;
+  const newP = oldProficiency + PROFICIENCY_K_FACTOR * deltaFinal;
   return Math.max(100, Math.min(2500, Math.round(newP)));
 }
 
@@ -72,13 +103,16 @@ function sanitizeKey(key: string): string {
   return key.replace(/[./\[\]*~]/g, '_');
 }
 
-/** 퀴즈 답안 기록 (Result/Quiz 호출부와 호환: isConfused 선택) */
+/** 퀴즈 답안 기록 (Result/Quiz 호출부와 호환). 3차원 플래그는 gradingService에서 판정 */
 export interface QuizAnswerRecord {
   qid: string;
   selected: number;
   isCorrect: boolean;
+  /** 모르겠어요 선택(selected===0) 시 true. Quiz에서 설정, gradingService에서도 재계산 가능 */
+  isDontKnow?: boolean;
+  /** (레거시) Quiz에서 넘기지 않음. isConfused/isLucked는 gradingService에서 시간·Expected로 판정 */
   isConfused?: boolean;
-  /** 문항 풀이 소요 시간(초). estimated_time_sec의 절반 미만이면 찍은 것으로 간주해 proficiency 보정 */
+  /** 문항 풀이 소요 시간(초). 플래그 판정: isConfused(≥예상×2.5), isLucked(<예상×0.5) */
   elapsedSec?: number;
 }
 
@@ -88,6 +122,8 @@ export interface SubmitQuizResultOptions {
   roundId?: string;
   /** 집중학습(과목/유형/개념) 완료 시 나의 학습 기록 표시용 라벨 (예: "과목 강화 학습 - 3과목 강화") */
   roundLabel?: string;
+  /** (베타 로컬) 진단 Elo 재조정 시 사용 — 가입 시 선택한 난이도 */
+  prepLevel?: 'beginner' | 'intermediate' | 'advanced';
 }
 
 /** stats 하위 문서 내 키별 값: { correct, total, confused, proficiency? } */
@@ -108,8 +144,10 @@ export interface UserStatsDoc {
   sub_core_id_stats?: Record<string, StatEntry>;
   /** 태그별 correct, total, misconception_count (필드 키는 sanitizeKey 적용) */
   tag_stats?: Record<string, StatEntry>;
-  /** '헷갈려요' 체크한 문제 ID 배열 */
+  /** 풀이시간 ≥ 예상×2.5 인 문제 ID (헷갈림) */
   confused_qids?: string[];
+  /** 모르겠어요 선택한 문제 ID */
+  dontknow_qids?: string[];
 }
 
 function certIdToCode(certId: string): string | null {
@@ -130,28 +168,61 @@ export async function getCertificationInfo(certCode: string): Promise<Certificat
   return data as unknown as CertificationInfo;
 }
 
+// ---------- 예측 합격률 (시그모이드) ----------
+// 상세 공식·규칙: docs/PASS_RATE_AND_SAFETY.md
+
+const SIGMOID_CENTER = 60; // 합격선(변곡점)
+const SIGMOID_STEEPNESS = 0.08; // S자 곡선 기울기
+const PASS_RATE_PENALTY_MAX = 20; // 과락 시 최대 감점
+/** 예측 합격률 하한: 처음 망쳐도 절망적인 수치 방지, 희망 유지 */
+export const PASS_RATE_MIN = 15;
+/** 예측 합격률 상한(%) */
+export const PASS_RATE_MAX = 96;
+
+/** 시그모이드: 합격선 60점 근처에서 점수 차이가 %에 민감하게 반영되도록 S자 변환 */
+function applySigmoidTransform(score: number): number {
+  const sigmoid = 1 / (1 + Math.exp(-SIGMOID_STEEPNESS * (score - SIGMOID_CENTER)));
+  return Math.round(sigmoid * 100);
+}
+
 /**
- * 예측 합격률 계산 (자격증 공통)
- * - 기본 점수: 과목별 점수의 평균 (0~100)
- * - 안정성 계수: 어떤 과목이라도 과락(minSubjectScore 미만, 기본 40점)이 있으면 0.8, 없으면 1.0
- * - 최종: Math.round(기본 점수 * 안정성 계수), 0~100 클램프
- * - 마이페이지/목록에 보이는 값: exam_results 중 해당 자격증 최신 시험의 predicted_pass_rate (statsService.fetchUserTrendData)
- * - 큐레이션 모의고사(6회+) 언락 조건: D-Day 3일 이내 AND 예측 합격률 70% 이상
+ * 예측 합격률 (PASS_RATE_MIN~PASS_RATE_MAX)
+ * 1) 과목별 점수 평균 − 과락 패널티 → 원점수(0~100)
+ * 2) 시그모이드 변환 → 합격선 근처 민감도 확대
+ * 3) 최소 15% 보장(희망 유지), 최대 96%
+ * 4) 난이도 보정(α)은 호출부에서 적용 후 저장
  */
 function computePredictedPassRate(
   subject_scores: ExamResultSubjectScores,
   minSubjectScore: number = MIN_SUBJECT_SCORE_FOR_STABILITY
 ): number {
   const scores = Object.values(subject_scores);
-  if (scores.length === 0) return 0;
+  if (scores.length === 0) return PASS_RATE_MIN;
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  // 과락 마진 패널티: 과락선 미만 과목이 있으면 (minScore - 과목점수) / minScore × 20점 감점
   const minScore = Math.min(...scores);
   let penalty = 0;
   if (minScore < minSubjectScore) {
-    penalty = ((minSubjectScore - minScore) / minSubjectScore) * 20;
+    penalty = ((minSubjectScore - minScore) / minSubjectScore) * PASS_RATE_PENALTY_MAX;
   }
-  return Math.max(0, Math.min(100, Math.round(avgScore - penalty)));
+  let rawPassRate = Math.max(0, Math.min(100, avgScore - penalty));
+  const sigmoidPassRate = applySigmoidTransform(rawPassRate);
+  const finalPassRate = Math.max(PASS_RATE_MIN, Math.min(PASS_RATE_MAX, sigmoidPassRate));
+  if (import.meta.env.DEV) {
+    console.log(`[computePredictedPassRate] 원점수 ${Math.round(rawPassRate)} → 시그모이드 ${sigmoidPassRate}% → 최종 ${finalPassRate}%`);
+  }
+  return finalPassRate;
+}
+
+/**
+ * 예측 합격률 구간별 격려 메시지 (낮은 합격률에도 희망·동기 부여)
+ */
+export function getEncouragementMessageForPassRate(passRate: number): string {
+  const p = Number(passRate);
+  if (!Number.isFinite(p)) return '꾸준히 연습하면 합격에 한 걸음 더 가까워져요.';
+  if (p < 30) return '기초부터 차근차근, 조금씩만 올려도 합격에 가까워져요.';
+  if (p < 50) return '약점 보완에 집중하면 합격 가능성이 확 올라갑니다.';
+  if (p < 70) return '꾸준히 복습하면 곧 합격선을 넘을 수 있어요.';
+  return '잘하고 있어요. 마지막까지 꾸준히만 하면 됩니다.';
 }
 
 /**
@@ -202,8 +273,10 @@ export async function submitQuizResult(
   /** 문제 순서(인덱스) → 과목 번호. subject_number가 없는 문제(예: round2 풀)에 대한 폴백용 */
   const indexToSubject = buildIndexToSubject(questions, certInfo?.subjects);
 
-  // ---- 과목별 점수 계산 (subject_number 기준, 없으면 시험 순서로 추정) ----
-  const subjectCorrectTotal: Record<string, { correct: number; total: number }> = {};
+  // ---- 과목별 점수 계산: 난이도 가중 (기준 0.6, w_i = 1 + β*(d_i - 0.6)) ----
+  const subjectWeightedCorrect: Record<string, number> = {};
+  const subjectWeightedTotal: Record<string, number> = {};
+  let sumDifficulty = 0;
   for (let i = 0; i < sessionHistory.length; i++) {
     const rec = sessionHistory[i];
     const q = qMap.get(rec.qid);
@@ -215,31 +288,33 @@ export async function submitQuizResult(
     } else {
       subjKey = '0';
     }
-    if (!subjectCorrectTotal[subjKey]) subjectCorrectTotal[subjKey] = { correct: 0, total: 0 };
-    subjectCorrectTotal[subjKey].total += 1;
-    if (rec.isCorrect) subjectCorrectTotal[subjKey].correct += 1;
+    const d = getDifficulty01(q);
+    const w = 1 + DIFFICULTY_WEIGHT_BETA * (d - REFERENCE_DIFFICULTY);
+    if (!subjectWeightedTotal[subjKey]) {
+      subjectWeightedCorrect[subjKey] = 0;
+      subjectWeightedTotal[subjKey] = 0;
+    }
+    subjectWeightedTotal[subjKey] += w;
+    if (rec.isCorrect) subjectWeightedCorrect[subjKey] += w;
+    sumDifficulty += d;
   }
 
   const subject_scores: ExamResultSubjectScores = {};
   let hasSubjectScoring = false;
   if (certInfo?.subjects?.length) {
-    const scorePerQ =
-      certInfo.subjects[0]?.score_per_question ?? DEFAULT_SCORE_PER_QUESTION;
     for (const subj of certInfo.subjects) {
       const key = String(subj.subject_number);
-      const ct = subjectCorrectTotal[key] ?? { correct: 0, total: 0 };
-      const totalPossible = (ct.total || 0) * scorePerQ;
-      const score = totalPossible > 0
-        ? Math.round((ct.correct * scorePerQ / totalPossible) * 100)
-        : 0;
-      subject_scores[key] = Math.min(100, Math.max(0, score));
-      if (ct.total > 0) hasSubjectScoring = true;
+      const W = subjectWeightedTotal[key] ?? 0;
+      const C = subjectWeightedCorrect[key] ?? 0;
+      const score = W > 0 ? Math.round((C / W) * 100) : 0;
+      subject_scores[key] = Math.min(99, Math.max(0, score));
+      if (W > 0) hasSubjectScoring = true;
     }
   } else {
-    const total = sessionHistory.length;
-    const correct = sessionHistory.filter((r) => r.isCorrect).length;
-    if (total > 0) {
-      subject_scores['0'] = Math.round((correct / total) * 100);
+    const W = Object.values(subjectWeightedTotal).reduce((a, b) => a + b, 0);
+    const C = Object.values(subjectWeightedCorrect).reduce((a, b) => a + b, 0);
+    if (W > 0) {
+      subject_scores['0'] = Math.min(99, Math.max(0, Math.round((C / W) * 100)));
       hasSubjectScoring = true;
     }
   }
@@ -255,8 +330,92 @@ export async function submitQuizResult(
     is_passed = noFail && avg >= average_score;
   }
 
-  // ---- 예측 합격률 ----
-  const predicted_pass_rate = computePredictedPassRate(subject_scores, minSubjectScore);
+  // ---- 예측 합격률: 시그모이드 합격률 × 난이도 보정(α) ----
+  const P_raw = computePredictedPassRate(subject_scores, minSubjectScore);
+  const avgDifficulty =
+    sessionHistory.length > 0 ? sumDifficulty / sessionHistory.length : REFERENCE_DIFFICULTY;
+  const alpha =
+    avgDifficulty <= REFERENCE_DIFFICULTY
+      ? 0.5 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY)
+      : Math.min(1.2, 0.7 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY));
+  const predicted_pass_rate = Math.max(PASS_RATE_MIN, Math.min(99, Math.round(alpha * P_raw)));
+
+  // ---- stats 선로드 (플래그·가중치 계산에 초기 proficiency 필요) ----
+  // 서버에서 읽어 2회차 제출 시 캐시된 빈 스냅으로 기존 스탯이 덮어씌워지는 것 방지
+  const statsRef = doc(db, 'users', uid, 'stats', certCode);
+  let statsSnap;
+  try {
+    statsSnap = await getDocFromServer(statsRef);
+  } catch {
+    statsSnap = await getDoc(statsRef);
+  }
+  const statsData = statsSnap.exists() ? (statsSnap.data() ?? {}) : {};
+  const conceptStats = (statsData.core_concept_stats ?? (statsData as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const problemTypeStats = (statsData.problem_type_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const subjectStats = (statsData.subject_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const subCoreIdStats = (statsData.sub_core_id_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
+  const getProficiency = (entry: unknown): number => {
+    const e = entry as { proficiency?: number } | undefined;
+    return e?.proficiency != null && Number.isFinite(e.proficiency) ? e.proficiency : DEFAULT_ELO;
+  };
+  const conceptProficiencyInit: Record<string, number> = {};
+  const problemTypeProficiencyInit: Record<string, number> = {};
+  const subjectProficiencyInit: Record<string, number> = {};
+  const subCoreIdProficiencyInit: Record<string, number> = {};
+  for (const [pathKey, entry] of Object.entries(conceptStats)) {
+    conceptProficiencyInit[sanitizeKey(pathKey)] = getProficiency(entry);
+  }
+  for (const [pathKey, entry] of Object.entries(problemTypeStats)) {
+    problemTypeProficiencyInit[sanitizeKey(pathKey)] = getProficiency(entry);
+  }
+  for (const [pathKey, entry] of Object.entries(subjectStats)) {
+    subjectProficiencyInit[sanitizeKey(pathKey)] = getProficiency(entry);
+  }
+  for (const [pathKey, entry] of Object.entries(subCoreIdStats)) {
+    subCoreIdProficiencyInit[sanitizeKey(pathKey)] = getProficiency(entry);
+  }
+
+  const CONFUSED_TIME_MULT = 2.5;
+  const LUCKED_TIME_MULT = 0.5;
+  const LUCKED_EXPECTED_THRESHOLD = 0.5;
+  const answersWithFlags = sessionHistory.map((r) => {
+    const q = qMap.get(r.qid);
+    const isDontKnow = r.selected === 0;
+    const estimatedSec = (q as { estimated_time_sec?: number })?.estimated_time_sec;
+    const elapsedSec = r.elapsedSec ?? 0;
+    const isConfused =
+      estimatedSec != null &&
+      Number.isFinite(estimatedSec) &&
+      elapsedSec >= estimatedSec * CONFUSED_TIME_MULT;
+    const cKey = q ? sanitizeKey((q.core_concept ?? '').trim() || '기타') : '';
+    const expected = cKey ? expectedScore(conceptProficiencyInit[cKey] ?? DEFAULT_ELO) : 0.5;
+    const isLucked =
+      r.isCorrect === true &&
+      expected < LUCKED_EXPECTED_THRESHOLD &&
+      estimatedSec != null &&
+      Number.isFinite(estimatedSec) &&
+      elapsedSec < estimatedSec * LUCKED_TIME_MULT;
+    return {
+      qid: r.qid,
+      isCorrect: r.isCorrect,
+      ...(r.elapsedSec != null && { elapsedSec: r.elapsedSec }),
+      isDontKnow,
+      isConfused,
+      isLucked,
+    };
+  });
+
+  // ---- (진단 Elo) 재응시 여부: 저장 전에 같은 roundId 제출 이력 확인 ----
+  const roundIdForElo = options?.roundId ?? null;
+  const prepLevel = options?.prepLevel;
+  const isDiagnosticRoundId = typeof roundIdForElo === 'string' && /^(l|m|h)_[123]$/.test(roundIdForElo);
+  let hasPrevDiagnosticSubmission = false;
+  if (useBetaCertifications && isDiagnosticRoundId) {
+    const examColRef = collection(db, 'users', uid, 'exam_results');
+    const prevQ = query(examColRef, where('roundId', '==', roundIdForElo), limit(1));
+    const prevSnap = await getDocs(prevQ);
+    hasPrevDiagnosticSubmission = !prevSnap.empty;
+  }
 
   // ---- exam_results 저장 ----
   const examId = options?.examId ?? `exam_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -271,22 +430,15 @@ export async function submitQuizResult(
     predicted_pass_rate,
     totalQuestions: sessionHistory.length,
     correctCount: sessionHistory.filter((r) => r.isCorrect).length,
-    answers: sessionHistory.map((r) => ({
-      qid: r.qid,
-      isCorrect: r.isCorrect,
-      isConfused: r.isConfused === true,
-      ...(r.elapsedSec != null && { elapsedSec: r.elapsedSec }),
-    })),
+    answers: answersWithFlags,
     submittedAt: Timestamp.now(),
   };
   try {
     await setDoc(examRef, examData, { merge: true });
-    // 저장 검증: totalQuestions 필드가 제대로 저장되었는지 확인
     const verifySnap = await getDoc(examRef);
     if (!verifySnap.exists()) {
       throw new Error(`exam_results 문서 저장 실패: ${examId}`);
     }
-    const savedData = verifySnap.data();
   } catch (err) {
     console.error('[gradingService] exam_results 저장 실패:', {
       examId,
@@ -295,25 +447,29 @@ export async function submitQuizResult(
       questionCount: sessionHistory.length,
       error: err,
     });
-    throw err; // 상위로 에러 전파하여 App.tsx에서 catch 가능하도록
+    throw err;
   }
 
-  // ---- 3차원 통계 + 태그 + 세부개념(sub_core_id) 집계 ----
+  // ---- 3차원 통계 + 태그 + 세부개념(sub_core_id) 집계 (시간기준 confused, dontknow) ----
   const conceptAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const problemTypeAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const subjectAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const subCoreIdAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const tagAgg: Record<string, { correct: number; total: number; confused: number }> = {};
   const confusedQids: string[] = [];
+  const dontknowQids: string[] = [];
 
-  for (const rec of sessionHistory) {
+  for (let i = 0; i < sessionHistory.length; i++) {
+    const rec = sessionHistory[i];
+    const ans = answersWithFlags[i];
     const q = qMap.get(rec.qid);
-    if (!q) continue;
+    if (!q || !ans) continue;
 
     const correct = rec.isCorrect ? 1 : 0;
     const total = 1;
-    const confused = rec.isConfused === true ? 1 : 0;
-    if (rec.isConfused === true && rec.qid) confusedQids.push(rec.qid);
+    const confused = ans.isConfused ? 1 : 0;
+    if (ans.isConfused && rec.qid) confusedQids.push(rec.qid);
+    if (ans.isDontKnow && rec.qid) dontknowQids.push(rec.qid);
 
     // 0) sub_core_id_stats: 세부 개념 단위 (proficiency 저장용)
     const subCoreKey = (q.sub_core_id ?? '').trim();
@@ -363,68 +519,51 @@ export async function submitQuizResult(
     }
   }
 
-  const statsRef = doc(db, 'users', uid, 'stats', certCode);
-  const statsSnap = await getDoc(statsRef);
-  const statsData = statsSnap.exists() ? (statsSnap.data() ?? {}) : {};
+  const conceptProficiency: Record<string, number> = { ...conceptProficiencyInit };
+  const problemTypeProficiency: Record<string, number> = { ...problemTypeProficiencyInit };
+  const subjectProficiency: Record<string, number> = { ...subjectProficiencyInit };
+  const subCoreIdProficiency: Record<string, number> = { ...subCoreIdProficiencyInit };
 
-  const conceptStats = (statsData.core_concept_stats ?? (statsData as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
-  const problemTypeStats = (statsData.problem_type_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
-  const subjectStats = (statsData.subject_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
-  const subCoreIdStats = (statsData.sub_core_id_stats ?? {}) as Record<string, StatEntry & { misconception_count?: number }>;
-
-  const getProficiency = (entry: unknown): number => {
-    const e = entry as { proficiency?: number } | undefined;
-    return e?.proficiency != null && Number.isFinite(e.proficiency) ? e.proficiency : DEFAULT_ELO;
-  };
-
-  const conceptProficiency: Record<string, number> = {};
-  const problemTypeProficiency: Record<string, number> = {};
-  const subjectProficiency: Record<string, number> = {};
-  const subCoreIdProficiency: Record<string, number> = {};
-  for (const [pathKey, entry] of Object.entries(conceptStats)) {
-    conceptProficiency[pathKey] = getProficiency(entry);
-  }
-  for (const [pathKey, entry] of Object.entries(problemTypeStats)) {
-    problemTypeProficiency[pathKey] = getProficiency(entry);
-  }
-  for (const [pathKey, entry] of Object.entries(subjectStats)) {
-    subjectProficiency[pathKey] = getProficiency(entry);
-  }
-  for (const [pathKey, entry] of Object.entries(subCoreIdStats)) {
-    subCoreIdProficiency[pathKey] = getProficiency(entry);
-  }
-
-  for (const rec of sessionHistory) {
+  for (let i = 0; i < sessionHistory.length; i++) {
+    const rec = sessionHistory[i];
+    const ans = answersWithFlags[i];
     const q = qMap.get(rec.qid);
-    if (!q) continue;
+    if (!q || !ans) continue;
+
     const outcome = rec.isCorrect ? 1 : 0;
-    const estimatedSec = (q as { estimated_time_sec?: number }).estimated_time_sec;
-    const tooFast =
-      rec.elapsedSec != null &&
-      estimatedSec != null &&
-      Number.isFinite(estimatedSec) &&
-      rec.elapsedSec < estimatedSec / 2;
-    const isConfused = rec.isConfused === true || tooFast;
+    const weight = getWeightMultiplier(outcome, ans.isDontKnow, ans.isLucked, ans.isConfused);
 
     const subCoreKey = (q.sub_core_id ?? '').trim();
     if (subCoreKey) {
       const pathKey = sanitizeKey(subCoreKey);
-      subCoreIdProficiency[pathKey] = nextProficiency(subCoreIdProficiency[pathKey] ?? DEFAULT_ELO, outcome, isConfused);
+      subCoreIdProficiency[pathKey] = nextProficiencyWithWeight(
+        subCoreIdProficiency[pathKey] ?? DEFAULT_ELO,
+        outcome,
+        weight
+      );
     }
 
     const cKey = sanitizeKey((q.core_concept ?? '').trim() || '기타');
-    conceptProficiency[cKey] = nextProficiency(conceptProficiency[cKey] ?? DEFAULT_ELO, outcome, isConfused);
+    conceptProficiency[cKey] = nextProficiencyWithWeight(conceptProficiency[cKey] ?? DEFAULT_ELO, outcome, weight);
 
     for (const pt of Array.isArray(q.problem_types) ? q.problem_types : []) {
       if (!pt || typeof pt !== 'string') continue;
       const ptKey = sanitizeKey(String(pt).trim());
       if (!ptKey) continue;
-      problemTypeProficiency[ptKey] = nextProficiency(problemTypeProficiency[ptKey] ?? DEFAULT_ELO, outcome, isConfused);
+      problemTypeProficiency[ptKey] = nextProficiencyWithWeight(
+        problemTypeProficiency[ptKey] ?? DEFAULT_ELO,
+        outcome,
+        weight
+      );
     }
 
     const subjKey = q.subject_number != null ? String(q.subject_number) : '0';
     const subjPathKey = sanitizeKey(subjKey);
-    subjectProficiency[subjPathKey] = nextProficiency(subjectProficiency[subjPathKey] ?? DEFAULT_ELO, outcome, isConfused);
+    subjectProficiency[subjPathKey] = nextProficiencyWithWeight(
+      subjectProficiency[subjPathKey] ?? DEFAULT_ELO,
+      outcome,
+      weight
+    );
   }
 
   const updates: Record<string, ReturnType<typeof increment> | number | string[]> = {};
@@ -462,28 +601,100 @@ export async function submitQuizResult(
     updates[`tag_stats.${tagKey}.total`] = increment(agg.total);
     updates[`tag_stats.${tagKey}.misconception_count`] = increment(agg.confused);
   }
-  /** 헷갈림 리스트: 기존 배열에 이번 세션 ID 추가 후 최근 100개만 유지 */
-  const CONFUSED_QIDS_MAX = 100;
+  const QIDS_LIST_MAX = 100;
   const existingConfused = (statsData.confused_qids as string[] | undefined) ?? [];
-  const mergedConfused = [...existingConfused, ...confusedQids].slice(-CONFUSED_QIDS_MAX);
-  updates.confused_qids = mergedConfused;
+  updates.confused_qids = [...existingConfused, ...confusedQids].slice(-QIDS_LIST_MAX);
+  const existingDontknow = (statsData.dontknow_qids as string[] | undefined) ?? [];
+  updates.dontknow_qids = [...existingDontknow, ...dontknowQids].slice(-QIDS_LIST_MAX);
 
   if (Object.keys(updates).length > 0) {
-    if (!statsSnap.exists()) {
-      await setDoc(statsRef, {});
-    }
     const MAX_UPDATES_PER_WRITE = 500;
     const entries = Object.entries(updates);
+    let statsDocCreated = statsSnap.exists();
     for (let i = 0; i < entries.length; i += MAX_UPDATES_PER_WRITE) {
       const chunk = Object.fromEntries(entries.slice(i, i + MAX_UPDATES_PER_WRITE));
-      await updateDoc(statsRef, chunk);
+      try {
+        await updateDoc(statsRef, chunk);
+      } catch (err: unknown) {
+        const code = (err as { code?: string })?.code;
+        const isNotFound = code === 'not-found' || code === 'firestore/not-found';
+        if (isNotFound && !statsDocCreated) {
+          await setDoc(statsRef, {});
+          statsDocCreated = true;
+          await updateDoc(statsRef, chunk);
+        } else {
+          throw err;
+        }
+      }
     }
   }
 
-  // ---- Elo ----
-  await updateEloRating(uid, certId, sessionHistory);
+  // ---- 문제 품질 집계 (qualityService 분석용) ----
+  for (const a of answersWithFlags) {
+    const ref = doc(db, 'problem_attempt_stats', `${certCode}_${a.qid}`);
+    await setDoc(
+      ref,
+      {
+        totalAttempts: increment(1),
+        dontKnowCount: increment(a.isDontKnow ? 1 : 0),
+        confusedCount: increment(a.isConfused ? 1 : 0),
+        luckedCount: increment(a.isLucked ? 1 : 0),
+      },
+      { merge: true }
+    );
+  }
+
+  // ---- Elo (베타: 진단 round 시 prepLevel 기반 재조정, 최초 1회만) ----
+  if (useBetaCertifications && isDiagnosticRoundId && prepLevel) {
+    if (hasPrevDiagnosticSubmission) {
+      await updateEloRating(uid, certId, sessionHistory);
+    } else {
+      await updateEloAfterDiagnostic(uid, certId, sessionHistory, prepLevel);
+    }
+  } else {
+    await updateEloRating(uid, certId, sessionHistory);
+  }
 
   return { examId, subject_scores, is_passed };
+}
+
+/** (베타 로컬) 진단 회차 최초 제출 시에만 Elo 보정. 보정폭 ±300 제한 */
+const EXPECTED_SCORE_PERCENT: Record<'beginner' | 'intermediate' | 'advanced', number> = {
+  beginner: 40,
+  intermediate: 60,
+  advanced: 75,
+};
+const INITIAL_ELO_BY_PREP: Record<'beginner' | 'intermediate' | 'advanced', number> = {
+  beginner: 1000,
+  intermediate: 1300,
+  advanced: 1600,
+};
+const DIAGNOSTIC_ELO_DELTA_CAP = 300;
+
+async function updateEloAfterDiagnostic(
+  uid: string,
+  certId: string,
+  sessionHistory: QuizAnswerRecord[],
+  prepLevel: 'beginner' | 'intermediate' | 'advanced'
+): Promise<void> {
+  const total = sessionHistory.length;
+  if (total === 0) return;
+  const correctCount = sessionHistory.filter((r) => r.isCorrect).length;
+  const scorePercent = (correctCount / total) * 100;
+  const expected = EXPECTED_SCORE_PERCENT[prepLevel];
+  const initialElo = INITIAL_ELO_BY_PREP[prepLevel];
+  const rawDelta = (scorePercent - expected) * 10;
+  const cappedDelta = Math.max(-DIAGNOSTIC_ELO_DELTA_CAP, Math.min(DIAGNOSTIC_ELO_DELTA_CAP, rawDelta));
+  const newElo = Math.round(initialElo + cappedDelta);
+  const clampedElo = Math.max(100, Math.min(2500, newElo));
+  const userRef = doc(db, 'users', uid);
+  const userSnap = await getDoc(userRef);
+  const eloByCert = (userSnap.data()?.elo_rating_by_cert as Record<string, number>) ?? {};
+  await setDoc(
+    userRef,
+    { elo_rating_by_cert: { ...eloByCert, [certId]: clampedElo } },
+    { merge: true }
+  );
 }
 
 /**

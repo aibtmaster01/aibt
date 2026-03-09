@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS } from '../constants';
+import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, getRoundNumberFromRoundId } from '../constants';
+import { useBetaCertifications } from '../config/brand';
 import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
 import { getExamService } from '../services/examServiceLoader';
 import { eloToPercent } from '../services/gradingService';
@@ -27,11 +28,11 @@ interface ExamListProps {
   onRequestLogin?: () => void;
 }
 
-/** 1~3회 자격증 공통 명칭 (기초 점검) */
+/** 1~3회 자격증 공통 명칭 (실력 확인) */
 const ROUND_DISPLAY_BASE: Record<number, { title: string; description: string }> = {
-  1: { title: '연습 모의고사', description: '기초 실력 점검 및 취약점 파악' },
-  2: { title: '응용 모의고사', description: '실제 시험 난이도에 가까운 고정 문제' },
-  3: { title: '실전 모의고사', description: '실전 형식의 고정 문제로 최종 점검' },
+  1: { title: '실력 확인 모의고사 1회', description: '실력 점검 및 취약점 파악' },
+  2: { title: '실력 확인 모의고사 2회', description: '실력 점검 및 취약점 파악' },
+  3: { title: '실력 확인 모의고사 3회', description: '실력 점검 및 최종 점검' },
 };
 
 /** 4회 이상: 약점 공략 모의고사 N회 (목록 내 차시) */
@@ -77,6 +78,8 @@ export const ExamList: React.FC<ExamListProps> = ({
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
   const [showModeModal, setShowModeModal] = useState(false);
   const [pendingRoundId, setPendingRoundId] = useState<string | null>(null);
+  /** (베타 로컬) 맞춤형 모의고사 문항 수: 40(빠른 학습) | 80(실전 학습) */
+  const [pendingQuestionCount, setPendingQuestionCount] = useState<40 | 80>(80);
   /** 평균 정답률 0~100 (stats 표시 등) */
   const [avgCorrectRate, setAvgCorrectRate] = useState<number | null>(null);
   /** 모드 선택 후 준비 중 오버레이: 5초 카운트다운 → 준비 완료 문구 → 목록 복귀 */
@@ -92,7 +95,28 @@ export const ExamList: React.FC<ExamListProps> = ({
   const certCode = cert?.code ?? null;
   /** 기본 회차 + 약점 공략 6회차 이상은 최대 20회까지 동적 확장 */
   const MAX_CURATION_ROUND = 20;
-  const baseRounds = EXAM_ROUNDS.filter((r) => r.certId === certId);
+  const baseRounds: ExamRound[] = React.useMemo(() => {
+    const raw = EXAM_ROUNDS.filter((r) => r.certId === certId);
+    if (useBetaCertifications && certId === 'c1' && user?.prepLevel) {
+      const prefix = user.prepLevel === 'beginner' ? 'l' : user.prepLevel === 'intermediate' ? 'm' : 'h';
+      const diagnostic: ExamRound[] = [1, 2, 3].map((n) => {
+        const template = raw.find((r) => r.round === n);
+        return {
+          id: `${prefix}_${n}`,
+          certId: 'c1',
+          round: n,
+          title: ROUND_DISPLAY_BASE[n]?.title ?? template?.title ?? '모의고사',
+          description: ROUND_DISPLAY_BASE[n]?.description ?? template?.description ?? '',
+          isPremium: n === 3,
+          questionCount: 40,
+          type: n === 1 ? 'diagnostic' : 'practice',
+        };
+      });
+      const curation = raw.filter((r) => r.round >= 6);
+      return [...diagnostic, ...curation];
+    }
+    return raw;
+  }, [certId, user?.prepLevel]);
   const maxDefinedRound = baseRounds.length ? Math.max(...baseRounds.map((r) => r.round)) : 0;
   const allRounds: ExamRound[] =
     maxDefinedRound >= 6
@@ -178,19 +202,19 @@ export const ExamList: React.FC<ExamListProps> = ({
           ? (rawRid <= 3 ? `r${rawRid}` : `r${rawRid}${certId}`)
           : String(rawRid);
         const fromTable = EXAM_ROUNDS.find((r) => r.id === rid && r.certId === certId);
-        const roundNum = fromTable?.round ?? (() => {
+        const betaRoundNum = getRoundNumberFromRoundId(rid);
+        const roundNum = fromTable?.round ?? betaRoundNum ?? (() => {
           const m = rid.match(/^r?(\d+)/);
           return m ? parseInt(m[1], 10) : 0;
         })();
-        // 결과 화면까지 본 제출만 완료로 인정. 정적 1~3회는 최소 20문항 제출 시에만 완료 처리 (이탈 시 오류 방지)
         if (roundNum >= 1 && roundNum <= 3) {
           if (total < 20) return;
         } else if (total < 1) return;
-        const canonicalId = fromTable?.id ?? (() => {
+        const canonicalId = fromTable?.id ?? (betaRoundNum != null ? rid : (() => {
           if (/^r\d+c\d+$/.test(rid) || /^r[123]$/.test(rid)) return rid;
           if (/^\d+$/.test(rid)) return parseInt(rid, 10) <= 3 ? `r${rid}` : `r${rid}${certId}`;
           return rid;
-        })();
+        })());
         ids.add(canonicalId);
       });
       setCompletedRoundIds(ids);
@@ -378,6 +402,7 @@ export const ExamList: React.FC<ExamListProps> = ({
     setShowModeModal(false);
     const roundId = pendingRoundId;
     setPendingRoundId(null);
+    const questionCount = pendingQuestionCount;
 
     const round = allRounds.find((r) => r.id === roundId);
     const roundNum = round?.round ?? 0;
@@ -387,15 +412,16 @@ export const ExamList: React.FC<ExamListProps> = ({
       onSelectRound(roundId, mode);
       return;
     }
-    /** 4회차 이상(맞춤형): 5초 오버레이 + getQuestionsForRound 후 /quiz */
+    /** 4회차 이상(맞춤형): 5초 오버레이 + getQuestionsForRound 후 /quiz. 베타에서 40/80 선택 반영 */
     if (roundNum >= 4 && user && certId) {
       staticPreFetchedQuestionsRef.current = null;
       autoStartAfterOverlayRef.current = { roundId, mode };
       setShowPreparingOverlay(true);
       setPreparingCountdown(5);
       setPreparingPhase('countdown');
+      const opts = useBetaCertifications ? { questionCount } : undefined;
       getExamService()
-        .then((m) => m.getQuestionsForRound(certId, roundNum, user))
+        .then((m) => m.getQuestionsForRound(certId, roundNum, user, opts))
         .then((qs) => { staticPreFetchedQuestionsRef.current = qs; })
         .catch(() => { staticPreFetchedQuestionsRef.current = []; });
     }
@@ -642,6 +668,37 @@ export const ExamList: React.FC<ExamListProps> = ({
           >
             <h3 className="text-lg font-black text-slate-900 mb-2">모의고사 모드 선택</h3>
             <p className="text-sm text-slate-500 mb-5">풀이 방식을 선택해 주세요.</p>
+            {useBetaCertifications && pendingRoundId && (() => {
+              const r = allRounds.find((x) => x.id === pendingRoundId);
+              if (r && r.round >= 4) {
+                return (
+                  <div className="mb-5">
+                    <p className="text-xs font-bold text-slate-500 mb-2">문항 수</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPendingQuestionCount(40)}
+                        className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
+                          pendingQuestionCount === 40 ? 'border-[#1e56cd] bg-[#99ccff]/20 text-[#1e56cd]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        40문항 (빠른 학습)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingQuestionCount(80)}
+                        className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
+                          pendingQuestionCount === 80 ? 'border-[#1e56cd] bg-[#99ccff]/20 text-[#1e56cd]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        80문항 (실전 학습)
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
             <div className="flex flex-col gap-3">
               <button
                 type="button"

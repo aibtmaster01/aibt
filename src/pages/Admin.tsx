@@ -27,6 +27,7 @@ import {
   Smartphone,
   BookOpen,
   FileText,
+  BarChart3,
 } from 'lucide-react';
 import { User } from '../types';
 import { CERTIFICATIONS } from '../constants';
@@ -36,6 +37,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   subscribeToUsers,
   fetchUsersPage,
+  fetchUserCount,
   updateUserMemberships,
   updateUserBanned,
   sendPasswordResetToUser,
@@ -47,12 +49,16 @@ import {
   fetchErrorLogs,
   EXAM_SCHEDULES,
   USERS_PAGE_SIZE,
+  fetchProblemReportsCount,
+  fetchProblemReportsList,
   type AdminUser,
   type MembershipUpdateInput,
   type ErrorLogEntry,
+  type ProblemReportEntry,
 } from '../services/adminService';
+import { getFlagDistribution, getProblemQualitySummary, type FlagDistribution, type ProblemQualitySummary } from '../services/qualityService';
 
-type AdminMenu = 'dashboard' | 'users' | 'questions' | 'billing';
+type AdminMenu = 'dashboard' | 'users' | 'questions' | 'billing' | 'beta';
 
 const ROWS_PER_PAGE = 10;
 
@@ -109,6 +115,12 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   const [trendLoading, setTrendLoading] = useState(false);
   const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([]);
   const [errorLogsLoading, setErrorLogsLoading] = useState(false);
+  const [betaTotalUsers, setBetaTotalUsers] = useState<number | null>(null);
+  const [betaFlagDistribution, setBetaFlagDistribution] = useState<FlagDistribution | null>(null);
+  const [betaProblemQuality, setBetaProblemQuality] = useState<ProblemQualitySummary | null>(null);
+  const [betaReportCount, setBetaReportCount] = useState<number>(0);
+  const [betaReportList, setBetaReportList] = useState<ProblemReportEntry[]>([]);
+  const [betaLoading, setBetaLoading] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -301,6 +313,33 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
       .finally(() => setErrorLogsLoading(false));
   }, [effectiveMenu]);
 
+  useEffect(() => {
+    if (effectiveMenu !== 'beta') return;
+    setBetaLoading(true);
+    Promise.all([
+      fetchUserCount(),
+      getFlagDistribution(),
+      getProblemQualitySummary(),
+      fetchProblemReportsCount(),
+      fetchProblemReportsList(50),
+    ])
+      .then(([total, flags, quality, reportCount, reportList]) => {
+        setBetaTotalUsers(total);
+        setBetaFlagDistribution(flags);
+        setBetaProblemQuality(quality);
+        setBetaReportCount(reportCount);
+        setBetaReportList(reportList);
+      })
+      .catch(() => {
+        setBetaTotalUsers(null);
+        setBetaFlagDistribution(null);
+        setBetaProblemQuality(null);
+        setBetaReportCount(0);
+        setBetaReportList([]);
+      })
+      .finally(() => setBetaLoading(false));
+  }, [effectiveMenu]);
+
   const effectiveUser = currentUserProp ?? authUser ?? null;
 
   const handlePaymentModalOpen = async (user: AdminUser) => {
@@ -458,6 +497,7 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
     { id: 'users', label: '회원 관리', icon: <Users size={20} /> },
     { id: 'questions', label: '문제 관리', icon: <FileQuestion size={20} />, disabled: true },
     { id: 'billing', label: '쿠폰 관리', icon: <TicketIcon size={20} /> },
+    { id: 'beta', label: '베타 지표', icon: <BarChart3 size={20} /> },
   ];
 
   return (
@@ -651,6 +691,167 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
               </div>
             </div>
           </>
+        )}
+
+        {effectiveMenu === 'beta' && (
+          <div className="max-w-5xl">
+            <h1 className="text-2xl font-black text-slate-900 mb-6">베타 지표</h1>
+            {betaLoading ? (
+              <p className="text-slate-500 text-sm py-8">로딩 중...</p>
+            ) : (
+              <>
+                <h2 className="text-lg font-bold text-slate-700 mb-3">회원·플래그·품질 요약</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                    <p className="text-slate-500 text-sm font-bold mb-1">총 가입자 수</p>
+                    <p className="text-3xl font-black text-slate-900">{betaTotalUsers ?? '—'}</p>
+                  </div>
+                  {betaFlagDistribution && (
+                    <>
+                      <div className={`bg-white rounded-2xl shadow-sm border p-6 ${(betaFlagDistribution.dontKnowRate * 100 >= 10 && betaFlagDistribution.dontKnowRate * 100 <= 15) ? 'border-green-300' : 'border-red-200'}`}>
+                        <p className="text-slate-500 text-sm font-bold mb-1">모르겠어요 비율</p>
+                        <p className={`text-3xl font-black ${(betaFlagDistribution.dontKnowRate * 100 >= 10 && betaFlagDistribution.dontKnowRate * 100 <= 15) ? 'text-green-600' : 'text-red-600'}`}>
+                          {betaFlagDistribution.totalAttempts > 0
+                            ? `${(betaFlagDistribution.dontKnowRate * 100).toFixed(1)}%`
+                            : '—'}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">목표 10~15% · 총 시도 {betaFlagDistribution.totalAttempts.toLocaleString()}회</p>
+                      </div>
+                      <div className={`bg-white rounded-2xl shadow-sm border p-6 ${(betaFlagDistribution.confusedRate * 100 >= 20 && betaFlagDistribution.confusedRate * 100 <= 30) ? 'border-green-300' : 'border-red-200'}`}>
+                        <p className="text-slate-500 text-sm font-bold mb-1">헷갈림 비율</p>
+                        <p className={`text-3xl font-black ${(betaFlagDistribution.confusedRate * 100 >= 20 && betaFlagDistribution.confusedRate * 100 <= 30) ? 'text-green-600' : 'text-red-600'}`}>
+                          {betaFlagDistribution.totalAttempts > 0
+                            ? `${(betaFlagDistribution.confusedRate * 100).toFixed(1)}%`
+                            : '—'}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">목표 20~30%</p>
+                      </div>
+                      <div className={`bg-white rounded-2xl shadow-sm border p-6 ${(betaFlagDistribution.luckedRate * 100 >= 5 && betaFlagDistribution.luckedRate * 100 <= 10) ? 'border-green-300' : 'border-red-200'}`}>
+                        <p className="text-slate-500 text-sm font-bold mb-1">찍기 비율</p>
+                        <p className={`text-3xl font-black ${(betaFlagDistribution.luckedRate * 100 >= 5 && betaFlagDistribution.luckedRate * 100 <= 10) ? 'text-green-600' : 'text-red-600'}`}>
+                          {betaFlagDistribution.totalAttempts > 0
+                            ? `${(betaFlagDistribution.luckedRate * 100).toFixed(1)}%`
+                            : '—'}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">목표 5~10%</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <h2 className="text-lg font-bold text-slate-700 mb-3">문항 품질 (시도 30회 이상) · 격리된 문제 개수</h2>
+                {betaProblemQuality ? (
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mb-6">
+                    <div className="p-4 border-b border-slate-100 grid grid-cols-2 sm:grid-cols-6 gap-4 text-sm">
+                      <div>
+                        <p className="text-slate-500 font-bold">분석 문항 수</p>
+                        <p className="text-xl font-black text-slate-900">{betaProblemQuality.totalAnalyzed}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">A등급</p>
+                        <p className="text-xl font-black text-green-600">{betaProblemQuality.gradeA}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">B등급</p>
+                        <p className="text-xl font-black text-slate-700">{betaProblemQuality.gradeB}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">C등급</p>
+                        <p className="text-xl font-black text-amber-600">{betaProblemQuality.gradeC}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">D등급</p>
+                        <p className="text-xl font-black text-red-600">{betaProblemQuality.gradeD}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">격리된 문제 개수</p>
+                        <p className="text-xl font-black text-red-700">{betaProblemQuality.quarantined}</p>
+                      </div>
+                    </div>
+                    {Object.keys(betaProblemQuality.byCert).length > 0 && (
+                      <div className="p-4 border-t border-slate-100">
+                        <p className="text-slate-600 font-bold mb-2">자격증별</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm text-left">
+                            <thead>
+                              <tr className="border-b border-slate-200">
+                                <th className="py-2 pr-4 text-slate-500">자격증</th>
+                                <th className="py-2 pr-4 text-slate-500">분석 수</th>
+                                <th className="py-2 pr-4 text-slate-500">A</th>
+                                <th className="py-2 pr-4 text-slate-500">B</th>
+                                <th className="py-2 pr-4 text-slate-500">C</th>
+                                <th className="py-2 pr-4 text-slate-500">D</th>
+                                <th className="py-2 text-slate-500">격리</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(betaProblemQuality.byCert).map(([cert, row]) => (
+                                <tr key={cert} className="border-b border-slate-100">
+                                  <td className="py-2 pr-4 font-medium">{cert}</td>
+                                  <td className="py-2 pr-4">{row.totalAnalyzed}</td>
+                                  <td className="py-2 pr-4 text-green-600">{row.gradeA}</td>
+                                  <td className="py-2 pr-4">{row.gradeB}</td>
+                                  <td className="py-2 pr-4 text-amber-600">{row.gradeC}</td>
+                                  <td className="py-2 pr-4 text-red-600">{row.gradeD}</td>
+                                  <td className="py-2 text-red-700">{row.quarantined}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-sm py-4">품질 데이터가 없거나 시도 30회 이상 문항이 없습니다.</p>
+                )}
+                <h2 className="text-lg font-bold text-slate-700 mb-3 mt-6">문제 신고 (베타: 1건이라도 들어오면 바로 확인)</h2>
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mb-6">
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                    <p className="font-bold text-slate-700">총 <span className="text-[#0034d3]">{betaReportCount}</span>건</p>
+                  </div>
+                  {betaReportList.length === 0 ? (
+                    <div className="p-6 text-slate-500 text-sm">신고 내역이 없습니다.</div>
+                  ) : (
+                    <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-3 font-bold text-slate-600 w-28">시간</th>
+                            <th className="px-4 py-3 font-bold text-slate-600 w-24">자격증</th>
+                            <th className="px-4 py-3 font-bold text-slate-600 w-32">문항 ID</th>
+                            <th className="px-4 py-3 font-bold text-slate-600">유형</th>
+                            <th className="px-4 py-3 font-bold text-slate-600 w-24">Elo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {betaReportList.map((r) => (
+                            <tr key={r.id} className="hover:bg-slate-50/50">
+                              <td className="px-4 py-2 text-slate-600 whitespace-nowrap">
+                                {r.createdAt && typeof (r.createdAt as { toDate?: () => Date }).toDate === 'function'
+                                  ? new Date((r.createdAt as { toDate: () => Date }).toDate()).toLocaleString('ko-KR')
+                                  : '—'}
+                              </td>
+                              <td className="px-4 py-2">{r.certCode}</td>
+                              <td className="px-4 py-2 font-mono text-xs">{r.qid}</td>
+                              <td className="px-4 py-2">
+                                {r.reportType === 'wrong_answer' ? '정답 오류' : r.reportType === 'typo_or_error' ? '오타/지문 오류' : r.reportType === 'out_of_scope' ? '출제 범위 이탈' : r.reportType}
+                              </td>
+                              <td className="px-4 py-2">{r.userElo != null ? r.userElo : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+                  <p className="font-bold text-slate-700 mb-1">Elo 정확도</p>
+                  <p>상관계수·분산 등 지표는 추후 exam_results 샘플 연동 시 제공 예정입니다.</p>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {effectiveMenu === 'users' && (

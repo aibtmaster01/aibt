@@ -30,6 +30,10 @@ export interface User {
   purchasedScheduleIdsByCert?: Record<string, string[]>;
   /** 이메일 인증 완료 여부 — 미인증 시 앱 내 안내·재발송 배너 노출 */
   is_verified?: boolean;
+  /** (베타 로컬) 학습 준비 수준 — 쿠폰 입력 완료 시에만 저장 */
+  prepLevel?: 'beginner' | 'intermediate' | 'advanced';
+  /** BETATEST 배포용 쿠폰 사용 이력 — 사용 중지 시 로그인 시 '베타테스트 기간이 종료되었습니다' 안내용 */
+  usedBetatestCoupon?: boolean;
 }
 
 /** 이용권 정보 (시험당일 12:00 KST 활성화) */
@@ -58,6 +62,8 @@ export interface FirestoreUserDoc {
   max_devices?: number; // default 3
   /** Firestore: certCode → PassInfo */
   passes?: Record<string, Omit<PassInfo, 'boughtAt'> & { boughtAt?: string }>;
+  /** (베타 로컬) 학습 준비 수준 */
+  prep_level?: 'beginner' | 'intermediate' | 'advanced';
 }
 
 export interface Certification {
@@ -115,6 +121,8 @@ export interface Question {
   round?: number;
   /** 문제 본문 내 표: HTML 문자열 또는 { headers, rows } (문제 화면에서 렌더) */
   tableData?: string | { headers: string[]; rows: string[][] } | null;
+  /** (베타) 문제 신고 목록 */
+  reports?: { text: string; createdAt: string; userId?: string | null }[];
 }
 
 /** certification_info (Firestore: certifications/{certId}/certification_info/config) */
@@ -170,16 +178,20 @@ export interface ExamResultSubjectScores {
 /** 예측 합격률 (기본 점수 * 안정성 계수, 0~100) */
 export type PredictedPassRate = number;
 
-/** 시험/퀴즈 답안 한 건 (exam_results.answers 요소). 저장 시 isConfused 항상 포함, 구 데이터는 undefined 가능 */
+/** 시험/퀴즈 답안 한 건 (exam_results.answers 요소). 3차원 학습 행동 분석 플래그 포함 */
 export interface ExamAnswerEntry {
   questionId?: string;
   qid?: string;
   selected?: number;
   isCorrect: boolean;
-  /** 유저가 '헷갈려요'를 체크했는지 (저장 시 항상 포함) */
-  isConfused?: boolean;
-  /** 문항 풀이 소요 시간(초). 스탯 보정용 */
+  /** 문항 풀이 소요 시간(초). 스탯·플래그 판정용 */
   elapsedSec?: number;
+  /** 모르겠어요 선택 (selected === 0) — 확실한 지식 공백 */
+  isDontKnow?: boolean;
+  /** 풀이시간 ≥ 예상×2.5 — 개념 이해 불완전 */
+  isConfused?: boolean;
+  /** 정답인데 Expected<0.5 이고 풀이시간 < 예상×0.5 — 찍기로 간주 */
+  isLucked?: boolean;
 }
 
 export interface ExamSession {

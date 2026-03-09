@@ -4,6 +4,7 @@ import {
   updateDoc,
   getDoc,
   getDocs,
+  getCountFromServer,
   setDoc,
   serverTimestamp,
   query,
@@ -159,6 +160,57 @@ export async function fetchUsersPage(
   });
   const lastDoc = pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null;
   return { users, lastDoc, hasMore };
+}
+
+/** 관리자: 전체 가입자 수 (집계 쿼리) */
+export async function fetchUserCount(): Promise<number> {
+  const usersRef = collection(db, 'users');
+  const snapshot = await getCountFromServer(usersRef);
+  return snapshot.data().count;
+}
+
+export interface ProblemReportEntry {
+  id: string;
+  certCode: string;
+  qid: string;
+  reportType: string;
+  userId: string | null;
+  userElo: number | null;
+  createdAt: unknown;
+}
+
+/** 관리자: problem_reports 개수 */
+export async function fetchProblemReportsCount(): Promise<number> {
+  const ref = collection(db, 'problem_reports');
+  const snapshot = await getCountFromServer(ref);
+  return snapshot.data().count;
+}
+
+/** 관리자: problem_reports 최근 목록 (최대 50건, 메모리 정렬) */
+export async function fetchProblemReportsList(maxCount: number = 50): Promise<ProblemReportEntry[]> {
+  const ref = collection(db, 'problem_reports');
+  const q = query(ref, limit(200));
+  const snapshot = await getDocs(q);
+  const withMs: { entry: ProblemReportEntry; ms: number }[] = [];
+  snapshot.docs.forEach((d) => {
+    const data = d.data();
+    const created = data.createdAt;
+    const ms = created?.toMillis?.() ?? (typeof created === 'number' ? created : 0);
+    withMs.push({
+      ms,
+      entry: {
+        id: d.id,
+        certCode: data.certCode ?? '',
+        qid: data.qid ?? '',
+        reportType: data.reportType ?? '',
+        userId: data.userId ?? null,
+        userElo: data.userElo ?? null,
+        createdAt: created,
+      },
+    });
+  });
+  withMs.sort((a, b) => b.ms - a.ms);
+  return withMs.slice(0, maxCount).map((x) => x.entry);
 }
 
 /** 실시간 구독 (최대 USERS_PAGE_SIZE명만 읽어 비용 제한). lastDoc은 '다음 페이지' 호출 시 사용 */

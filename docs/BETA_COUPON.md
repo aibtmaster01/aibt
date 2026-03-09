@@ -50,3 +50,15 @@
 - CSV 경로: 프로젝트 루트 `beta_coupon.csv`  
 - 열: 이름, 전화번호, **쿠폰**(필수), 이메일. 선택: 쿠폰이름, 만료기일, 자격증, 유료기간(일)  
 - `coupons` 컬렉션에 문서 생성/업데이트. 신규 쿠폰은 어드민 > 결제 관리 > 신규 쿠폰 등록으로도 등록 가능.
+
+---
+
+## 다른 AI 에이전트를 위한 참고 (관련 소스 역할)
+
+| 파일 | 역할 |
+|------|------|
+| `src/services/couponService.ts` | 쿠폰 사용 처리: `redeemBetaCoupon(code, userEmail, userId)` — Firestore `coupons/{code}` 업데이트(used, redeemedBy, redeemedAt), `coupon_redemptions` 문서 추가, `users/{uid}.memberships`에 해당 자격증 PREMIUM·expiry_date 설정. 검증은 `validateBetaCoupon`. |
+| `src/components/CouponModal.tsx` | LNB 등에서 "쿠폰 등록" 클릭 시 뜨는 모달. 쿠폰 코드 입력 후 couponService.redeem 호출. |
+| `src/components/LoginModal.tsx` | 베타 구글 로그인 성공 후 "쿠폰 입력" 단계에서도 동일하게 couponService.redeemBetaCoupon 호출. 재로그인 시 이미 쿠폰 있으면 이 단계 스킵. |
+| `src/pages/AdminBilling.tsx` | 어드민 > 결제 관리(쿠폰). Firestore `coupons` 컬렉션 목록 조회·검색·신규 등록·폐기(revoked). CSV 다운로드. |
+| `src/config/brand.ts` | `FEATURE_COUPON`이 true이면 쿠폰 관련 UI 노출. 베타 빌드에서 true. |

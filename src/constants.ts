@@ -63,20 +63,20 @@ export const EXAM_SCHEDULE_DATES: Record<string, string> = {
   ad1: '2026-02-24', ad2: '2026-05-20',
 };
 
-/** 자격증 공통 모의고사 명칭: 기초(1~3 고정) → 약점 공략(6+ AI 맞춤형) */
+/** 자격증 공통 모의고사 명칭: 실력 확인 1~3회 → 약점 공략(6+ AI 맞춤형) */
 export const EXAM_ROUNDS: ExamRound[] = [
-  { id: 'r1', certId: 'c1', round: 1, title: '연습 모의고사', description: '기초 실력 점검 및 취약점 파악', isPremium: false, questionCount: 80, type: 'diagnostic' },
-  { id: 'r2', certId: 'c1', round: 2, title: '응용 모의고사', description: '실제 시험 난이도에 가까운 고정 문제', isPremium: false, questionCount: 80, type: 'practice' },
-  { id: 'r3', certId: 'c1', round: 3, title: '실전 모의고사', description: '실전 형식의 고정 문제로 최종 점검', isPremium: true, questionCount: 80, type: 'practice' },
+  { id: 'r1', certId: 'c1', round: 1, title: '실력 확인 모의고사 1회', description: '실력 점검 및 취약점 파악', isPremium: false, questionCount: 80, type: 'diagnostic' },
+  { id: 'r2', certId: 'c1', round: 2, title: '실력 확인 모의고사 2회', description: '실력 점검 및 취약점 파악', isPremium: false, questionCount: 80, type: 'practice' },
+  { id: 'r3', certId: 'c1', round: 3, title: '실력 확인 모의고사 3회', description: '실력 점검 및 최종 점검', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r6c1', certId: 'c1', round: 6, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r7c1', certId: 'c1', round: 7, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r8c1', certId: 'c1', round: 8, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r9c1', certId: 'c1', round: 9, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
   { id: 'r10c1', certId: 'c1', round: 10, title: '약점 공략 모의고사', description: 'AI 맞춤형 약점 훈련', isPremium: true, questionCount: 80, type: 'practice' },
-  { id: 'r6', certId: 'c2', round: 1, title: '연습 모의고사', description: 'SQLD 합격 가능성 진단', isPremium: false, questionCount: 5, type: 'diagnostic' },
-  { id: 'r2c2', certId: 'c2', round: 2, title: '응용 모의고사', description: '실제 시험 난이도에 가까운 구성', isPremium: false, questionCount: 20, type: 'practice' },
-  { id: 'r3c2', certId: 'c2', round: 3, title: '실전 모의고사', description: '실전 대비 고정 문제', isPremium: true, questionCount: 20, type: 'practice' },
-  { id: 'r7', certId: 'c3', round: 1, title: '연습 모의고사', description: 'ADsP 기초 실력 점검', isPremium: false, questionCount: 5, type: 'diagnostic' },
+  { id: 'r6', certId: 'c2', round: 1, title: '실력 확인 모의고사 1회', description: 'SQLD 합격 가능성 진단', isPremium: false, questionCount: 5, type: 'diagnostic' },
+  { id: 'r2c2', certId: 'c2', round: 2, title: '실력 확인 모의고사 2회', description: '실력 점검', isPremium: false, questionCount: 20, type: 'practice' },
+  { id: 'r3c2', certId: 'c2', round: 3, title: '실력 확인 모의고사 3회', description: '실전 대비 고정 문제', isPremium: true, questionCount: 20, type: 'practice' },
+  { id: 'r7', certId: 'c3', round: 1, title: '실력 확인 모의고사 1회', description: 'ADsP 기초 실력 점검', isPremium: false, questionCount: 5, type: 'diagnostic' },
 ];
 
 /** 나의 학습 기록·모의고사 목록 표시용 라벨 (연습/응용/실전/약점공략/과목강화/취약유형 등) */
@@ -87,12 +87,32 @@ const SPECIAL_ROUND_LABELS: Record<string, string> = {
   weakness_retry: '약점 공략 재응시',
 };
 
+const ROUND_DISPLAY_BASE_BETA: Record<number, string> = {
+  1: '실력 확인 모의고사 1회',
+  2: '실력 확인 모의고사 2회',
+  3: '실력 확인 모의고사 3회',
+};
+
 export function getRoundLabel(roundId: string | null | undefined, _certId?: string): string {
   if (!roundId) return '모의고사';
   const special = SPECIAL_ROUND_LABELS[roundId];
   if (special) return special;
   const round = EXAM_ROUNDS.find((r) => r.id === roundId);
-  if (!round) return `${roundId}회차`;
-  if (round.round <= 3) return round.title;
-  return `약점 공략 모의고사 ${round.round - 5}회`;
+  if (round) {
+    if (round.round <= 3) return round.title;
+    return `약점 공략 모의고사 ${round.round - 5}회`;
+  }
+  const betaMatch = typeof roundId === 'string' && /^(l|m|h)_([123])$/.exec(roundId);
+  if (betaMatch) {
+    const n = parseInt(betaMatch[2], 10);
+    return ROUND_DISPLAY_BASE_BETA[n] ?? `모의고사 ${n}회`;
+  }
+  return `${roundId}회차`;
+}
+
+/** (베타 로컬) l_1, m_2 등 roundId → 회차 번호(1,2,3) */
+export function getRoundNumberFromRoundId(roundId: string | null | undefined): number | null {
+  if (!roundId || typeof roundId !== 'string') return null;
+  const m = /^(l|m|h)_([123])$/.exec(roundId);
+  return m ? parseInt(m[2], 10) : null;
 }

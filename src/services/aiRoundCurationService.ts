@@ -12,6 +12,7 @@ import { Question, User } from '../types';
 import { CERTIFICATIONS } from '../constants';
 
 import { getCertificationInfo } from './gradingService';
+import { getCertificationsCollection } from '../config/brand';
 
 /** examService는 동적 import만 사용 (번들 초기화 순서로 인한 ReferenceError 방지) */
 async function getExamService() {
@@ -52,8 +53,11 @@ const QUESTION_POOL_ID_BY_CERT: Record<string, string> = {
 
 /** selectForSubject(과목별 1구역+2구역 선발) 상수 */
 const QUESTIONS_PER_SUBJECT = 20;
-const COVERAGE_PER_SUBJECT = 12;   // 1구역: 커버리지 슬롯 수
-const WEAKNESS_PER_SUBJECT = 8;    // 2구역: 약점 집중 슬롯 수
+/** 40문항: 과목당 10 (coverage 6 + weakness 4), 80문항: 과목당 20 (coverage 12 + weakness 8) */
+function getCoverageAndWeaknessPerSubject(countPerSubject: number): { coverage: number; weakness: number } {
+  if (countPerSubject <= 10) return { coverage: 6, weakness: 4 };
+  return { coverage: 12, weakness: 8 };
+}
 const MAX_PER_CORE_ID = 3;         // 동일 core_id 최대 출제 수 (1구역+2구역 합산)
 const MAX_PER_SUB_CORE_ID = 2;     // 동일 sub_core_id 최대 출제 수
 const DEFAULT_ELO = 1200;          // stats 없을 때 proficiency 기본값
@@ -175,7 +179,7 @@ async function selectQuestionIdsBy3ZonesPerSubject(
   for (const { subjectNumber, count } of subjectQuotas) {
     const subItems = items.filter((it) => getSubjectFromItem(it) === subjectNumber);
     if (subItems.length === 0) continue;
-    const picked = selectForSubject(subItems, count, ctx, globalUsedSubCoreIds);
+    const picked = selectForSubject(subItems, count, ctx, globalUsedSubCoreIds, getCoverageAndWeaknessPerSubject(count));
     result.push(...picked);
   }
 
@@ -191,7 +195,7 @@ async function fetchQuestionsByIdsWithGetDoc(certCode: string, qIds: string[]): 
   if (!poolId) return [];
 
   const promises = qIds.map((qId) => {
-    const ref = doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId);
+    const ref = doc(db, getCertificationsCollection(certCode), certCode, 'question_pools', poolId, 'questions', qId);
     return getDoc(ref);
   });
   const snaps = await Promise.all(promises);
@@ -228,7 +232,8 @@ export async function generateIndexBasedExam(
 
   let subjectQuotas: { subjectNumber: number; count: number }[];
   if (fourSubjects20) {
-    subjectQuotas = subjects.map((s) => ({ subjectNumber: s.subject_number ?? 1, count: 20 }));
+    const perSubject = targetCount === 40 ? 10 : 20;
+    subjectQuotas = subjects.map((s) => ({ subjectNumber: s.subject_number ?? 1, count: perSubject }));
   } else if (subjects.length > 0) {
     const perSubject = Math.min(20, Math.floor(targetCount / subjects.length));
     subjectQuotas = subjects.map((s) => ({ subjectNumber: s.subject_number ?? 1, count: perSubject }));
@@ -256,29 +261,34 @@ export async function generateAdaptiveExam(
   questionCount: number = ROUND5_TOTAL
 ): Promise<Question[]> {
   const certInfo = await getCertificationInfo(certCode);
-  const totalTarget = certInfo?.subjects?.length
-    ? certInfo.subjects.reduce((s, subj) => s + subj.question_count, 0)
-    : questionCount;
+  const totalTarget =
+    questionCount === 40 || questionCount === 80
+      ? questionCount
+      : certInfo?.subjects?.length
+        ? certInfo.subjects.reduce((s, subj) => s + subj.question_count, 0)
+        : questionCount || ROUND5_TOTAL;
   return generateIndexBasedExam(uid, certCode, totalTarget);
 }
 
 /**
- * Round 6+ 맞춤형 문제 Fetch (80문제)
+ * Round 6+ 맞춤형 문제 Fetch (기본 80문항, 베타에서 40/80 선택 가능)
  * @param curationMode 실전 대비형(REAL_EXAM) / 약점 강화형(WEAKNESS_ATTACK)
+ * @param questionCount 40(빠른 학습) | 80(실전 학습), 미지정 시 80
  */
 export async function fetchAdaptiveQuestions(
   uid: string,
   certId: string,
   user: User | null,
   round: number,
-  curationMode?: AiMockExamMode
+  curationMode?: AiMockExamMode,
+  questionCount?: number
 ): Promise<Question[]> {
   const certCode = certIdToCode(certId);
   if (!certCode) throw new Error('해당 자격증을 찾을 수 없습니다.');
 
   const targetExamDate = getTargetExamDate(user, certId);
-
-  return generateAdaptiveExam(uid, certCode, certId, targetExamDate, ROUND5_TOTAL);
+  const count = questionCount === 40 || questionCount === 80 ? questionCount : ROUND5_TOTAL;
+  return generateAdaptiveExam(uid, certCode, certId, targetExamDate, count);
 }
 
 /**
@@ -316,38 +326,34 @@ async function collectExcludedQIds(
   uid: string,
   currentRound: number,
 ): Promise<{ excludedAdaptive: Set<string>; usedFixed123: Set<string> }> {
-  // 맞춤형 회차 번호들: round 4 이상
   const adaptiveRounds: number[] = [];
   for (let r = 4; r < currentRound; r++) {
     adaptiveRounds.push(r);
   }
-  if (adaptiveRounds.length === 0) {
-    return { excludedAdaptive: new Set(), usedFixed123: new Set() };
+
+  let excludedAdaptive = new Set<string>();
+  if (adaptiveRounds.length > 0) {
+    const windowRounds = adaptiveRounds.slice(-EXCLUSION_WINDOW);
+    const promises = windowRounds.map((r) =>
+      getDoc(doc(db, 'users', uid, 'user_rounds', String(r)))
+    );
+    const snaps = await Promise.all(promises);
+    for (const snap of snaps) {
+      if (!snap.exists()) continue;
+      const data = snap.data() as { questionIds?: string[] };
+      (data.questionIds ?? []).forEach((id) => excludedAdaptive.add(id));
+    }
   }
 
-  // 슬라이딩 윈도우: 직전 EXCLUSION_WINDOW개만 제외
-  const windowRounds = adaptiveRounds.slice(-EXCLUSION_WINDOW);
-
-  const promises = windowRounds.map((r) =>
-    getDoc(doc(db, 'users', uid, 'user_rounds', String(r)))
-  );
-  const snaps = await Promise.all(promises);
-
-  const excludedAdaptive = new Set<string>();
-  for (const snap of snaps) {
-    if (!snap.exists()) continue;
-    const data = snap.data() as { questionIds?: string[] };
-    (data.questionIds ?? []).forEach((id) => excludedAdaptive.add(id));
-  }
-
-  // 1~3회차 문항: 맞춤형 4번째(round 7)부터 재사용 허용
-  // → 현재 회차가 맞춤형 N번째인지 계산 (round 4 = 맞춤형 1번)
-  const adaptiveN = currentRound - 3; // round 4→1, round 5→2, ...
+  const adaptiveN = currentRound - 3;
   let usedFixed123 = new Set<string>();
   if (adaptiveN < REUSE_FIXED_FROM_ADAPTIVE_N) {
-    // 아직 재사용 불가: 1~3회차 q_id 모두 수집해서 제외
-    const fixedPromises = [1, 2, 3].map((r) =>
-      getDoc(doc(db, 'users', uid, 'user_rounds', String(r)))
+    const userSnap = await getDoc(doc(db, 'users', uid));
+    const prepLevel = userSnap.data()?.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
+    const prefix = prepLevel === 'beginner' ? 'l' : prepLevel === 'intermediate' ? 'm' : prepLevel === 'advanced' ? 'h' : null;
+    const fixedRoundKeys = prefix ? [`${prefix}_1`, `${prefix}_2`, `${prefix}_3`] : ['1', '2', '3'];
+    const fixedPromises = fixedRoundKeys.map((key) =>
+      getDoc(doc(db, 'users', uid, 'user_rounds', key))
     );
     const fixedSnaps = await Promise.all(fixedPromises);
     for (const snap of fixedSnaps) {
@@ -407,16 +413,18 @@ function calcScore(it: QuestionIndexItem, ctx: ScoreContext): number {
 
 /**
  * 한 과목에서 count개 선발:
- * 1구역(COVERAGE_PER_SUBJECT): core_id별 대표 1문항, proficiency 낮은 core_id부터 선발
- * 2구역(WEAKNESS_PER_SUBJECT): 남은 후보 중 calcScore 상위, core_id/sub_core_id 출제 상한 준수 후 완화
+ * 1구역(coverage): core_id별 대표 1문항, proficiency 낮은 core_id부터 선발
+ * 2구역(weakness): 남은 후보 중 calcScore 상위, core_id/sub_core_id 출제 상한 준수 후 완화
  */
 function selectForSubject(
   candidates: QuestionIndexItem[],
   count: number,
   ctx: ScoreContext,
   globalUsedSubCoreIds: Set<string>,
+  coverageWeakness?: { coverage: number; weakness: number },
 ): string[] {
   if (candidates.length === 0) return [];
+  const { coverage, weakness } = coverageWeakness ?? getCoverageAndWeaknessPerSubject(count);
 
   const localUsedSubCoreIds = new Set<string>(globalUsedSubCoreIds);
 
@@ -449,11 +457,11 @@ function selectForSubject(
     coreIdToRep.set(cId, best);
   }
 
-  // 3) core_id 그룹들을 평균 proficiency 오름차순 정렬 후 상위 COVERAGE_PER_SUBJECT개 선발
+  // 3) core_id 그룹들을 평균 proficiency 오름차순 정렬 후 상위 coverage개 선발
   const coreIdsSorted = [...byCoreId.keys()].sort(
     (a, b) => coreIdAvgProficiency(a) - coreIdAvgProficiency(b)
   );
-  const zone1CoreIds = coreIdsSorted.slice(0, Math.min(COVERAGE_PER_SUBJECT, coreIdsSorted.length));
+  const zone1CoreIds = coreIdsSorted.slice(0, Math.min(coverage, coreIdsSorted.length));
 
   const zone1Ids: string[] = [];
   const coreIdCount = new Map<number, number>();
@@ -489,7 +497,7 @@ function selectForSubject(
   const zone2Ids: string[] = [];
   const tryPick = (relaxSubCore: boolean, relaxCore: boolean): void => {
     for (const { it } of remaining) {
-      if (zone2Ids.length >= WEAKNESS_PER_SUBJECT) break;
+      if (zone2Ids.length >= weakness) break;
       const cId = it.metadata?.core_id ?? 0;
       const sc = it.metadata?.sub_core_id ?? '';
       const coreOk = relaxCore || (coreIdCount.get(cId) ?? 0) < MAX_PER_CORE_ID;
@@ -503,8 +511,8 @@ function selectForSubject(
   };
 
   tryPick(false, false);
-  if (zone2Ids.length < WEAKNESS_PER_SUBJECT) tryPick(true, false);
-  if (zone2Ids.length < WEAKNESS_PER_SUBJECT) tryPick(true, true);
+  if (zone2Ids.length < weakness) tryPick(true, false);
+  if (zone2Ids.length < weakness) tryPick(true, true);
 
   const selected = [...zone1Ids, ...zone2Ids];
 
@@ -552,16 +560,15 @@ async function selectDiverseAdaptiveQIds(
   const { excludedAdaptive, usedFixed123 } = await collectExcludedQIds(uid, currentRound);
   const allExcluded = new Set([...excludedAdaptive, ...usedFixed123]);
 
-  // 사용 가능 풀 구성 (round 99 기본, 맞춤형 4번째부터 1~3 포함)
   const adaptiveN = currentRound - 3;
   const pool = items.filter((it) => {
     if (allExcluded.has(it.q_id)) return false;
     const r = it.metadata?.round ?? 99;
-    if (r <= 3) {
-      // 1~3회차 문항: 맞춤형 4번째부터 허용
+    const isFixedRound = typeof r === 'number' ? r <= 3 : (typeof r === 'string' && /^(l|m|h)_[123]$/.test(r));
+    if (isFixedRound) {
       return adaptiveN >= REUSE_FIXED_FROM_ADAPTIVE_N;
     }
-    return r === 99; // round 99만 맞춤형 풀로 사용
+    return r === 99 || r === '99';
   });
 
   // Stats 조회
@@ -620,7 +627,7 @@ async function fetchQuestionsByIds(certCode: string, qIds: string[]): Promise<Qu
   if (!poolId) return [];
 
   const promises = qIds.map((qId) => {
-    const ref = doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId);
+    const ref = doc(db, getCertificationsCollection(certCode), certCode, 'question_pools', poolId, 'questions', qId);
     return getDoc(ref);
   });
   const snaps = await Promise.all(promises);

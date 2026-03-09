@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { auth } from '../firebase';
 import { User } from '../types';
-import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, resendVerificationEmail, deleteUnverifiedUser, type GoogleRedirectIntent } from '../services/authService';
+import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, ensureAppUserFromFirebaseUser, resendVerificationEmail, deleteUnverifiedUser, type GoogleRedirectIntent } from '../services/authService';
 
 interface AuthContextValue {
   user: User | null;
@@ -67,7 +67,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (appUser) setUser(appUser);
       })
-      .catch(() => {})
+      .catch(async (err) => {
+        if (cancelled) return;
+        if (process.env.NODE_ENV === 'development') console.error('[Auth] getGoogleRedirectUser failed', err);
+        const fbUser = auth.currentUser;
+        if (!fbUser) return;
+        try {
+          let appUser = await getSessionForCurrentAuth(fbUser.uid);
+          if (!appUser) appUser = await ensureAppUserFromFirebaseUser(fbUser);
+          if (!cancelled && appUser) setUser(appUser);
+        } catch (fallbackErr) {
+          if (process.env.NODE_ENV === 'development') console.error('[Auth] redirect fallback failed', fallbackErr);
+        }
+      })
       .finally(() => {
         if (cancelled) return;
         // loading은 onAuthStateChanged 첫 콜백 이후에만 false로 (persistence 복구 후 로그인 모달이 잠깐 뜨는 것 방지)

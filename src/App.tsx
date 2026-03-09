@@ -25,9 +25,12 @@ import { getExamService } from './services/examServiceLoader';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { canResend, recordResend } from './utils/verificationResendLimit';
-import { APP_BRAND, FEATURE_COUPON } from './config/brand';
+import { APP_BRAND, FEATURE_COUPON, useBetaCertifications, canShowAdmin, isBetaLocal } from './config/brand';
+import { getBetatestCouponEnabled } from './services/couponService';
 import { CouponModal } from './components/CouponModal';
 import { OrientationPopup } from './components/OrientationPopup';
+import { OrientationPopupBeta } from './components/OrientationPopup_beta';
+import { MyPageBeta } from './pages/MyPage_beta';
 import { useAppNavigation } from './hooks/useAppNavigation';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import type { LoginModalIntent } from './components/LoginModal';
@@ -112,6 +115,8 @@ const App: React.FC = () => {
   } | null>(null);
   /** 베타: 오리엔테이션 팝업. 'forced' = 쿠폰 미등록 강제 노출, 'fromLNB' = LNB에서 연 경우 */
   const [showOrientationPopup, setShowOrientationPopup] = useState<'forced' | 'fromLNB' | null>(null);
+  /** 베타: BETATEST 쿠폰 사용 중지 시, 해당 쿠폰 사용자 로그인 시 "베타테스트 기간이 종료되었습니다" 안내 팝업 */
+  const [showBetatestEndedPopup, setShowBetatestEndedPopup] = useState(false);
 
   const isBeta = FEATURE_COUPON || APP_BRAND === 'AiBT';
   const hasCoupon = user?.isPremium === true || (user?.paidCertIds?.length ?? 0) > 0;
@@ -411,7 +416,11 @@ const App: React.FC = () => {
         }
         return getRoundLabel(rid);
       })();
-      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, { roundId: rid, roundLabel: roundLabel ?? undefined })
+      submitQuizResult(user.id, selectedCertId, sessionHistory, questions, {
+        roundId: rid,
+        roundLabel: roundLabel ?? undefined,
+        ...(useBetaCertifications && user.prepLevel ? { prepLevel: user.prepLevel } : {}),
+      })
         .then((result) => {
           if (result) {
             const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
@@ -456,7 +465,7 @@ const App: React.FC = () => {
       const certId = data?.certId as string | undefined;
       const certCode = data?.certCode as string | undefined;
       const roundId = data?.roundId ?? null;
-      const answers = (data?.answers ?? []) as { qid: string; isCorrect?: boolean; isConfused?: boolean }[];
+      const answers = (data?.answers ?? []) as { qid: string; isCorrect?: boolean; isConfused?: boolean; isDontKnow?: boolean; isLucked?: boolean }[];
       const totalQuestions = Number(data?.totalQuestions) || 0;
       const correctCount = Number(data?.correctCount) || 0;
       if (!certCode || !certId || answers.length === 0) {
@@ -465,12 +474,17 @@ const App: React.FC = () => {
       }
       const exam = await getExamService();
       const questions = await exam.fetchQuestionsFromPools(certCode, answers.map((a) => a.qid));
-      const sessionHistory = answers.map((a) => ({
-        qid: a.qid,
-        selected: 1,
-        isCorrect: a.isCorrect === true,
-        isConfused: a.isConfused === true,
-      }));
+      const sessionHistory = answers.map((a) => {
+        const entry = a as { isDontKnow?: boolean; isLucked?: boolean };
+        return {
+          qid: a.qid,
+          selected: entry.isDontKnow === true ? 0 : 1,
+          isCorrect: a.isCorrect === true,
+          isDontKnow: entry.isDontKnow === true,
+          isConfused: a.isConfused === true,
+          isLucked: entry.isLucked === true,
+        };
+      });
       setSelectedCertId(certId);
       setQuizResult({
         score: correctCount,
@@ -574,6 +588,23 @@ const App: React.FC = () => {
     setShowOrientationPopup('forced');
   }, [user, authLoading, isBeta]);
 
+  // 베타: BETATEST 쿠폰 사용 이력이 있는 사용자 — 쿠폰 사용 중지 시 로그인하면 "베타테스트 기간이 종료되었습니다" 팝업 (세션당 1회)
+  React.useEffect(() => {
+    if (!user?.usedBetatestCoupon || !isBeta || authLoading) return;
+    let cancelled = false;
+    getBetatestCouponEnabled().then((enabled) => {
+      if (cancelled) return;
+      if (enabled) return;
+      try {
+        if (sessionStorage.getItem('finset_betatest_ended_shown') === '1') return;
+      } catch {
+        return;
+      }
+      setShowBetatestEndedPopup(true);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.id, user?.usedBetatestCoupon, isBeta, authLoading]);
+
   // Check status for current selected cert
   const isCurrentCertPremium = user ? (user.isPremium || (selectedCertId && user.paidCertIds?.includes(selectedCertId))) : false;
   const isCurrentCertExpired = user ? (selectedCertId && user.expiredCertIds?.includes(selectedCertId)) : false;
@@ -582,13 +613,48 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (route) {
       case '/':
-        if (user?.isAdmin) {
+        if (canShowAdmin(user)) {
           return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
         }
         if (user) {
-          return (
-            <MyPage
+          const myPageProps = {
+            user,
+            onNavigate: navigate,
+            onSelectExam: handleSelectExamFromMyPage,
+            onStartNewCert: handleStartExamFlow,
+            onUpdateUser: updateUser,
+            onStartWeaknessRetry: (certId: string) => {
+              setSelectedCertId(certId);
+              navigate('/exam-list');
+            },
+            onStartSubjectStrengthTraining: handleStartSubjectStrengthTraining,
+            showSubjectStrengthPreparing: showSubjectStrengthPreparing,
+            onStartWeakTypeFocus: handleStartWeakTypeFocus,
+            showWeakTypePreparing: showWeakTypePreparing,
+            onStartWeakConceptFocus: handleStartWeakConceptFocus,
+            showWeakConceptPreparing: showWeakConceptPreparing,
+            onViewExamResult: handleViewExamResult,
+            onLogout: handleLogout,
+          };
+          return isBetaLocal ? <MyPageBeta {...myPageProps} /> : <MyPage {...myPageProps} />;
+        }
+        return (
+          <EmptyState
+            onStartCert={(id) => {
+              setSelectedCertId(id);
+              navigate('/exam-list');
+            }}
+          />
+        );
+      case '/mypage':
+        if (canShowAdmin(user)) {
+          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
+        }
+        return user ? (
+          isBetaLocal ? (
+            <MyPageBeta
               user={user}
+              initialCertId={selectedCertId ?? undefined}
               onNavigate={navigate}
               onSelectExam={handleSelectExamFromMyPage}
               onStartNewCert={handleStartExamFlow}
@@ -606,41 +672,28 @@ const App: React.FC = () => {
               onViewExamResult={handleViewExamResult}
               onLogout={handleLogout}
             />
-          );
-        }
-        return (
-          <EmptyState
-            onStartCert={(id) => {
-              setSelectedCertId(id);
-              navigate('/exam-list');
-            }}
-          />
-        );
-      case '/mypage':
-        if (user?.isAdmin) {
-          return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
-        }
-        return user ? (
-          <MyPage
-            user={user}
-            initialCertId={selectedCertId ?? undefined}
-            onNavigate={navigate}
-            onSelectExam={handleSelectExamFromMyPage}
-            onStartNewCert={handleStartExamFlow}
-            onUpdateUser={updateUser}
-            onStartWeaknessRetry={(certId) => {
-              setSelectedCertId(certId);
-              navigate('/exam-list');
-            }}
-            onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
-            showSubjectStrengthPreparing={showSubjectStrengthPreparing}
-            onStartWeakTypeFocus={handleStartWeakTypeFocus}
-            showWeakTypePreparing={showWeakTypePreparing}
-            onStartWeakConceptFocus={handleStartWeakConceptFocus}
-            showWeakConceptPreparing={showWeakConceptPreparing}
-            onViewExamResult={handleViewExamResult}
-            onLogout={handleLogout}
-          />
+          ) : (
+            <MyPage
+              user={user}
+              initialCertId={selectedCertId ?? undefined}
+              onNavigate={navigate}
+              onSelectExam={handleSelectExamFromMyPage}
+              onStartNewCert={handleStartExamFlow}
+              onUpdateUser={updateUser}
+              onStartWeaknessRetry={(certId) => {
+                setSelectedCertId(certId);
+                navigate('/exam-list');
+              }}
+              onStartSubjectStrengthTraining={handleStartSubjectStrengthTraining}
+              showSubjectStrengthPreparing={showSubjectStrengthPreparing}
+              onStartWeakTypeFocus={handleStartWeakTypeFocus}
+              showWeakTypePreparing={showWeakTypePreparing}
+              onStartWeakConceptFocus={handleStartWeakConceptFocus}
+              showWeakConceptPreparing={showWeakConceptPreparing}
+              onViewExamResult={handleViewExamResult}
+              onLogout={handleLogout}
+            />
+          )
         ) : null;
       case '/account-settings':
         return user ? (
@@ -754,7 +807,7 @@ const App: React.FC = () => {
               setSelectedRoundId(null);
               navigate(selectedCertId ? `/exam-list?cert=${selectedCertId}` : '/exam-list');
             }}
-            onGoToDashboard={() => navigate('/mypage')}
+            onGoToDashboard={() => navigate(selectedCertId ? `/mypage?cert=${selectedCertId}&refresh=1` : '/mypage?refresh=1')}
             onNextRoundAuto={() => {
               if (!user || !selectedCertId) {
                 navigate('/');
@@ -800,13 +853,13 @@ const App: React.FC = () => {
           />
         ) : null;
       case '/admin':
-        return user?.isAdmin ? <Admin currentUser={user} initialMenu="users" hideSidebar onNavigate={navigate} /> : <div>Access Denied</div>;
+        return canShowAdmin(user) ? <Admin currentUser={user} initialMenu="users" hideSidebar onNavigate={navigate} /> : <div>Access Denied</div>;
       case '/admin/certs':
-        return user?.isAdmin ? <AdminCerts /> : <div>Access Denied</div>;
+        return canShowAdmin(user) ? <AdminCerts /> : <div>Access Denied</div>;
       case '/admin/questions':
-        return user?.isAdmin ? <AdminQuestions /> : <div>Access Denied</div>;
+        return canShowAdmin(user) ? <AdminQuestions /> : <div>Access Denied</div>;
       case '/admin/billing':
-        return user?.isAdmin ? <AdminBilling onBack={() => navigate('/admin')} /> : <div>Access Denied</div>;
+        return canShowAdmin(user) ? <AdminBilling onBack={() => navigate('/admin')} /> : <div>Access Denied</div>;
       default:
         return <div>404 Not Found</div>;
     }
@@ -1051,23 +1104,45 @@ const App: React.FC = () => {
         </div>
       )}
       {showOrientationPopup && (
-        <OrientationPopup
-          forced={showOrientationPopup === 'forced'}
-          fromLNB={showOrientationPopup === 'fromLNB'}
-          onClose={() => setShowOrientationPopup(null)}
-          onCouponRegistered={async () => {
-            try {
-              await refreshUser();
-            } finally {
-              setShowOrientationPopup(null);
-              setShowLoginModal(false);
-              setLoginModalInitialCouponStep(null);
-              navigate('/exam-list');
-            }
-          }}
-          userId={user?.id}
-          userEmail={user?.email}
-        />
+        isBetaLocal ? (
+          <OrientationPopupBeta
+            forced={showOrientationPopup === 'forced'}
+            fromLNB={showOrientationPopup === 'fromLNB'}
+            onClose={() => setShowOrientationPopup(null)}
+            onLogout={handleLogout}
+            onCouponRegistered={async () => {
+              try {
+                await refreshUser();
+              } finally {
+                setShowOrientationPopup(null);
+                setShowLoginModal(false);
+                setLoginModalInitialCouponStep(null);
+                navigate('/exam-list');
+              }
+            }}
+            userId={user?.id}
+            userEmail={user?.email}
+          />
+        ) : (
+          <OrientationPopup
+            forced={showOrientationPopup === 'forced'}
+            fromLNB={showOrientationPopup === 'fromLNB'}
+            onClose={() => setShowOrientationPopup(null)}
+            onLogout={handleLogout}
+            onCouponRegistered={async () => {
+              try {
+                await refreshUser();
+              } finally {
+                setShowOrientationPopup(null);
+                setShowLoginModal(false);
+                setLoginModalInitialCouponStep(null);
+                navigate('/exam-list');
+              }
+            }}
+            userId={user?.id}
+            userEmail={user?.email}
+          />
+        )
       )}
       <div className="h-screen bg-[#edf1f5] flex overflow-hidden">
         {/* 항상 파란색 LNB 표시 (Admin 포함). Admin 내부는 hideSidebar로 흰색 LNB 비표시 */}
@@ -1109,12 +1184,12 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl text-center">
             <p className="text-lg font-bold text-slate-900 mb-2">회원 가입 완료</p>
-            <p className="text-slate-600 text-sm mb-6">지금 바로 학습을 시작해보세요</p>
+            <p className="text-slate-600 text-sm mb-6">지금 바로 모의고사를 시작해보세요</p>
             <button
               type="button"
               onClick={() => {
                 setShowSignupSuccessModal(false);
-                navigate('/mypage');
+                navigate('/exam-list');
               }}
               className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800"
             >
@@ -1247,6 +1322,35 @@ const App: React.FC = () => {
             <button
               type="button"
               onClick={() => { setShowPaymentSuccessModal(false); setPaymentSuccessError(null); }}
+              className="w-full py-3.5 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 transition-colors"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 베타: BETATEST 쿠폰 사용 중지 시, 해당 쿠폰 사용자 로그인 시 안내 (세션당 1회) */}
+      {showBetatestEndedPopup && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" aria-hidden />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-8 shadow-2xl text-center animate-scale-in">
+            <h3 className="text-xl font-black text-slate-900 mb-2">베타테스트 기간이 종료되었습니다</h3>
+            <p className="text-sm text-slate-500 mb-6">
+              베타테스트 쿠폰 사용이 중지되었습니다.
+              <br />
+              서비스 이용을 이어가시려면 정식 이용권을 구매해 주세요.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem('finset_betatest_ended_shown', '1');
+                } catch {
+                  // ignore
+                }
+                setShowBetatestEndedPopup(false);
+              }}
               className="w-full py-3.5 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 transition-colors"
             >
               확인

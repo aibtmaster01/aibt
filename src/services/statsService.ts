@@ -7,14 +7,17 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   query,
   orderBy,
   limit,
   Timestamp,
 } from 'firebase/firestore';
-import { eloToPercent } from './gradingService';
+import { eloToPercent, getEncouragementMessageForPassRate, PASS_RATE_MIN } from './gradingService';
 import { db } from '../firebase';
+import { CERTIFICATIONS, PROBLEM_TYPE_LABELS } from '../constants';
+import { isBetaLocal } from '../config/brand';
 
 // ========== v0 UI 호환 인터페이스 ==========
 
@@ -50,6 +53,18 @@ export interface SubjectScore {
   safetyMargin?: number;
 }
 
+/** 과목별 안전도 구간 (빅분기 과락 40점 기준). UI 게이지·텍스트 라벨용 */
+export type SubjectSafetyZone = '안정권' | '보완 필요' | '집중 필요';
+
+/** 60 이상 안정권, 45~60 보완 필요, 44 이하 집중 필요 */
+export function getSubjectSafetyZone(score: number): SubjectSafetyZone {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return '집중 필요';
+  if (s >= 60) return '안정권';
+  if (s >= 45) return '보완 필요';
+  return '집중 필요';
+}
+
 export interface WeaknessItem {
   name: string;
   accuracy: number;
@@ -69,6 +84,7 @@ interface StatEntry {
 
 interface ExamResultDoc {
   certCode?: string;
+  certId?: string;
   roundId?: string | null;
   roundLabel?: string | null;
   subject_scores?: Record<string, number>;
@@ -77,6 +93,13 @@ interface ExamResultDoc {
   totalQuestions?: number;
   correctCount?: number;
   submittedAt?: Timestamp | { toDate: () => Date };
+}
+
+/** certCode 또는 certId로 해당 자격증 시험인지 판별 (학습 정보가 certId만 있는 구 데이터 호환) */
+function isExamForCert(data: ExamResultDoc, certCode: string): boolean {
+  if (data.certCode === certCode) return true;
+  const certId = CERTIFICATIONS.find((c) => c.code === certCode)?.id;
+  return Boolean(certId && data.certId === certId);
 }
 
 // ========== 유틸 ==========
@@ -122,6 +145,19 @@ function understandingFromStat(ent: StatEntry): number {
   return safeAccuracy(correct, total);
 }
 
+/** 최근 과목별 점수 배열(최신 순)으로 트렌드 방향 반환 */
+function calcSubjectTrend(recentScores: number[]): 'up' | 'down' | 'stable' | null {
+  if (!Array.isArray(recentScores) || recentScores.length < 2) return null;
+  const latest = recentScores[0];
+  const prev = recentScores[1];
+  if (typeof latest !== 'number' || typeof prev !== 'number' || !Number.isFinite(latest) || !Number.isFinite(prev)) return null;
+  const diff = latest - prev;
+  const threshold = 3;
+  if (diff > threshold) return 'up';
+  if (diff < -threshold) return 'down';
+  return 'stable';
+}
+
 /**
  * 해당 유저가 모의고사 1회 이상 응시한 적이 있는지 여부
  * (마이페이지 진입: 응시/결제 없으면 자격증 선택 화면으로 보내기 위함)
@@ -139,20 +175,44 @@ export async function fetchHasAnyExamRecord(uid: string): Promise<boolean> {
 
 // ========== A. fetchUserTrendData ==========
 
+/** 실력진단 모의고사 roundId 패턴 (l_1~3, m_1~3, h_1~3) */
+const DIAGNOSTIC_ROUND_ID_REGEX = /^(l|m|h)_[123]$/;
+
+export interface DiagnosticProgress {
+  completed: number;
+  total: 3;
+  status: 'in_progress' | 'completed';
+}
+
 export interface FetchUserTrendDataResult {
   trendData: TrendDataItem[];
-  recentPassRate: number;
+  /** 3회 미만이면 null, 3회 이상이면 기존 로직의 예측 합격률 */
+  recentPassRate: number | null;
+  diagnosticProgress: DiagnosticProgress;
+  encouragementMessage: string;
+}
+
+function buildEncouragementMessage(_completed: number, _lastScore: number): string {
+  return '예측 합격률 진단을 위해 모의고사를 계속 풀어주세요.';
 }
 
 /**
- * exam_results 조회 → 성적 추이 + 최근 예측 합격률
+ * exam_results 조회 → 성적 추이 + 최근 예측 합격률 (실력진단 3회 이상일 때만)
  */
+const EMPTY_TREND_RESULT: FetchUserTrendDataResult = {
+  trendData: [],
+  recentPassRate: null,
+  diagnosticProgress: { completed: 0, total: 3, status: 'in_progress' },
+  encouragementMessage: buildEncouragementMessage(0, 0),
+};
+
 export async function fetchUserTrendData(
   uid: string,
   certCode: string
 ): Promise<FetchUserTrendDataResult> {
+  try {
   const examRef = collection(db, 'users', uid, 'exam_results');
-  // 복합 인덱스 없이 동작: orderBy만 사용 후 메모리에서 certCode 필터 (인덱스 오류 시 빈 화면 방지)
+  // orderBy('submittedAt') 사용 — submittedAt 없는 문서는 쿼리 결과에서 제외됨
   const q = query(
     examRef,
     orderBy('submittedAt', 'desc'),
@@ -162,68 +222,155 @@ export async function fetchUserTrendData(
   let snapshot;
   try {
     snapshot = await getDocs(q);
-  } catch {
-    return { trendData: [], recentPassRate: 0 };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[Stats] fetchUserTrendData orderBy 쿼리 실패', { uid, certCode, err });
+    }
+    // 베타 로컬에서만: submittedAt 인덱스/필드 이슈 시 orderBy 없이 재조회 (베타 실서버에는 미적용)
+    if (isBetaLocal) {
+      try {
+        const fallbackQ = query(examRef, limit(200));
+        snapshot = await getDocs(fallbackQ);
+        const withDate = snapshot.docs
+          .map((d) => ({ doc: d, data: d.data() as ExamResultDoc, t: toDate((d.data() as ExamResultDoc).submittedAt)?.getTime() ?? 0 }))
+          .filter((x) => isExamForCert(x.data, certCode) && x.data.roundId !== 'weakness_retry');
+        withDate.sort((a, b) => b.t - a.t);
+        snapshot = { docs: withDate.slice(0, 150).map((x) => x.doc) } as typeof snapshot;
+      } catch (fallbackErr) {
+        if (process.env.NODE_ENV === 'development') console.error('[Stats] fetchUserTrendData fallback 실패', fallbackErr);
+        return EMPTY_TREND_RESULT;
+      }
+    } else {
+      return EMPTY_TREND_RESULT;
+    }
+  }
+
+  // 베타 로컬에서만: orderBy 결과 0건일 때 orderBy 없이 재조회 (베타 실서버에는 미적용)
+  if (isBetaLocal && snapshot.docs.length === 0) {
+    try {
+      const fallbackQ = query(examRef, limit(200));
+      const fallbackSnap = await getDocs(fallbackQ);
+      const withDate = fallbackSnap.docs
+        .map((d) => ({ doc: d, data: d.data() as ExamResultDoc, t: toDate((d.data() as ExamResultDoc).submittedAt)?.getTime() ?? 0 }))
+        .filter((x) => isExamForCert(x.data, certCode) && x.data.roundId !== 'weakness_retry');
+      withDate.sort((a, b) => b.t - a.t);
+      snapshot = { docs: withDate.slice(0, 150).map((x) => x.doc) } as typeof snapshot;
+      if (process.env.NODE_ENV === 'development' && snapshot.docs.length > 0) {
+        console.info('[Stats] fetchUserTrendData: orderBy 결과 0건 → orderBy 없이 조회로 복구', { uid, certCode, recovered: snapshot.docs.length });
+      }
+    } catch {
+      // 무시
+    }
   }
 
   const items: TrendDataItem[] = [];
-  let recentPassRate = 0;
+  let recentPassRate: number | null = null;
   const certDocs = snapshot.docs.filter((d) => {
     const data = d.data() as ExamResultDoc;
-    if (data.certCode !== certCode) return false;
+    if (!isExamForCert(data, certCode)) return false;
     if (data.roundId === 'weakness_retry') return false;
     return true;
   });
+
+  if (process.env.NODE_ENV === 'development') {
+    const firstDoc = certDocs[0]?.data() as ExamResultDoc | undefined;
+    console.info('[Stats] fetchUserTrendData', {
+      uid,
+      certCode,
+      totalExamDocs: snapshot.docs.length,
+      afterCertFilter: certDocs.length,
+      firstDocCertCode: firstDoc?.certCode,
+      firstDocCertId: firstDoc?.certId,
+    });
+  }
+
+  const completedDiagnostics = certDocs.filter((d) => {
+    const rid = (d.data() as ExamResultDoc).roundId;
+    return typeof rid === 'string' && DIAGNOSTIC_ROUND_ID_REGEX.test(rid);
+  }).length;
+
   const docsToUse = certDocs.slice(0, 30); // 해당 자격증 기준 최근 30건 (이미 desc 정렬됨)
+  let latestScore = 0;
 
   docsToUse.forEach((docSnap, index) => {
-    const data = docSnap.data() as ExamResultDoc;
-    const submittedAt = data.submittedAt;
-    const dateObj = toDate(submittedAt);
-    const dateStr = dateObj ? formatDateShortWithTime(dateObj) : '';
-    const scores = data.subject_scores ?? {};
-    const scoreValues = Object.values(scores);
-    const avgScore =
-      scoreValues.length > 0
-        ? Math.round(
-            scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
-          )
-        : (data.predicted_pass_rate ?? 0);
-    const score = Number.isNaN(avgScore) ? 0 : Math.min(100, Math.max(0, avgScore));
-    const isPass = Boolean(data.is_passed);
-    const totalQuestions = data.totalQuestions ?? 0;
-    const correctCount = data.correctCount ?? 0;
+    try {
+      const data = docSnap.data() as ExamResultDoc;
+      const submittedAt = data.submittedAt;
+      const dateObj = toDate(submittedAt);
+      const dateStr = dateObj ? formatDateShortWithTime(dateObj) : '';
+      const scores = data.subject_scores ?? {};
+      const scoreValues = Object.values(scores);
+      const avgScore =
+        scoreValues.length > 0
+          ? Math.round(
+              scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
+            )
+          : (data.predicted_pass_rate ?? 0);
+      const score = Number.isNaN(avgScore) ? 0 : Math.min(99, Math.max(0, avgScore));
+      const isPass = Boolean(data.is_passed);
+      const totalQuestions = data.totalQuestions ?? 0;
+      const correctCount = data.correctCount ?? 0;
 
-    items.push({
-      name: dateObj ? formatTrendName(index, dateObj) : `${index + 1}회`,
-      score,
-      date: dateStr,
-      isPass,
-      examId: docSnap.id,
-      roundId: data.roundId ?? null,
-      roundLabel: data.roundLabel ?? null,
-      totalQuestions,
-      correctCount,
-    });
-
-    if (index === 0) {
-      if (data.predicted_pass_rate != null && Number.isFinite(Number(data.predicted_pass_rate))) {
-        recentPassRate = Math.min(100, Math.max(0, Number(data.predicted_pass_rate)));
-      } else if (score > 0) {
-        recentPassRate = score;
-      } else {
-        const total = Number(data.totalQuestions ?? 0);
-        const correct = Number(data.correctCount ?? 0);
-        recentPassRate = total > 0 ? Math.min(100, Math.max(0, Math.round((correct / total) * 100))) : 0;
+      if (index === 0) {
+        latestScore = score;
+        if (score <= 0 && (data.totalQuestions ?? 0) > 0) {
+          const total = Number(data.totalQuestions ?? 0);
+          const correct = Number(data.correctCount ?? 0);
+          latestScore = total > 0 ? Math.min(100, Math.max(0, Math.round((correct / total) * 100))) : 0;
+        }
       }
+
+      items.push({
+        name: dateObj ? formatTrendName(index, dateObj) : `${index + 1}회`,
+        score,
+        date: dateStr,
+        isPass,
+        examId: docSnap.id,
+        roundId: data.roundId ?? null,
+        roundLabel: data.roundLabel ?? null,
+        totalQuestions,
+        correctCount,
+      });
+
+      if (completedDiagnostics >= 3 && index === 0) {
+        if (data.predicted_pass_rate != null && Number.isFinite(Number(data.predicted_pass_rate))) {
+          recentPassRate = Math.min(99, Math.max(0, Number(data.predicted_pass_rate)));
+        } else if (score > 0) {
+          recentPassRate = score;
+        } else {
+          const total = Number(data.totalQuestions ?? 0);
+          const correct = Number(data.correctCount ?? 0);
+          recentPassRate = total > 0 ? Math.min(99, Math.max(0, Math.round((correct / total) * 100))) : 0;
+        }
+      }
+    } catch {
+      // 한 건이라도 파싱 실패 시 해당 doc만 스킵 (2회차 등 추가 후 전체 빈 화면 방지)
     }
   });
 
   items.reverse(); // UI는 오래된 순(시간순)으로 표시
+
+  const diagnosticProgress: DiagnosticProgress =
+    completedDiagnostics >= 3
+      ? { completed: 3, total: 3, status: 'completed' }
+      : { completed: completedDiagnostics, total: 3, status: 'in_progress' };
+
+  const encouragementMessage =
+    diagnosticProgress.status === 'in_progress'
+      ? buildEncouragementMessage(diagnosticProgress.completed, latestScore)
+      : (recentPassRate != null && Number.isFinite(recentPassRate)
+          ? getEncouragementMessageForPassRate(recentPassRate)
+          : '');
+
   return {
     trendData: items,
     recentPassRate,
+    diagnosticProgress,
+    encouragementMessage,
   };
+  } catch {
+    return EMPTY_TREND_RESULT;
+  }
 }
 
 // ========== B. fetchDashboardStats ==========
@@ -235,51 +382,121 @@ export interface FetchDashboardStatsResult {
 }
 
 const FULL_MARK = 100 as const;
-const PASS_LINE = 40; // 과락 기준점
+/** 과목별 안전도용 과락 기준점(대시보드 표시). 합격 판정은 자격증별 min_subject_score 사용. 상세: docs/PASS_RATE_AND_SAFETY.md */
+const PASS_LINE = 40;
+/** 과목별 안전도 하한(%). 한 번 0점이 나와도 절망적인 0% 대신 희망 유지 (예측 합격률과 동일) */
+const SUBJECT_SCORE_MIN = PASS_RATE_MIN;
 
 /**
- * users/{uid}/stats/{certCode} 1개 문서 조회 → 레이더 / 과목 게이지 / 약점 Top3
+ * 대시보드 통계: 레이더(유형별) / 과목 게이지(안전도) / 취약 개념 Top3
+ * 과목별 안전도 = 최근 1회 시험 subject_scores 우선(0~99, 예측합격률과 동일 스케일) → 없으면 subject_stats Elo%
+ * 안전 마진 = 과목점수 − PASS_LINE (양수: 과락 위험 없음)
  */
+const EMPTY_DASHBOARD_RESULT: FetchDashboardStatsResult = {
+  radarData: [],
+  subjectScores: [],
+  weaknessTop3: [],
+};
+
 export async function fetchDashboardStats(
   uid: string,
   certCode: string
 ): Promise<FetchDashboardStatsResult> {
-  const empty: FetchDashboardStatsResult = {
-    radarData: [],
-    subjectScores: [],
-    weaknessTop3: [],
-  };
-
-  const statsRef = doc(db, 'users', uid, 'stats', certCode);
-  let snap;
   try {
-    snap = await getDoc(statsRef);
+  const statsRef = doc(db, 'users', uid, 'stats', certCode);
+  const examRef = collection(db, 'users', uid, 'exam_results');
+
+  /** exam_results는 stats 유무와 관계없이 조회 (stats 없어도 과목별 점수만이라도 표시) */
+  let recentExamDocs: ExamResultDoc[] = [];
+  try {
+    const q = query(examRef, orderBy('submittedAt', 'desc'), limit(50));
+    const examSnap = await getDocs(q);
+    recentExamDocs = examSnap.docs
+      .map((d) => d.data() as ExamResultDoc)
+      .filter((doc) => isExamForCert(doc, certCode) && doc.roundId !== 'weakness_retry')
+      .slice(0, 5);
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[Stats] fetchDashboardStats recentExamDocs', {
+        uid,
+        certCode,
+        totalExamDocs: examSnap.docs.length,
+        afterFilter: recentExamDocs.length,
+        firstCertCode: recentExamDocs[0]?.certCode,
+        firstCertId: recentExamDocs[0]?.certId,
+      });
+    }
+  } catch (e) {
+    if (process.env.NODE_ENV === 'development') console.warn('[Stats] fetchDashboardStats exam_results 조회 실패', e);
+    // 베타 로컬에서만: orderBy 실패 시 orderBy 없이 재조회 (베타 실서버에는 미적용)
+    if (isBetaLocal) {
+      try {
+        const fallbackQ = query(examRef, limit(100));
+        const fallbackSnap = await getDocs(fallbackQ);
+        const filtered = fallbackSnap.docs
+          .map((d) => d.data() as ExamResultDoc)
+          .filter((doc) => isExamForCert(doc, certCode) && doc.roundId !== 'weakness_retry');
+        const withT = filtered
+          .map((doc) => ({ doc, t: toDate(doc.submittedAt)?.getTime() ?? 0 }))
+          .sort((a, b) => b.t - a.t);
+        recentExamDocs = withT.slice(0, 5).map((x) => x.doc);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  let snap;
+  let statsFromServer = false;
+  try {
+    snap = await getDocFromServer(statsRef);
+    statsFromServer = true;
   } catch {
-    return {
-      radarData: [],
-      subjectScores: [],
-      weaknessTop3: [],
-    };
+    try {
+      snap = await getDoc(statsRef);
+    } catch {
+      return EMPTY_DASHBOARD_RESULT;
+    }
   }
 
-  if (!snap.exists()) {
-    return {
-      radarData: [],
-      subjectScores: [],
-      weaknessTop3: [],
-    };
-  }
-
-  const data = snap.data() ?? {};
+  const data = snap.exists() ? (snap.data() ?? {}) : {};
   const conceptStats = (data.core_concept_stats ?? (data as { hierarchy_stats?: Record<string, StatEntry> }).hierarchy_stats ?? {}) as Record<string, StatEntry>;
   const subCoreIdStats = (data.sub_core_id_stats ?? {}) as Record<string, StatEntry>;
   const problemTypeStats = (data.problem_type_stats ?? {}) as Record<string, StatEntry>;
   const subjectStats = (data.subject_stats ?? {}) as Record<string, StatEntry>;
 
-  /** 최근 시험 문서(가중 합격률용). 미구현 시 빈 배열로 두어 오류 방지 */
-  const recentExamDocs: { predicted_pass_rate?: number }[] = [];
-  /** 과목별 최근 점수(트렌드용). 미구현 시 빈 객체로 두어 오류 방지 */
+  if (process.env.NODE_ENV === 'development') {
+    console.info('[Stats] fetchDashboardStats', {
+      uid,
+      certCode,
+      statsFromServer,
+      statsExists: snap.exists(),
+      statsPath: `users/${uid}/stats/${certCode}`,
+      conceptKeys: Object.keys(conceptStats).length,
+      subjectKeys: Object.keys(subjectStats).length,
+      problemTypeKeys: Object.keys(problemTypeStats).length,
+      recentExamCount: recentExamDocs.length,
+    });
+  }
+  /** 과목별 최근 점수(트렌드·안전도용). 최근 시험 순으로 채움 */
   const subjectRecentScores: Record<string, number[]> = {};
+  for (const exam of recentExamDocs) {
+    const scores = exam.subject_scores ?? {};
+    for (const [key, val] of Object.entries(scores)) {
+      if (typeof val === 'number' && Number.isFinite(val)) {
+        if (!subjectRecentScores[key]) subjectRecentScores[key] = [];
+        subjectRecentScores[key].push(val);
+      }
+    }
+  }
+  /** 최근 1회 시험의 과목별 점수 (과목별 안전도 = 예측합격률과 스케일 통일). 첫 문서에 없으면 최근 시험 중 있는 것 사용 */
+  let latestSubjectScores: Record<string, number> = {};
+  for (const exam of recentExamDocs) {
+    const s = exam.subject_scores ?? {};
+    if (Object.keys(s).length > 0) {
+      latestSubjectScores = s;
+      break;
+    }
+  }
 
   // 세부 개념(sub_core_id) → 대분류(Core) 합산: core_id별 평균 proficiency·총 문제 수
   const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};
@@ -293,17 +510,17 @@ export async function fetchDashboardStats(
     coreAggFromSubCore[coreId].count += 1;
   }
 
-  // 1) Radar (problem_type_stats) — 이해도 = proficiency(Elo) 우선
-  const radarData: RadarDataItem[] = Object.entries(problemTypeStats).map(
-    ([subject, ent]) => {
-      const A = understandingFromStat(ent);
-      return {
-        subject,
-        A,
-        fullMark: FULL_MARK,
-      };
-    }
-  );
+  // 1) Radar (problem_type_stats) — 풀어본 유형만 표시 (미풀 유형 제외 → 3~5각형)
+  const typeToA = new Map<string, number>();
+  for (const [k, ent] of Object.entries(problemTypeStats)) {
+    const total = ent?.total ?? 0;
+    if (total > 0) typeToA.set(k, understandingFromStat(ent));
+  }
+  const radarData: RadarDataItem[] = PROBLEM_TYPE_LABELS.filter((label) => typeToA.has(label)).map((label) => ({
+    subject: label,
+    A: typeToA.get(label) ?? 0,
+    fullMark: FULL_MARK,
+  }));
 
   // ─── 최근 3회 가중 이동 평균 합격률 ───
   let weightedPassRate: number | null = null;
@@ -319,15 +536,45 @@ export async function fetchDashboardStats(
     );
   }
 
-  // 2) Subject Gauge — 이해도 + 트렌드 방향 + 안전 마진
-  const subjectScores: SubjectScore[] = Object.entries(subjectStats).map(
-    ([key, ent]) => {
+  // 2) 과목별 안전도: 최근 시험 + 최근 회차 평균 반영, 하한 15% (한 번 0점이어도 희망 유지)
+  let subjectKeys = new Set([...Object.keys(subjectStats), ...Object.keys(latestSubjectScores)]);
+  if (subjectKeys.size === 0 && recentExamDocs.length > 0) {
+    for (const exam of recentExamDocs) {
+      Object.keys(exam.subject_scores ?? {}).forEach((key) => subjectKeys.add(key));
+    }
+  }
+  const subjectScores: SubjectScore[] = Array.from(subjectKeys)
+    .filter((k) => k !== '0' || subjectKeys.size === 1)
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+    .map((key) => {
+      const ent = subjectStats[key];
       const total = ent?.total ?? 0;
-      const score = understandingFromStat(ent);
-      const subjectNumber = parseInt(key, 10) || 1;
       const recentScores = subjectRecentScores[key] ?? [];
+      const latestFromExam = latestSubjectScores[key];
+      const avgRecent =
+        recentScores.length > 0
+          ? Math.round(
+              recentScores.reduce((a, b) => a + b, 0) / recentScores.length
+            )
+          : null;
+      // 한 회차 0점만으로 과목이 0%로 보이지 않게: 최근 2회 이상이면 (최신, 최근평균) 중 큰 값 사용 후 하한 적용
+      let rawScore: number;
+      if (recentScores.length >= 2 && (latestFromExam != null || avgRecent != null)) {
+        const latest = latestFromExam ?? avgRecent ?? 0;
+        const avg = avgRecent ?? latest;
+        rawScore = Math.max(latest, avg);
+      } else {
+        rawScore =
+          latestFromExam ??
+          (avgRecent ?? (ent ? understandingFromStat(ent) : 0));
+      }
+      const score = Math.max(
+        SUBJECT_SCORE_MIN,
+        Math.min(99, Math.round(Number(rawScore)))
+      );
+      const subjectNumber = parseInt(key, 10) || 1;
       const trend = recentScores.length >= 2 ? calcSubjectTrend(recentScores) : null;
-      const safetyMargin = score - PASS_LINE;
+      const safetyMargin = score - PASS_LINE; // 양수: 과락선 위, 음수: 과락 위험
       return {
         subject: `${key}과목`,
         subjectNumber,
@@ -336,34 +583,56 @@ export async function fetchDashboardStats(
         trend,
         safetyMargin,
       };
-    }
-  );
+    });
 
-  // 3) Weakness Top 3: sub_core_id_stats → Core 합산 후 이해도 낮은 순 상위 3 (있으면 우선), 없으면 core_concept_stats
+  // 3) Weakness Top 3: 풀어본 개념만 (total > 0). sub_core_id → Core 합산 후 이해도 낮은 순 상위 3
+  const MIN_TOTAL_FOR_WEAKNESS = 3;
+  const MIN_TOTAL_FOR_WEAKNESS_RELAXED = 1;
   let weaknessCandidates: WeaknessItem[] = [];
   if (Object.keys(coreAggFromSubCore).length > 0) {
-    weaknessCandidates = Object.entries(coreAggFromSubCore)
-      .filter(([, agg]) => agg.total >= 3)
+    const attemptedCores = Object.entries(coreAggFromSubCore).filter(([, agg]) => agg.total > 0);
+    weaknessCandidates = attemptedCores
+      .filter(([, agg]) => agg.total >= MIN_TOTAL_FOR_WEAKNESS)
       .map(([coreId, agg]) => {
         const avgProficiency = agg.total > 0 ? agg.sumProficiency / agg.total : 1200;
         const accuracy = understandingFromStat({ proficiency: avgProficiency, total: agg.total });
         return { name: `개념 ${coreId}`, id: coreId, accuracy, count: agg.total };
       })
       .sort((a, b) => a.accuracy - b.accuracy);
+    if (weaknessCandidates.length === 0) {
+      weaknessCandidates = attemptedCores
+        .filter(([, agg]) => agg.total >= MIN_TOTAL_FOR_WEAKNESS_RELAXED)
+        .map(([coreId, agg]) => {
+          const avgProficiency = agg.total > 0 ? agg.sumProficiency / agg.total : 1200;
+          const accuracy = understandingFromStat({ proficiency: avgProficiency, total: agg.total });
+          return { name: `개념 ${coreId}`, id: coreId, accuracy, count: agg.total };
+        })
+        .sort((a, b) => a.accuracy - b.accuracy);
+    }
   }
   if (weaknessCandidates.length === 0) {
+    const toWeaknessItem = ([name, ent]: [string, StatEntry]): WeaknessItem => {
+      const total = ent?.total ?? 0;
+      const accuracy = understandingFromStat(ent);
+      const id = /^\d+$/.test(name) ? name : undefined;
+      return { name: id ? `개념 ${id}` : name, id, accuracy, count: total };
+    };
     weaknessCandidates = Object.entries(conceptStats)
       .filter(([, ent]) => {
         const total = ent?.total ?? 0;
-        const correct = ent?.correct ?? 0;
-        return total >= 3 && correct >= 1;
+        return total > 0 && total >= MIN_TOTAL_FOR_WEAKNESS && (ent?.correct ?? 0) >= 1;
       })
-      .map(([name, ent]) => {
-        const total = ent?.total ?? 0;
-        const accuracy = understandingFromStat(ent);
-        return { name, accuracy, count: total };
-      })
+      .map(toWeaknessItem)
       .sort((a, b) => a.accuracy - b.accuracy);
+    if (weaknessCandidates.length === 0) {
+      weaknessCandidates = Object.entries(conceptStats)
+        .filter(([, ent]) => {
+          const total = ent?.total ?? 0;
+          return total > 0 && total >= MIN_TOTAL_FOR_WEAKNESS_RELAXED;
+        })
+        .map(toWeaknessItem)
+        .sort((a, b) => a.accuracy - b.accuracy);
+    }
   }
 
   const weaknessTop3 = weaknessCandidates.slice(0, 3);
@@ -373,4 +642,10 @@ export async function fetchDashboardStats(
     subjectScores,
     weaknessTop3,
   };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.error('[Stats] fetchDashboardStats 오류 (대시보드 0 원인 추적용):', err);
+    }
+    return EMPTY_DASHBOARD_RESULT;
+  }
 }

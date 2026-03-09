@@ -59,7 +59,7 @@ export function SubjectBalance({ scores, isPremium, onUpgrade }: SubjectBalanceP
             <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
               <div
                 className={`h-full rounded-full ${getScoreColor(s.score)}`}
-                style={{ width: `${Math.min(100, Math.max(0, s.score))}%` }}
+                style={{ width: `${Math.min(99, Math.max(0, s.score))}%` }}
               />
             </div>
             <span className="text-xs font-medium tabular-nums w-8">{s.score}%</span>

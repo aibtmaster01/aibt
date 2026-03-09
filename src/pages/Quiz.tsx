@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Question, User } from '../types';
 import { getExamService } from '../services/examServiceLoader';
-import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT, WRONG_FEEDBACK_PLACEHOLDER } from '../constants';
+import { EXAM_ROUNDS, CERTIFICATIONS, QUIZ_THEME, SUBJECT_NAMES_BY_CERT, WRONG_FEEDBACK_PLACEHOLDER, getRoundNumberFromRoundId, getRoundLabel } from '../constants';
 import { getCertificationInfo } from '../services/gradingService';
 import type { CertificationInfo } from '../types';
 import { saveGuestQuizProgress, loadGuestQuizProgress } from '../utils/guestQuizStorage';
-import { CheckCircle, XCircle, AlertTriangle, StickyNote, ChevronLeft, ChevronRight, ChevronDown, Crown, Lightbulb, AlertCircle, Search, RotateCcw, X, Pin, Menu, LogOut } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, StickyNote, ChevronLeft, ChevronRight, ChevronDown, Crown, Lightbulb, AlertCircle, Search, RotateCcw, X, Pin, Menu, LogOut, Flag } from 'lucide-react';
+import { useBetaCertifications } from '../config/brand';
+import { submitProblemReport, type ProblemReportType } from '../services/adminQuestionService';
 import { RichText } from '../components/RichText';
 import { to1BasedAnswer } from '../utils/questionUtils';
 import { ErrorView } from '../components/ErrorView';
@@ -22,8 +24,11 @@ export interface QuizAnswerRecord {
   qid: string;
   selected: number;
   isCorrect: boolean;
-  isConfused: boolean;
-  /** 해당 문항 풀이에 걸린 시간(초). 스탯 업데이트 시 estimated_time의 절반 미만이면 찍은 것으로 간주 */
+  /** 모르겠어요 선택(selected===0) 시 true. 채점 시 가중치 반영 */
+  isDontKnow?: boolean;
+  /** (레거시) 학습 모드에서 헷갈려요 체크 시 사용. 채점 시 isConfused는 시간 기준으로 서버 판정 */
+  isConfused?: boolean;
+  /** 해당 문항 풀이에 걸린 시간(초). 스탯 업데이트 시 estimated_time 기준 찍기/헷갈림 판정 */
   elapsedSec?: number;
 }
 
@@ -85,9 +90,13 @@ export const Quiz: React.FC<QuizProps> = ({
   const [imageLoadError, setImageLoadError] = useState(false);
   const questionBodyRef = useRef<HTMLDivElement>(null);
   const questionStartTimeRef = useRef<number>(Date.now());
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportType, setReportType] = useState<ProblemReportType | null>(null);
+  const [reportSending, setReportSending] = useState(false);
+  const certCode = CERTIFICATIONS.find((c) => c.id === certId)?.code ?? '';
 
   const roundInfo = EXAM_ROUNDS.find((r) => r.id === roundId);
-  const round = roundInfo?.round ?? 1;
+  const round = roundInfo?.round ?? getRoundNumberFromRoundId(roundId) ?? 1;
   const isWeaknessRound = round >= 6;
   const weaknessRetryMode = roundId === '__weakness_retry__' || roundId === '__subject_retry__';
   const isPremium = !!(user && certId && isPremiumUnlocked(user, certId));
@@ -107,7 +116,7 @@ export const Quiz: React.FC<QuizProps> = ({
         ? '취약 유형 집중 학습'
         : roundId === '__weak_concept_focus__'
           ? '취약 개념 집중 학습'
-          : (roundInfo?.title ?? '연습 모의고사');
+          : getRoundLabel(roundId, certId);
 
   useEffect(() => {
     setImageLoadError(false);
@@ -272,14 +281,17 @@ export const Quiz: React.FC<QuizProps> = ({
 
   const handleNext = useCallback((overrideSelected?: number) => {
     if (!currentQ) return;
-    const chosen = overrideSelected !== undefined ? overrideSelected : selectedOption;
-    if (chosen === null && overrideSelected === undefined) return;
+    let chosen: number | null = overrideSelected !== undefined ? overrideSelected : selectedOption;
+    if (chosen === null && overrideSelected === undefined) {
+      if (!isConfused) return;
+      chosen = 0; // 모르겠어요로 넘어온 경우
+    }
     const answer1Based = to1BasedAnswer(currentQ.answer, currentQ.options.length);
-    const isCorrect = chosen === answer1Based;
+    const isCorrect = chosen !== 0 && chosen === answer1Based;
     const elapsedSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
     const nextHistory = [
       ...sessionHistory,
-      { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused, elapsedSec },
+      { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isDontKnow: chosen === 0, elapsedSec },
     ];
     setSessionHistory(nextHistory);
 
@@ -317,7 +329,7 @@ export const Quiz: React.FC<QuizProps> = ({
         ? sessionHistory.filter((a) => a.isCorrect).length + 1
         : sessionHistory.filter((a) => a.isCorrect).length;
       const finalElapsed = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
-      const finalHistory = [...sessionHistory, { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isConfused, elapsedSec: finalElapsed }];
+      const finalHistory = [...sessionHistory, { qid: currentQ.id, selected: chosen ?? 0, isCorrect, isDontKnow: chosen === 0, elapsedSec: finalElapsed }];
       if (weaknessRetryMode) {
         onWeaknessRetrySave?.(finalCorrect, questions.length, finalHistory, questions);
         setShowWeaknessRetryEndModal(true);
@@ -409,10 +421,9 @@ export const Quiz: React.FC<QuizProps> = ({
   }
 
   const subjectNum = currentQ.subject_number ?? 1;
-  const modeLabel = mode === 'exam' ? '실전 모드' : '학습 모드';
-  const theme = QUIZ_THEME[mode];
-  const certCode = CERTIFICATIONS.find((c) => c.id === certId)?.code ?? '';
-  const subjectName = SUBJECT_NAMES_BY_CERT[certCode]?.[subjectNum - 1];
+    const modeLabel = mode === 'exam' ? '실전 모드' : '학습 모드';
+    const theme = QUIZ_THEME[mode];
+    const subjectName = SUBJECT_NAMES_BY_CERT[certCode]?.[subjectNum - 1];
   const subjectLabel = subjectName ? `${subjectNum}과목. ${subjectName}` : `${subjectNum}과목`;
 
   const currentRoundMemo = roundMemos[roundId] ?? { freeText: '', pins: [] };
@@ -470,6 +481,17 @@ export const Quiz: React.FC<QuizProps> = ({
                   <span className={`${theme.tag} text-sm px-3 py-1 rounded-full font-bold shadow-sm`}>
                     Q.{String(currentQIndex + 1).padStart(2, '0')}
                   </span>
+                  {useBetaCertifications && (
+                    <button
+                      type="button"
+                      onClick={() => setReportModalOpen(true)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium border border-slate-200"
+                      aria-label="문제 신고"
+                    >
+                      <Flag size={12} />
+                      신고
+                    </button>
+                  )}
                 </div>
                 <div className="flex flex-col items-center text-center">
                   <span className={`text-xs md:text-sm font-semibold ${mode === 'exam' ? 'text-blue-600' : 'text-[#0034d3]'}`}>
@@ -519,11 +541,12 @@ export const Quiz: React.FC<QuizProps> = ({
                         )}
                       </div>
                     )}
-                    {/* 지문+테이블+이미지: 고정 높이, 초과 시 영역 내에서만 스크롤 */}
+                    {/* 지문+테이블+이미지: 고정 높이, 초과 시 영역 내에서만 스크롤 (보기 5줄 가정해 영역 확보) */}
+                    <div className="relative shrink-0 h-[34vh]">
                     <div
                       ref={questionBodyRef}
                       className={
-                        'shrink-0 h-[40vh] overflow-y-auto overflow-x-auto pr-2 ' +
+                        'h-full overflow-y-auto overflow-x-auto pr-2 ' +
                         'text-base text-gray-800 leading-relaxed break-keep w-full ' +
                         '[&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:my-4 [&_table]:text-sm ' +
                         '[&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-3 [&_th]:text-center [&_td]:border [&_td]:border-slate-300 [&_td]:p-3 ' +
@@ -592,9 +615,10 @@ export const Quiz: React.FC<QuizProps> = ({
                         </div>
                       )}
                     </div>
-                    {/* 보기 영역: 남는 높이만 사용, 길면 영역 내 스크롤 */}
-                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+                    </div>
+                    {/* 보기 영역: 1~5번 한 줄 가정해 최소 높이 확보, 길면 영역 내 스크롤 */}
+                    <div className="flex-1 min-h-[320px] flex flex-col overflow-hidden">
+                    <div className="flex-1 min-h-[280px] overflow-y-auto overflow-x-auto">
                     <div className="bg-slate-50/50 rounded-2xl p-5 border border-slate-100">
                       <div className="space-y-2.5">
                         {currentQ.options.map((opt, idx) => {
@@ -651,25 +675,26 @@ export const Quiz: React.FC<QuizProps> = ({
                           );
                         })}
                       </div>
-                      <label className="mt-4 flex items-center justify-end gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={isViewingPast ? (sessionHistory[currentQIndex]?.isConfused ?? false) : isConfused}
-                          onChange={(e) => {
-                            if (isViewingPast) {
-                              setSessionHistory((prev) => {
-                                const next = [...prev];
-                                const rec = next[currentQIndex];
-                                if (!rec) return prev;
-                                next[currentQIndex] = { ...rec, isConfused: !rec.isConfused };
-                                return next;
-                              });
-                            } else setIsConfused(e.target.checked);
-                          }}
-                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-slate-500 font-medium">헷갈려요</span>
-                      </label>
+                      {useBetaCertifications && !effectiveSubmitted && (
+                        <div className="mt-4 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (mode === 'exam') {
+                                setIsConfused(true);
+                                handleNext(0);
+                              } else {
+                                setIsConfused(true);
+                                setIsSubmitted(true);
+                              }
+                            }}
+                            className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium border border-slate-200"
+                            aria-label="모르겠어요"
+                          >
+                            모르겠어요
+                          </button>
+                        </div>
+                      )}
                     </div>
                     </div>
                     {/* 버튼 영역: 고정 */}
@@ -726,6 +751,9 @@ export const Quiz: React.FC<QuizProps> = ({
                     <div ref={explanationBoxRef} className="xl:flex-[3] xl:shrink-0 flex flex-col xl:min-h-0 min-h-0">
                       <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm overflow-y-auto overflow-x-auto flex-1 min-h-0 flex flex-col">
                         {effectiveSubmitted ? (
+                          (() => {
+                            const isConfusedSubmit = (effectiveSelected === null && isConfused) || effectiveSelected === 0;
+                            return (
                           <div className="animate-slide-up">
                             {isPremium && (currentQ.core_concept || currentQ.core_id) && (
                               <div className="mb-3 flex flex-wrap items-center gap-1.5">
@@ -747,7 +775,7 @@ export const Quiz: React.FC<QuizProps> = ({
                                 }
                               >
                                 {/* 정답일 때: 롱 피드백(선택한 보기) 먼저, 그 다음 explanation — 구분선 없이 이어서 */}
-                                {effectiveSelected !== null && effectiveSelected === answerNum && currentQ.wrongFeedback?.[String(effectiveSelected)] ? (
+                                {!isConfusedSubmit && effectiveSelected !== null && effectiveSelected === answerNum && currentQ.wrongFeedback?.[String(effectiveSelected)] ? (
                                   <>
                                     <RichText content={currentQ.wrongFeedback[String(effectiveSelected)]} as="div" />
                                     <div className="mt-3">
@@ -759,7 +787,36 @@ export const Quiz: React.FC<QuizProps> = ({
                                 )}
                               </div>
                             </div>
-                            {effectiveSelected !== null && effectiveSelected !== answerNum && (
+                            {/* 모르겠어요: 정답 해설 + 오답별 모든 피드백 */}
+                            {isConfusedSubmit && currentQ.wrongFeedback && (
+                              <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
+                                <p className="text-xs font-black text-red-500 mb-2 flex items-center gap-1">
+                                  <AlertTriangle className="w-4 h-4 text-red-500" /> 오답별 피드백
+                                </p>
+                                {currentQ.options.map((_, idx) => {
+                                  const optNum = idx + 1;
+                                  if (optNum === answerNum) return null;
+                                  const fb = currentQ.wrongFeedback?.[String(optNum)];
+                                  if (!fb) return null;
+                                  return (
+                                    <div key={optNum} className="rounded-xl border border-slate-200 bg-white p-3">
+                                      <span className="text-xs font-bold text-slate-500 mb-2 block">{optNum}번 오답</span>
+                                      <div
+                                        className={
+                                          'text-slate-700 text-sm leading-7 break-keep w-full overflow-x-auto ' +
+                                          '[&_table]:w-full [&_table]:min-w-[400px] [&_table]:border-collapse [&_table]:my-2 [&_table]:text-sm ' +
+                                          '[&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 ' +
+                                          '[&_pre]:bg-slate-800 [&_pre]:text-slate-50 [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:text-xs [&_code]:bg-slate-100 [&_code]:text-pink-600 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded'
+                                        }
+                                      >
+                                        <RichText content={fb} as="div" />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {!isConfusedSubmit && effectiveSelected !== null && effectiveSelected !== answerNum && (
                               <div className={`mt-4 pt-4 border-t border-slate-100 ${!isPremium ? 'opacity-70 text-slate-500' : ''}`}>
                                 <p className="text-xs font-black text-red-500 mb-1 flex items-center gap-1">
                                   <AlertTriangle className="w-4 h-4 text-red-500" /> 오답 가이드
@@ -788,6 +845,8 @@ export const Quiz: React.FC<QuizProps> = ({
                               </div>
                             )}
                           </div>
+                            );
+                          })()
                         ) : (
                           /* 풀이 중: 해설 숨김, 전구 아이콘만 표시 */
                           <div className="flex-1 flex items-start justify-center pt-8">
@@ -978,6 +1037,81 @@ export const Quiz: React.FC<QuizProps> = ({
                 className="flex-1 py-3 rounded-xl font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5"
               >
                 <X size={18} /> 종료하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 문제 신고 팝업 (베타) — 옵션 3종, problem_reports 저장 (로그인 필요) */}
+      {reportModalOpen && currentQ && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !reportSending && setReportModalOpen(false)} />
+          <div className="relative z-10 bg-white rounded-2xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-slate-900 mb-3">문제에 오류가 있다면 알려주세요</h3>
+            {!user && (
+              <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm mb-4">
+                신고는 로그인 후 이용할 수 있습니다.
+              </p>
+            )}
+            <div className="space-y-2 mb-4">
+              {[
+                { type: 'wrong_answer' as const, label: '정답이 틀렸어요' },
+                { type: 'typo_or_error' as const, label: '오타나 지문 오류가 있어요' },
+                { type: 'out_of_scope' as const, label: '출제 범위를 벗어났어요' },
+              ].map(({ type, label }) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setReportType(type)}
+                  className={`w-full text-left px-4 py-3 rounded-xl border text-sm font-medium transition-colors ${
+                    reportType === type ? 'border-[#0034d3] bg-[#0034d3]/10 text-[#0034d3]' : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  disabled={reportSending}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setReportModalOpen(false); setReportType(null); }}
+                disabled={reportSending}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (reportType === null || !certCode) return;
+                  if (!user) {
+                    alert('신고는 로그인 후 이용할 수 있습니다.');
+                    return;
+                  }
+                  setReportSending(true);
+                  try {
+                    await submitProblemReport(certCode, currentQ.id, reportType, user.id);
+                    setReportModalOpen(false);
+                    setReportType(null);
+                    alert('신고가 접수되었습니다.');
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    const isPermission = /permission|권한|insufficient/i.test(msg);
+                    if (isPermission) {
+                      alert(`신고 저장 권한이 없습니다.\n\n• 로그인 상태를 확인해 주세요.\n• Firebase 콘솔 > Firestore > 규칙에 problem_reports 규칙이 있는지, 배포 후 반영되었는지 확인해 주세요.\n\n[오류] ${msg}`);
+                    } else {
+                      alert(msg);
+                    }
+                  } finally {
+                    setReportSending(false);
+                  }
+                }}
+                disabled={reportSending || reportType === null || !user}
+                className="px-4 py-2 rounded-xl bg-[#0034d3] text-white text-sm font-medium hover:bg-[#002a9e] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {reportSending ? '전송 중...' : '전송'}
               </button>
             </div>
           </div>

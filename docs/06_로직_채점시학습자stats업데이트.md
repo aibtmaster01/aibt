@@ -86,3 +86,11 @@
 
 - `src/services/gradingService.ts`: `submitQuizResult`, `getCertificationInfo`, `computePredictedPassRate`, `updateEloRating`, `nextProficiency`, `eloToPercent`  
 - `src/services/statsService.ts`: `fetchDashboardStats`, `weightedPassRate`, `calcSubjectTrend`, `SubjectScore`
+
+---
+
+## 6. 다른 AI 에이전트를 위한 참고
+
+- **gradingService.ts**: 퀴즈 제출 시 **유일한 진입점**은 `submitQuizResult(uid, certId, sessionHistory, questions, options)`. 이 함수가 자격증 정보 로드 → 과목별 점수·합격 판정 → exam_results 저장 → 3차원 통계(core_concept_stats, sub_core_id_stats, problem_type_stats, subject_stats, tag_stats) 집계·increment·proficiency(Elo) 갱신 → `users/{uid}/stats/{certCode}` 한 번에 갱신. 호출하는 쪽은 `App.tsx`의 `handleQuizFinish` 안에서 퀴즈 종료 시 한 번만 호출.
+- **statsService.ts**: 채점이 아니라 **조회 전용**. 마이페이지/대시보드에서 이미 저장된 stats·exam_results를 읽어서 레이더·과목 밸런스·약점 Top·예측 합격률 등 UI용 포맷으로 변환. `fetchDashboardStats(uid, certCode)`가 핵심. `statsServiceWithCache.ts`는 이걸 감싸서 로컬 캐시(IndexedDB 등)를 쓰는 레이어.
+- **Firestore 경로**: `users/{uid}/exam_results/{examId}`(시험 결과), `users/{uid}/stats/{certCode}`(개념·유형·과목·태그·sub_core_id별 correct/total/proficiency 등). 채점 로직을 바꿀 때는 gradingService만 보면 되고, 대시보드 숫자를 바꿀 때는 statsService·MyPage를 보면 됨.

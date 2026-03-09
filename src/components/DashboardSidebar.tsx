@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { List, LogOut, LogIn, LayoutDashboard, Database, Code, FileText, Settings, Users, BookOpen, Ticket, HelpCircle } from "lucide-react";
 import { CERTIFICATIONS, DISABLED_CERT_IDS } from "../constants";
-import { APP_BRAND, FEATURE_COUPON } from "../config/brand";
+import { APP_BRAND, FEATURE_COUPON, canShowAdmin } from "../config/brand";
 import { getCertDisplayName } from "../services/gradingService";
 import { useAllCertificationInfos } from "../hooks/useCertificationInfo";
 import type { User } from "../types";
@@ -175,8 +175,8 @@ export function DashboardSidebar({
         </div>
       )}
 
-      {/* 리스트(자격증 선택) - 일반 회원만 표시 / 어드민은 자격증관리 아이콘으로 대체 */}
-      {!user?.isAdmin && (
+      {/* 리스트(자격증 선택) - 실서버 관리자 외 표시 / 실서버 어드민은 자격증관리 아이콘으로 대체 */}
+      {!canShowAdmin(user) && (
         <div ref={listPopupRef} className={`relative ${user ? "mt-8 md:mt-12" : "mt-6 md:mt-8"}`}>
           <button
             type="button"
@@ -221,18 +221,18 @@ export function DashboardSidebar({
           )}
         </div>
       )}
-      {/* 대시보드 - 로그인 시에만 표시 (어드민이면 첫 메뉴로 mt 더 넓게) */}
+      {/* 대시보드 - 로그인 시에만 표시 (실서버에서 어드민이면 첫 메뉴로 mt 더 넓게) */}
       {user && (
         <button
           type="button"
           onClick={() => onNavigate('/mypage')}
-          className={`${user.isAdmin ? 'mt-8 md:mt-12' : 'mt-6 md:mt-8'} ${currentPath === '/mypage' || currentPath === '/' ? "text-white" : "text-white/80 hover:text-white"}`}
+          className={`${canShowAdmin(user) ? 'mt-8 md:mt-12' : 'mt-6 md:mt-8'} ${currentPath === '/mypage' || currentPath === '/' ? "text-white" : "text-white/80 hover:text-white"}`}
         >
           <LayoutDashboard className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
         </button>
       )}
-      {/* 회원 관리 - 관리자만 표시 */}
-      {user?.isAdmin && (
+      {/* 회원 관리 - 실서버에서만 관리자에게 표시 */}
+      {canShowAdmin(user) && (
         <button
           type="button"
           onClick={() => onNavigate('/admin')}
@@ -242,8 +242,8 @@ export function DashboardSidebar({
           <Users className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
         </button>
       )}
-      {/* 자격증 관리 - 관리자만 표시 (List 아이콘) */}
-      {user?.isAdmin && (
+      {/* 자격증 관리 - 실서버에서만 관리자에게 표시 */}
+      {canShowAdmin(user) && (
         <button
           type="button"
           onClick={() => onNavigate('/admin/certs')}
@@ -253,8 +253,8 @@ export function DashboardSidebar({
           <List className="w-6 h-6 md:w-8 md:h-8" />
         </button>
       )}
-      {/* 문제 관리 - 관리자만 표시 */}
-      {user?.isAdmin && (
+      {/* 문제 관리 - 실서버에서만 관리자에게 표시 */}
+      {canShowAdmin(user) && (
         <button
           type="button"
           onClick={() => onNavigate('/admin/questions')}
@@ -264,8 +264,8 @@ export function DashboardSidebar({
           <BookOpen className="w-6 h-6 md:w-8 md:h-8" strokeWidth={2} />
         </button>
       )}
-      {/* 쿠폰 관리 - 관리자만 표시 (결제 관리 화면은 추후 별도 메뉴 예정) */}
-      {user?.isAdmin && (
+      {/* 쿠폰 관리 - 실서버에서만 관리자에게 표시 */}
+      {canShowAdmin(user) && (
         <button
           type="button"
           onClick={() => onNavigate('/admin/billing')}

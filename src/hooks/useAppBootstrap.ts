@@ -5,7 +5,6 @@ import { useEffect } from 'react';
 import { CERTIFICATIONS } from '../constants';
 import { syncQuestionIndex } from '../services/db/localCacheDB';
 import { logClientError } from '../services/errorLogService';
-import { invalidateMyPageCache } from '../services/db/localCacheDB';
 import { APP_BRAND } from '../config/brand';
 import type { Route } from './useAppNavigation';
 import type { User } from '../types';
@@ -43,12 +42,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams): void {
     };
   }, []);
 
-  useEffect(() => {
-    if (route !== '/result' || !user?.id || !selectedCertId) return;
-    const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
-    if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
-  }, [route, user?.id, selectedCertId]);
-
+  // 캐시 무효화는 퀴즈 제출 시 한 번만 수행 (결과 페이지 도달 시 중복 무효화 제거 → 2회차 후 대시보드 데이터 유지)
   useEffect(() => {
     if (route !== '/exam-list' || selectedCertId) return;
     const fallback =

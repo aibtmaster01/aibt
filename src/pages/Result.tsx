@@ -13,7 +13,9 @@ export interface QuizAnswerRecord {
   qid: string;
   selected: number;
   isCorrect: boolean;
+  isDontKnow?: boolean;
   isConfused?: boolean;
+  isLucked?: boolean;
   elapsedSec?: number;
 }
 
@@ -115,7 +117,7 @@ function computeSubjectScores(
     const score = totalPossible > 0
       ? Math.round((ct.correct * scorePerQ / totalPossible) * 100)
       : 0;
-    out[key] = Math.min(100, Math.max(0, score));
+    out[key] = Math.min(99, Math.max(0, score));
   }
   return out;
 }
@@ -155,9 +157,16 @@ function getWeakestHierarchy(
   return worst;
 }
 
-/** 과목별 점수(만점 기준)가 과락선 미만이면 true */
+/** 과목별 점수(만점 기준)가 과락선 미만이면 true — 레거시(점수 합산용) */
 function isSubjectFail(points: number, minSubjectScore: number): boolean {
   return points < minSubjectScore;
+}
+
+/** 과목별 정답률(%)이 과락선 미만이면 true. 문제 수가 적을 때도 비율 기준으로 과락 판정 */
+function isSubjectFailByRate(correct: number, total: number, minSubjectScore: number): boolean {
+  if (total <= 0) return false;
+  const rate100 = (correct / total) * 100;
+  return rate100 < minSubjectScore;
 }
 
 export const Result: React.FC<ResultProps> = ({
@@ -209,12 +218,14 @@ export const Result: React.FC<ResultProps> = ({
         if (rec.isCorrect) details[key].correct += 1;
       });
     }
-    const totalScore100 =
+    const totalScore100 = Math.min(
+      99,
       Object.keys(subjScores).length > 0
         ? Math.round(
             Object.values(subjScores).reduce((a, b) => a + b, 0) / Object.keys(subjScores).length
           )
-        : Math.round((score / total) * 100);
+        : Math.round((score / total) * 100)
+    );
 
     const minSubjectScore = certInfo?.exam_config?.pass_criteria?.min_subject_score ?? MIN_SUBJECT_SCORE_FALLBACK;
     const scorePerQ = subjects[0]?.score_per_question ?? 5;
@@ -222,8 +233,7 @@ export const Result: React.FC<ResultProps> = ({
     for (const subj of subjects) {
       const key = String(subj.subject_number);
       const ct = details[key] ?? { correct: 0, total: 0 };
-      const points = ct.total > 0 ? ct.correct * scorePerQ : 0;
-      if (isSubjectFail(points, minSubjectScore)) failedSubjectNames.push(subj.name);
+      if (isSubjectFailByRate(ct.correct, ct.total, minSubjectScore)) failedSubjectNames.push(subj.name);
     }
     const hasSubjectFail = failedSubjectNames.length > 0;
 
@@ -406,7 +416,7 @@ export const Result: React.FC<ResultProps> = ({
           <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden mb-2 relative">
             <div
               className={`h-full rounded-full transition-all duration-700 ${isPass ? 'bg-brand-500' : 'bg-slate-400'}`}
-              style={{ width: `${Math.min(100, totalScore100)}%` }}
+              style={{ width: `${Math.min(99, totalScore100)}%` }}
             />
             <div
               className="absolute top-0 w-0.5 h-full bg-[#0034d3] opacity-90"
@@ -438,7 +448,7 @@ export const Result: React.FC<ResultProps> = ({
                     const scorePerQ = subj.score_per_question ?? certInfo.subjects?.[0]?.score_per_question ?? 5;
                     const points = ct.total > 0 ? ct.correct * scorePerQ : 0;
                     const minSubjectScore = certInfo.exam_config?.pass_criteria?.min_subject_score ?? MIN_SUBJECT_SCORE_FALLBACK;
-                    const failed = isSubjectFail(points, minSubjectScore);
+                    const failed = isSubjectFailByRate(ct.correct, ct.total, minSubjectScore);
                     return (
                       <tr key={subj.subject_number} className="border-b border-slate-100">
                         <td className="py-2.5 pl-4 text-slate-600">{i + 1}</td>
@@ -584,11 +594,12 @@ export const Result: React.FC<ResultProps> = ({
                 <div className="space-y-4">
                   {wrongAnswerItems.map(({ q, idx, rec }, listIdx) => {
                     const optLen = q.options?.length ?? 0;
-                    const selectedNum = Math.min(Math.max(rec.selected, 1), optLen || 4);
+                    const isSkipped = rec.selected === 0;
+                    const selectedNum = isSkipped ? 0 : Math.min(Math.max(rec.selected, 1), optLen || 4);
                     const answerNum = to1BasedAnswer(q.answer, optLen);
-                    const selectedText = (q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-';
+                    const selectedText = isSkipped ? '모르겠어요' : ((q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-');
                     const correctText = (answerNum >= 1 && q.options?.[answerNum - 1]) ? q.options[answerNum - 1] : (q.explanation ? '(해설 참고)' : '—');
-                    const wrongReason = q.wrongFeedback && (q.wrongFeedback[String(selectedNum)] ?? q.wrongFeedback[String(rec.selected)]);
+                    const wrongReason = !isSkipped && q.wrongFeedback && (q.wrongFeedback[String(selectedNum)] ?? q.wrongFeedback[String(rec.selected)]);
                     const showWrongReason = isPaidUser || listIdx < 2;
                     return (
                       <div
@@ -603,8 +614,11 @@ export const Result: React.FC<ResultProps> = ({
                               {q.core_concept || (q.core_id ? `코어 ${q.core_id}` : '—')}
                             </span>
                           )}
-                          {rec?.isConfused && (
+                          {rec?.isConfused && !isSkipped && (
                             <span className="text-xs font-bold text-[#0034d3] bg-[#99ccff] px-2 py-0.5 rounded">*헷갈린 문제*</span>
+                          )}
+                          {rec?.isLucked && !isSkipped && (
+                            <span className="text-xs font-bold text-amber-800 bg-amber-200 px-2 py-0.5 rounded">찍기</span>
                           )}
                         </div>
                         <p className="text-sm font-medium text-slate-900 leading-relaxed"><RichText content={q.content} as="span" /></p>
@@ -634,10 +648,10 @@ export const Result: React.FC<ResultProps> = ({
                         )}
                         {/* 구분선 */}
                         <div className="mt-3 pt-3 border-t border-red-100" />
-                        {/* 내 선택 (형광펜) */}
+                        {/* 내 선택 (형광펜). 모르겠어요면 번호 없이 '모르겠어요'만 */}
                         <p className="text-xs text-slate-600 mt-2">
                           <span className="bg-black text-white font-bold px-1.5 py-0.5 rounded">내 선택</span>
-                          <span className="ml-1.5 text-red-600 font-medium">{selectedNum >= 1 && selectedNum <= 6 ? ['①','②','③','④','⑤','⑥'][selectedNum - 1] + ' ' : ''}<RichText content={selectedText} as="span" /></span>
+                          <span className="ml-1.5 text-red-600 font-medium">{!isSkipped && selectedNum >= 1 && selectedNum <= 6 ? ['①','②','③','④','⑤','⑥'][selectedNum - 1] + ' ' : ''}<RichText content={selectedText} as="span" /></span>
                         </p>
                         {/* 오답이유 (정답 해설처럼 볼드, 형광펜 없음) 또는 무료/게스트 CTA */}
                         {showWrongReason && wrongReason && (
@@ -690,9 +704,10 @@ export const Result: React.FC<ResultProps> = ({
                     const rec = sessionHistory![idx];
                     const isCorrect = rec?.isCorrect ?? false;
                     const optLen = q.options?.length ?? 0;
-                    const selectedNum = (rec && (optLen ? Math.min(Math.max(rec.selected, 1), optLen) : rec.selected)) ?? 0;
+                    const isSkipped = rec?.selected === 0;
+                    const selectedNum = isSkipped ? 0 : (rec && (optLen ? Math.min(Math.max(rec.selected, 1), optLen) : rec.selected)) ?? 0;
                     const answerNum = to1BasedAnswer(q.answer, optLen);
-                    const selectedText = (q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-';
+                    const selectedText = isSkipped ? '모르겠어요' : ((q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-');
                     const correctText = (answerNum >= 1 && q.options?.[answerNum - 1]) ? q.options[answerNum - 1] : (q.explanation ? '(해설 참고)' : '—');
                     return (
                       <div
@@ -704,8 +719,11 @@ export const Result: React.FC<ResultProps> = ({
                             {isCorrect ? '정답' : '오답'}
                           </span>
                           <span className="text-slate-500 text-sm">문제 {idx + 1}</span>
-                          {rec?.isConfused && (
+                          {rec?.isConfused && !isSkipped && (
                             <span className="text-xs font-bold text-[#0034d3] bg-[#99ccff] px-2 py-0.5 rounded">*헷갈린 문제*</span>
+                          )}
+                          {rec?.isLucked && !isSkipped && (
+                            <span className="text-xs font-bold text-amber-800 bg-amber-200 px-2 py-0.5 rounded">찍기</span>
                           )}
                         </div>
                         <p className="text-sm font-medium text-slate-900 leading-relaxed"><RichText content={q.content} as="span" /></p>
@@ -721,7 +739,7 @@ export const Result: React.FC<ResultProps> = ({
                         )}
                         {rec != null && (
                           <div className="text-xs text-slate-500 mt-3 space-y-1">
-                            <p>내 선택: <span className={isCorrect ? 'text-slate-700' : 'text-red-600 font-medium'}>{selectedNum >= 1 && selectedNum <= 6 ? ['①','②','③','④','⑤','⑥'][selectedNum - 1] + ' ' : ''}<RichText content={selectedText} as="span" /></span></p>
+                            <p>내 선택: <span className={isCorrect ? 'text-slate-700' : 'text-red-600 font-medium'}>{!isSkipped && selectedNum >= 1 && selectedNum <= 6 ? ['①','②','③','④','⑤','⑥'][selectedNum - 1] + ' ' : ''}<RichText content={selectedText} as="span" /></span></p>
                             {!isCorrect && <p className="text-green-600">정답: {answerNum >= 1 && answerNum <= 6 ? ['①','②','③','④','⑤','⑥'][answerNum - 1] + ' ' : ''}<RichText content={correctText} as="span" /></p>}
                           </div>
                         )}

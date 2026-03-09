@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   getRoundsForCert,
   getSubjectsForCertAndRound,
@@ -60,6 +60,8 @@ export function AdminQuestions() {
   const [keywordFilteredQids, setKeywordFilteredQids] = useState<string[] | null>(null);
   const [keywordSearching, setKeywordSearching] = useState(false);
   const [exportingJson, setExportingJson] = useState(false);
+  const [reportsViewQid, setReportsViewQid] = useState<string | null>(null);
+  const reportAlertShownRef = useRef<string>('');
 
   const certOptions = useMemo(
     () => CERTIFICATIONS.filter((c) => CERT_QUESTIONS.includes(c.code as typeof CERT_QUESTIONS[number])),
@@ -166,7 +168,17 @@ export function AdminQuestions() {
     }
     setLoading(true);
     fetchQuestionsForAdmin(certCode, pageQids)
-      .then(setPageQuestions)
+      .then((list) => {
+        setPageQuestions(list);
+        const reported = list.filter((q) => (q.reports?.length ?? 0) > 0);
+        if (reported.length > 0) {
+          const key = pageQids.join(',');
+          if (reportAlertShownRef.current !== key) {
+            reportAlertShownRef.current = key;
+            alert('신고가 들어온 문제:\n' + reported.map((q) => q.id).join(', '));
+          }
+        }
+      })
       .finally(() => setLoading(false));
   }, [searched, certCode, pageQids.join(',')]);
 
@@ -362,17 +374,18 @@ export function AdminQuestions() {
                 <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-32">이미지</th>
                 <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-14">테이블</th>
                 <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">이미지</th>
+                <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">신고</th>
                 <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">문제보기</th>
                 <th className="px-2 py-3 text-xs font-bold text-slate-500 uppercase w-20">문제수정</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!searched ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">자격증·회차·과목을 선택한 뒤 <strong>검색</strong> 버튼을 눌러 주세요.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">자격증·회차·과목을 선택한 뒤 <strong>검색</strong> 버튼을 눌러 주세요.</td></tr>
               ) : loading && pageQuestions.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">로딩 중...</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">로딩 중...</td></tr>
               ) : pageQuestions.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">조회된 문제가 없습니다.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">조회된 문제가 없습니다.</td></tr>
               ) : (
                 pageQuestions.map((q, idx) => {
                   const rowIndex = (currentPage - 1) * PAGE_SIZE + idx + 1;
@@ -417,6 +430,19 @@ export function AdminQuestions() {
                           uploading={uploadQid === q.id}
                           deleting={imageDeletingQid === q.id}
                         />
+                      </td>
+                      <td className="px-2 py-3">
+                        {(q.reports?.length ?? 0) > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setReportsViewQid(q.id)}
+                            className="text-sm font-semibold text-amber-600 hover:underline"
+                          >
+                            신고보기 ({q.reports!.length})
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 text-sm">—</span>
+                        )}
                       </td>
                       <td className="px-2 py-3">
                         <button
@@ -498,6 +524,38 @@ export function AdminQuestions() {
           </div>
         </div>
       )}
+
+      {reportsViewQid && (() => {
+        const q = pageQuestions.find((x) => x.id === reportsViewQid);
+        const reports = q?.reports ?? [];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setReportsViewQid(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="text-lg font-bold text-slate-900">신고 내역 — {reportsViewQid}</h3>
+                <button type="button" onClick={() => setReportsViewQid(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-500">닫기</button>
+              </div>
+              <div className="p-5 overflow-y-auto flex-1">
+                {reports.length === 0 ? (
+                  <p className="text-slate-500 text-sm">신고 내역이 없습니다.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {reports.map((r, i) => (
+                      <li key={i} className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm">
+                        <p className="text-slate-800 whitespace-pre-wrap">{r.text}</p>
+                        <p className="mt-1 text-slate-500 text-xs">
+                          {r.createdAt ? new Date(r.createdAt).toLocaleString('ko-KR') : ''}
+                          {r.userId ? ` · ${r.userId}` : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

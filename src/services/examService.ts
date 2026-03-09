@@ -28,18 +28,20 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question, User, type ExamAnswerEntry, type UserRound } from '../types';
-import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, WRONG_FEEDBACK_PLACEHOLDER } from '../constants';
+import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, WRONG_FEEDBACK_PLACEHOLDER, PROBLEM_TYPE_LABELS } from '../constants';
 import {
   hasQuestionMetadataForCert,
   getQuestionMetadataByCert,
   putQuestionMetadataBulk,
   getQuestionIndexFromCache,
   syncQuestionIndex,
+  clearQuestionIndexCache,
   type QuestionMetadataRecord,
   type QuestionIndexItem,
 } from './db/localCacheDB';
 import { getCertificationInfo } from './gradingService';
 import { to1BasedAnswer, wrongFeedbackTo1Based } from '../utils/questionUtils';
+import { useBetaCertifications, getCertificationsCollection } from '../config/brand';
 
 const IN_QUERY_LIMIT = 30; // Firestore 'in' 쿼리 최대 30개 (대량 로딩 병렬화)
 
@@ -86,6 +88,8 @@ export interface FirestoreQuestionDoc {
   round?: number;
   table_data?: string | { headers: string[]; rows: string[][] } | null;
   stats?: Record<string, number>;
+  /** (베타) 문제 신고 목록 */
+  reports?: { text: string; createdAt: string; userId?: string | null }[];
 }
 
 export type AiMockExamMode = 'REAL_EXAM' | 'WEAKNESS_ATTACK';
@@ -179,6 +183,7 @@ export function mapPoolDocToQuestion(docId: string, data: FirestoreQuestionDoc):
     sub_core_id: typeof data.sub_core_id === 'string' ? data.sub_core_id : undefined,
     round: typeof data.round === 'number' ? data.round : undefined,
     tableData: data.table_data ?? undefined,
+    reports: Array.isArray(data.reports) ? data.reports : undefined,
   };
 }
 
@@ -561,9 +566,40 @@ function firestoreDocToMetadata(certCode: string, docId: string, data: Firestore
   };
 }
 
-/** 인덱스 항목 → 취약유형/취약개념 필터링용 Question 스텁 (BIGDATA 풀 폴백) */
+/** 유형 문자열을 PROBLEM_TYPE_LABELS 중 하나로 정규화 (공백 제거·매칭). stats/레이더 키 일치용 */
+function normalizeProblemTypeToLabel(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const noSpaces = t.replace(/\s+/g, '');
+  for (const label of PROBLEM_TYPE_LABELS) {
+    if (label === t || label === noSpaces || label.replace(/\s+/g, '') === noSpaces) return label;
+  }
+  if (PROBLEM_TYPE_LABELS.includes(t)) return t;
+  return null;
+}
+
+/** 레벨드 인덱스(Bigdata_Index_Leveled) 유형명 → 앱 5축(PROBLEM_TYPE_LABELS) 매핑. 채점 시 problem_type_stats 키 일치·레이더 반영용 */
+const LEVELED_PROBLEM_TYPE_TO_LABEL: Record<string, string> = {
+  '개념 비교형': '개념이해형',
+  '상황 적응형': '실무적용형',
+  '계산 풀이형': '계산풀이형',
+  '절차 숙지형': '단순암기형',
+  '결과 해석형': '결과독해형',
+};
+function leveledProblemTypeToLabel(raw: string | undefined): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const t = raw.trim();
+  const mapped = LEVELED_PROBLEM_TYPE_TO_LABEL[t] ?? LEVELED_PROBLEM_TYPE_TO_LABEL[t.replace(/\s+/g, '')];
+  if (mapped) return mapped;
+  return normalizeProblemTypeToLabel(t);
+}
+
+/** 인덱스 항목 → 취약유형/취약개념 필터링용 Question 스텁 (BIGDATA 풀 폴백). core_concept·problem_types가 채워져야 채점 시 stats 반영됨 */
 function indexItemToQuestionStub(item: QuestionIndexItem): Question {
   const pt = item.metadata?.problem_type;
+  const subCoreId = typeof item.metadata?.sub_core_id === 'string' ? item.metadata.sub_core_id.trim() : undefined;
+  const coreConceptFromSubCore = subCoreId ? (subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId) : undefined;
+  const normalizedPt = typeof pt === 'string' && pt.trim() ? (leveledProblemTypeToLabel(pt) ?? normalizeProblemTypeToLabel(pt) ?? pt.trim()) : undefined;
   const difficultyRaw = item.stats?.difficulty;
   const difficultyLevel =
     typeof difficultyRaw === 'number'
@@ -587,11 +623,11 @@ function indexItemToQuestionStub(item: QuestionIndexItem): Question {
     trend: null,
     estimated_time_sec: typeof item.stats?.estimated_time_sec === 'number' ? item.stats.estimated_time_sec : 0,
     trap_score: typeof item.stats?.trap_score === 'number' ? item.stats.trap_score : 0,
-    problem_types: typeof pt === 'string' && pt.trim() ? [pt.trim()] : undefined,
+    problem_types: normalizedPt ? [normalizedPt] : undefined,
     subject_number: typeof item.metadata?.subject === 'number' ? item.metadata.subject : undefined,
-    core_concept: undefined,
+    core_concept: coreConceptFromSubCore ?? undefined,
     difficulty_level: difficultyLevel,
-    sub_core_id: typeof item.metadata?.sub_core_id === 'string' ? item.metadata.sub_core_id : undefined,
+    sub_core_id: subCoreId || undefined,
   };
 }
 
@@ -1055,6 +1091,45 @@ function getUserGradeForCert(user: User | null, certId: string): UserGrade {
 const BIGDATA_QUESTION_POOL_ID = 'contents_1681';
 
 /**
+ * 베타 로컬 BIGDATA: Firestore 문항에 메타가 비어 있으면 인덱스 캐시로 보강. 채점 시 subject_stats·problem_type_stats·core_concept_stats 반영되도록.
+ */
+async function enrichBigDataQuestionsFromIndex(questions: Question[], certCode: string): Promise<Question[]> {
+  if (questions.length === 0 || certCode !== 'BIGDATA' || !useBetaCertifications) return questions;
+  let indexItems = await getQuestionIndexFromCache(certCode);
+  if (!indexItems || indexItems.length === 0) {
+    await syncQuestionIndex(certCode);
+    indexItems = await getQuestionIndexFromCache(certCode);
+  }
+  if (!indexItems || indexItems.length === 0) return questions;
+  const byQid = new Map<string, QuestionIndexItem>();
+  for (const item of indexItems) {
+    if (item?.q_id) byQid.set(item.q_id, item);
+  }
+  return questions.map((q) => {
+    const item = byQid.get(q.id);
+    if (!item) return q;
+    const meta = item.metadata ?? {};
+    const needSubject = q.subject_number == null;
+    const needConcept = !(q.core_concept && q.core_concept.trim());
+    const needSubCore = !(q.sub_core_id && q.sub_core_id.trim());
+    const pt = meta.problem_type;
+    const normalizedPt = typeof pt === 'string' && pt.trim() ? leveledProblemTypeToLabel(pt) : null;
+    // 유형: Firestore에 "상황 적응형" 등 레벨드 유형명이 있으면 레이더 5축(단순암기형 등)과 불일치 → 인덱스에 유형 있으면 항상 5축 라벨로 덮어쓰기
+    const useProblemTypes = normalizedPt ? [normalizedPt] : undefined;
+    if (!needSubject && !needConcept && !needSubCore && !useProblemTypes) return q;
+    const subCoreId = typeof meta.sub_core_id === 'string' ? meta.sub_core_id.trim() : undefined;
+    const coreConcept = subCoreId ? (subCoreId.includes('-') ? subCoreId.split('-')[0] : subCoreId) : undefined;
+    return {
+      ...q,
+      ...(needSubject && typeof meta.subject === 'number' ? { subject_number: meta.subject } : {}),
+      ...(needConcept && coreConcept ? { core_concept: coreConcept } : {}),
+      ...(useProblemTypes ? { problem_types: useProblemTypes } : {}),
+      ...(needSubCore && subCoreId ? { sub_core_id: subCoreId } : {}),
+    };
+  });
+}
+
+/**
  * [1] 실제 DB 구조 기반 문제 가져오기 (static exam)
  * - BIGDATA: 직접 경로 getDoc (인덱스 불필요, 취약유형/취약개념 집중학습 안정화)
  * - 그 외: collectionGroup('questions') + where('q_id', 'in', chunk)
@@ -1068,7 +1143,7 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
     for (let i = 0; i < qIds.length; i += IN_QUERY_LIMIT) {
       const chunk = qIds.slice(i, i + IN_QUERY_LIMIT);
       const snaps = await Promise.all(
-        chunk.map((qId) => getDoc(doc(db, 'certifications', certCode, 'question_pools', poolId, 'questions', qId)))
+        chunk.map((qId) => getDoc(doc(db, getCertificationsCollection(certCode), certCode, 'question_pools', poolId, 'questions', qId)))
       );
       snaps.forEach((snap, j) => {
         const qId = chunk[j];
@@ -1080,7 +1155,8 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
     }
     const orderMap = new Map(results.map((q) => [q.id, q]));
     const ordered = qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
-    return ordered;
+    const enriched = await enrichBigDataQuestionsFromIndex(ordered, certCode);
+    return enriched;
   }
 
   const chunks: string[][] = [];
@@ -1105,19 +1181,33 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
   return qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
 }
 
-/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용) */
+/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용). 베타 로컬: 진단 40문항 */
 const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
   1: 80,
   2: 80,
   3: 80,
 };
+const DIAGNOSTIC_QUESTIONS_PER_ROUND_BETA = 40;
+
+/** (베타 로컬) prepLevel + 회차 → 인덱스 round 키 (l_1, m_2, h_3 등) */
+function getDiagnosticRoundKey(prepLevel: 'beginner' | 'intermediate' | 'advanced', round: number): string {
+  const prefix = prepLevel === 'beginner' ? 'l' : prepLevel === 'intermediate' ? 'm' : 'h';
+  return `${prefix}_${round}`;
+}
 
 /**
- * index 항목을 해당 회차(round)만 필터링
+ * index 항목을 해당 회차만 필터링. round가 string이면 레벨드 키(l_1 등), number면 기존 1,2,3,99
  */
-function filterIndexByRound(items: QuestionIndexItem[] | null, round: number): QuestionIndexItem[] {
+function filterIndexByRound(items: QuestionIndexItem[] | null, round: number | string): QuestionIndexItem[] {
   if (!items || items.length === 0) return [];
-  return items.filter((item) => (item.metadata?.round ?? 99) === round);
+  if (typeof round === 'string') {
+    return items.filter((item) => String(item.metadata?.round ?? '99') === round);
+  }
+  return items.filter((item) => {
+    const r = item.metadata?.round;
+    if (typeof r === 'string') return false;
+    return (r ?? 99) === round;
+  });
 }
 
 /** metadata에서 정렬용 숫자 추출 (subject, core_id) */
@@ -1144,16 +1234,22 @@ function pickStaticRoundIdsInOrder(items: QuestionIndexItem[], count: number): s
   return sorted.slice(0, count).map((x) => x.q_id);
 }
 
+export interface GetQuestionsForRoundOptions {
+  /** (베타 로컬) 맞춤형 문항 수: 40(빠른 학습) | 80(실전 학습) */
+  questionCount?: number;
+}
+
 /**
  * getQuestionsForRound (UserRound 기반 박제 흐름)
  * 1. user_rounds/{round} 존재 시 → 고정된 questionIds로 즉시 반환
  * 2. 없으면: Static(1~3) vs 맞춤형(round >= 6, Zone 기반) 판단 후 생성
- * 3. UserRound 저장(트랜잭션으로 중복 방지) 후 반환
+ * 3. UserRound 저장(트랜잭션 대신 getDoc→setDoc) 후 반환
  */
 export async function getQuestionsForRound(
   certId: string,
   round: number,
-  user: User | null
+  user: User | null,
+  options?: GetQuestionsForRoundOptions
 ): Promise<Question[]> {
   if (!CERT_IDS_WITH_QUESTIONS.includes(certId)) {
     throw new Error('해당 과목은 현재 준비중입니다.');
@@ -1165,9 +1261,14 @@ export async function getQuestionsForRound(
 
   const grade = getUserGradeForCert(user, certId);
 
+  /** (베타) 진단 1~3회차: user_rounds 키·인덱스 필터를 레벨별 roundKey(l_1 등)로, certifications_beta 인덱스/문항 사용 */
+  const isBetaDiagnostic = useBetaCertifications && round <= 3 && user?.prepLevel;
+  const roundKeyForStorage =
+    isBetaDiagnostic ? getDiagnosticRoundKey(user!.prepLevel!, round) : String(round);
+
   /** [1] 유저 있고 UserRound 존재 → 즉시 반환 */
   if (user) {
-    const userRoundRef = doc(db, 'users', user.id, 'user_rounds', String(round));
+    const userRoundRef = doc(db, 'users', user.id, 'user_rounds', roundKeyForStorage);
     const userRoundSnap = await getDoc(userRoundRef);
     if (userRoundSnap.exists()) {
       const data = userRoundSnap.data() as UserRound;
@@ -1186,31 +1287,49 @@ export async function getQuestionsForRound(
   let sourceRounds: number[];
 
   if (useStatic) {
-    /** Static 1~3: index 캐시만 사용. 회차(round)별로 index 필터 후 문항 수는 certification_info 또는 폴백 사용 */
-    let needCount = STATIC_QUESTIONS_PER_ROUND[round] ?? 80;
-    if (round <= 3) {
-      try {
-        const certInfo = await getCertificationInfo(certCode);
-        const subjects = certInfo?.subjects;
-        if (Array.isArray(subjects) && subjects.length > 0) {
-          const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
-          if (total > 0) needCount = total;
+    /** Static 1~3: 베타 로컬이면 40문항·roundKey(l_1 등) 필터, 아니면 기존 80·숫자 round */
+    let needCount: number;
+    let filterRound: number | string;
+    if (isBetaDiagnostic) {
+      needCount = DIAGNOSTIC_QUESTIONS_PER_ROUND_BETA;
+      filterRound = roundKeyForStorage;
+    } else {
+      needCount = STATIC_QUESTIONS_PER_ROUND[round] ?? 80;
+      if (round <= 3) {
+        try {
+          const certInfo = await getCertificationInfo(certCode);
+          const subjects = certInfo?.subjects;
+          if (Array.isArray(subjects) && subjects.length > 0) {
+            const total = subjects.reduce((s, c) => s + (c.question_count ?? 0), 0);
+            if (total > 0) needCount = total;
+          }
+        } catch {
+          // certInfo 실패 시 위 needCount 유지
         }
-      } catch {
-        // certInfo 실패 시 위 needCount 유지
       }
+      filterRound = round;
     }
     let indexItems = await getQuestionIndexFromCache(certCode);
     if (!indexItems || indexItems.length === 0) {
       await syncQuestionIndex(certCode);
       indexItems = await getQuestionIndexFromCache(certCode);
     }
-    const roundFiltered = filterIndexByRound(indexItems ?? [], round);
+    let roundFiltered = filterIndexByRound(indexItems ?? [], filterRound);
+    // 베타 진단에서 0건이면 캐시 삭제 후 Firestore에서 한 번 더 동기화 시도
+    if (roundFiltered.length < needCount && isBetaDiagnostic && (roundFiltered.length === 0 || !indexItems?.length)) {
+      await clearQuestionIndexCache(certCode);
+      await syncQuestionIndex(certCode);
+      indexItems = await getQuestionIndexFromCache(certCode);
+      roundFiltered = filterIndexByRound(indexItems ?? [], filterRound);
+    }
     if (roundFiltered.length < needCount) {
+      const roundLabel = isBetaDiagnostic ? roundKeyForStorage : round;
+      const betaHint =
+        isBetaDiagnostic && (roundFiltered.length === 0 || !indexItems?.length)
+          ? ' 베타에서는 레벨드 인덱스가 Firestore certifications_beta/BIGDATA/public/index_leveled 에 있어야 합니다. backend에서 upload_leveled_contents_and_index.py 를 실행해 업로드한 뒤 페이지를 새로고침해 주세요.'
+          : ' Firebase Storage/Firestore에 index가 업로드되어 있는지 확인하고 다시 시도해 주세요.';
       throw new Error(
-        `Round_${round} 문제를 불러오려면 인덱스에 해당 회차 문항이 필요합니다. ` +
-        `(회차 ${round} 문항: ${roundFiltered.length}건, 필요: ${needCount}건). ` +
-        `Firebase Storage/Firestore에 index가 업로드되어 있는지 확인하고 다시 시도해 주세요.`
+        `Round ${roundLabel} 문제를 불러오려면 인덱스에 해당 회차 문항이 필요합니다. (문항: ${roundFiltered.length}건, 필요: ${needCount}건).${betaHint}`
       );
     }
     const qIds = pickStaticRoundIdsInOrder(roundFiltered, needCount);
@@ -1218,15 +1337,15 @@ export async function getQuestionsForRound(
     if (questions.length < qIds.length) throw new Error(`문제 로딩 실패: ${qIds.length}개 중 ${questions.length}개만 불러왔습니다.`);
     sourceRounds = [round];
   } else {
-    /** 맞춤형: round >= 6 → 큐레이션 기반 생성 후 user_rounds 저장 */
+    /** 맞춤형: round >= 4 → 큐레이션 기반 생성 후 user_rounds 저장. 베타에서 40/80 선택 가능 */
     if (!user) throw new Error('맞춤형 모의고사는 로그인이 필요합니다.');
-    questions = await fetchAdaptiveQuestions(user.id, certId, user, round);
+    questions = await fetchAdaptiveQuestions(user.id, certId, user, round, undefined, options?.questionCount);
     sourceRounds = [round];
   }
 
-  /** [3] UserRound 저장: 이미 있으면 덮어쓰지 않음. 트랜잭션 대신 getDoc → 없을 때만 setDoc 으로 409 방지 */
+  /** [3] UserRound 저장: 이미 있으면 덮어쓰지 않음. 베타 진단은 roundKeyForStorage(l_1 등) 사용 */
   if (user && questions.length > 0) {
-    const userRoundRef = doc(db, 'users', user.id, 'user_rounds', String(round));
+    const userRoundRef = doc(db, 'users', user.id, 'user_rounds', roundKeyForStorage);
     const beforeWrite = await getDoc(userRoundRef);
     if (beforeWrite.exists()) {
       const data = beforeWrite.data() as UserRound;
@@ -1257,10 +1376,11 @@ export async function fetchAdaptiveQuestions(
   certId: string,
   user: User | null,
   round: number,
-  curationMode?: 'REAL_EXAM' | 'WEAKNESS_ATTACK'
+  curationMode?: 'REAL_EXAM' | 'WEAKNESS_ATTACK',
+  questionCount?: number
 ): Promise<Question[]> {
   const m = await import('./aiRoundCurationService');
-  return m.fetchAdaptiveQuestions(uid, certId, user, round, curationMode);
+  return m.fetchAdaptiveQuestions(uid, certId, user, round, curationMode, questionCount);
 }
 
 const WEAKNESS_RETRY_MAX = 50;

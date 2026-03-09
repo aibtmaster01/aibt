@@ -1,20 +1,22 @@
+/**
+ * 베타 로컬 전용 오리엔테이션 팝업.
+ * - 난이도(레벨) 선택을 항상 먼저 노출 (forced && !fromLNB 시).
+ * - 쿠폰 등록 후 setInitialEloByPrepLevel 항상 호출.
+ * App.tsx에서 isBetaLocal일 때만 이 컴포넌트를 사용하며, 베타 실서버에는 영향 없음.
+ */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut } from 'lucide-react';
-import { isBetaLocal } from '../config/brand';
 import { updateUserPrepLevel, setInitialEloByPrepLevel } from '../services/authService';
 
 export type PrepLevel = 'beginner' | 'intermediate' | 'advanced';
 
-export interface OrientationPopupProps {
-  /** true: 최초 진입(쿠폰 미등록) → 4페이지에 쿠폰 입력, 등록 전까지 닫기 불가 */
+export interface OrientationPopupBetaProps {
   forced?: boolean;
-  /** true: LNB에서 연 경우 → 4페이지에 닫기 버튼만 */
   fromLNB?: boolean;
   onClose: () => void;
   onCouponRegistered?: () => void;
   onSelectLevel?: (level: PrepLevel) => void;
-  /** 베타: 헤더에 로그아웃 버튼 노출 시 호출 */
   onLogout?: () => void | Promise<void>;
   userId?: string;
   userEmail?: string;
@@ -61,7 +63,7 @@ const SLIDES = [
   {
     id: 5,
     title: <span className="font-bold text-blue-600">쿠폰코드 입력</span>,
-    content: null, // 쿠폰 페이지는 별도 UI
+    content: null,
     hasPrev: true,
   },
 ];
@@ -82,7 +84,7 @@ function renderContent(text: string) {
   });
 }
 
-export function OrientationPopup({
+export function OrientationPopupBeta({
   forced = false,
   fromLNB = false,
   onClose,
@@ -91,8 +93,9 @@ export function OrientationPopup({
   onLogout,
   userId = '',
   userEmail = '',
-}: OrientationPopupProps) {
-  const showLevelFirst = isBetaLocal && forced && !fromLNB;
+}: OrientationPopupBetaProps) {
+  /** 베타 로컬 전용: forced 시 항상 난이도 선택 먼저 노출 */
+  const showLevelFirst = forced && !fromLNB;
   const [phase, setPhase] = useState<'level' | 'orientation'>(showLevelFirst ? 'level' : 'orientation');
   const [page, setPage] = useState(0);
   const [selectedLevel, setSelectedLevel] = useState<PrepLevel | null>(null);
@@ -102,7 +105,7 @@ export function OrientationPopup({
 
   const slide = SLIDES[page];
   const isLastPage = page === SLIDES.length - 1;
-  const isCouponPage = slide?.content === null; // 5페이지: 쿠폰코드 입력
+  const isCouponPage = slide?.content === null;
   const showCouponInput = isCouponPage && forced && !fromLNB;
   const showCloseOnly = isCouponPage && fromLNB;
 
@@ -129,9 +132,7 @@ export function OrientationPopup({
       await redeemBetaCoupon(couponCode.trim(), userEmail, userId);
       if (selectedLevel && userId) {
         await updateUserPrepLevel(userId, selectedLevel);
-        if (isBetaLocal) {
-          await setInitialEloByPrepLevel(userId, 'c1', selectedLevel);
-        }
+        await setInitialEloByPrepLevel(userId, 'c1', selectedLevel);
       }
       onCouponRegistered?.();
       onClose();
@@ -148,7 +149,6 @@ export function OrientationPopup({
         className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 고정 헤더 */}
         <div className="shrink-0 px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <h2 className="text-lg font-bold text-slate-900">🚀 AiBT 베타테스터 핵심 기능 가이드</h2>
           {onLogout && (
@@ -166,7 +166,6 @@ export function OrientationPopup({
           )}
         </div>
 
-        {/* 슬라이드 영역 */}
         <div className="flex-1 overflow-hidden min-h-[560px] relative flex items-center justify-center">
           <AnimatePresence mode="wait" initial={false}>
             {phase === 'level' ? (
@@ -226,7 +225,6 @@ export function OrientationPopup({
                     )}
                   </>
                 ) : (
-                  /* 5페이지: 쿠폰코드 입력(최초) 또는 LNB 도움말 마지막(쿠폰 등록 후) */
                   <div className="text-slate-700 text-base leading-relaxed text-center w-full">
                     {showCouponInput && (
                       <>
@@ -262,7 +260,6 @@ export function OrientationPopup({
           </AnimatePresence>
         </div>
 
-        {/* 하단 버튼 */}
         <div className="shrink-0 px-6 py-4 border-t border-slate-200 bg-white flex items-center justify-between gap-3">
           {phase === 'level' ? (
             <p className="text-slate-500 text-sm w-full text-center">위 카드 중 하나를 선택해 주세요.</p>
