@@ -89,7 +89,7 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
               </div>
             </div>
 
-            {/* 베타: 쿠폰 입력 영역 (상품정보 아래) */}
+            {/* 쿠폰 입력 영역 */}
             {FEATURE_COUPON && (
               <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
                 <h2 className="font-bold text-lg mb-2">베타테스터 전용 쿠폰 입력</h2>

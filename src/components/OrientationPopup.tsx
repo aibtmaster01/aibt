@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut } from 'lucide-react';
-import { isBetaLocal } from '../config/brand';
+import { useBetaCertifications } from '../config/brand';
 import { updateUserPrepLevel, setInitialEloByPrepLevel } from '../services/authService';
 
 export type PrepLevel = 'beginner' | 'intermediate' | 'advanced';
@@ -11,10 +11,11 @@ export interface OrientationPopupProps {
   forced?: boolean;
   /** true: LNB에서 연 경우 → 4페이지에 닫기 버튼만 */
   fromLNB?: boolean;
+  /** true: 업데이트 안내 후 플로우 → 난이도 선택 먼저, 마지막 페이지는 응원 문구+닫기만 */
+  fromUpdateFlow?: boolean;
   onClose: () => void;
   onCouponRegistered?: () => void;
   onSelectLevel?: (level: PrepLevel) => void;
-  /** 베타: 헤더에 로그아웃 버튼 노출 시 호출 */
   onLogout?: () => void | Promise<void>;
   userId?: string;
   userEmail?: string;
@@ -85,6 +86,7 @@ function renderContent(text: string) {
 export function OrientationPopup({
   forced = false,
   fromLNB = false,
+  fromUpdateFlow = false,
   onClose,
   onCouponRegistered,
   onSelectLevel,
@@ -92,7 +94,7 @@ export function OrientationPopup({
   userId = '',
   userEmail = '',
 }: OrientationPopupProps) {
-  const showLevelFirst = isBetaLocal && forced && !fromLNB;
+  const showLevelFirst = (useBetaCertifications && forced && !fromLNB) || fromUpdateFlow;
   const [phase, setPhase] = useState<'level' | 'orientation'>(showLevelFirst ? 'level' : 'orientation');
   const [page, setPage] = useState(0);
   const [selectedLevel, setSelectedLevel] = useState<PrepLevel | null>(null);
@@ -102,9 +104,9 @@ export function OrientationPopup({
 
   const slide = SLIDES[page];
   const isLastPage = page === SLIDES.length - 1;
-  const isCouponPage = slide?.content === null; // 5페이지: 쿠폰코드 입력
-  const showCouponInput = isCouponPage && forced && !fromLNB;
-  const showCloseOnly = isCouponPage && fromLNB;
+  const isCouponPage = slide?.content === null; // 5페이지: 쿠폰코드 입력 또는 응원 문구
+  const showCouponInput = isCouponPage && forced && !fromLNB && !fromUpdateFlow;
+  const showCloseOnly = isCouponPage && (fromLNB || fromUpdateFlow);
 
   const handleLevelSelect = (level: PrepLevel) => {
     setSelectedLevel(level);
@@ -129,7 +131,7 @@ export function OrientationPopup({
       await redeemBetaCoupon(couponCode.trim(), userEmail, userId);
       if (selectedLevel && userId) {
         await updateUserPrepLevel(userId, selectedLevel);
-        if (isBetaLocal) {
+        if (useBetaCertifications) {
           await setInitialEloByPrepLevel(userId, 'c1', selectedLevel);
         }
       }

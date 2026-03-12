@@ -19,7 +19,7 @@ async function getExamService() {
   return import('./examService');
 }
 
-/** 로컬 타입 정의 (examService 정적 import 제거로 번들 초기화 오류 방지) */
+/** 타입 정의 (examService 정적 import 제거로 번들 초기화 오류 방지) */
 type AiMockExamMode = 'REAL_EXAM' | 'WEAKNESS_ATTACK';
 interface FirestoreQuestionDoc {
   q_id?: string;
@@ -271,7 +271,7 @@ export async function generateAdaptiveExam(
 }
 
 /**
- * Round 6+ 맞춤형 문제 Fetch (기본 80문항, 베타에서 40/80 선택 가능)
+ * Round 6+ 맞춤형 문제 Fetch (기본 80문항, 40/80 선택 가능)
  * @param curationMode 실전 대비형(REAL_EXAM) / 약점 강화형(WEAKNESS_ATTACK)
  * @param questionCount 40(빠른 학습) | 80(실전 학습), 미지정 시 80
  */

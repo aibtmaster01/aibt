@@ -1,6 +1,6 @@
 # 베타·로컬 마이페이지 데이터 흐름 검토
 
-**목적**: 베타 로컬 서버에서만 동작해야 하는 로직과, 베타 실서버와 공유되는 로직을 명확히 구분한다. **베타 실서버에는 절대 영향을 주지 않는다.**
+**목적**: 베타(AiBT) 마이페이지 데이터 소스·표시 규칙 정리. **업데이트**: `isBetaLocal` 제거. 베타 = AiBT 빌드(`useBetaCertifications = APP_BRAND === 'AiBT'`). 로컬 dev:beta와 베타 실서버 동작 동일.
 
 ---
 
@@ -8,19 +8,18 @@
 
 | 플래그 | 조건 | 로컬 dev (npm run dev:beta) | 베타 실서버 (배포) |
 |--------|------|-----------------------------|---------------------|
-| `import.meta.env.DEV` | 개발 모드 | ✅ true | ❌ false |
-| `APP_BRAND` | VITE_APP_BRAND | 'AiBT' 등 | 'AiBT' 등 |
+| `APP_BRAND` | VITE_APP_BRAND | 'AiBT' | 'AiBT' |
 | **`isBetaLocal`** | **DEV && (FEATURE_COUPON \|\| APP_BRAND === 'AiBT')** | **✅ true** | **❌ false** |
 | `useBetaCertifications` | isBetaLocal \|\| APP_BRAND === 'AiBT' | ✅ true | ✅ true |
 
-- **로컬 전용**으로 둘 로직은 반드시 **`isBetaLocal`**로 분기한다.
+- 베타 전용 로직은 **`useBetaCertifications`**로 분기. 로컬/실서버 구분 없음.
 - `useBetaCertifications`는 베타 서버에서도 true이므로, “로컬에서만” 제한에는 사용하지 않는다.
 
 ---
 
 ## 2. 데이터 저장 경로 (베타/실서버 동일)
 
-마이페이지의 **과목별 안전도·취약 개념·유형별 분석**은 아래 경로만 사용한다. **certifications_beta는 문항 풀(인덱스/문제)에만** 쓰이고, 사용자 학습 데이터에는 쓰이지 않는다.
+마이페이지의 **과목별 안전도·취약 개념·유형별 분석**은 아래 경로만 사용한다. 문항/인덱스는 **certifications** 사용 (베타 실서버와 동일).
 
 | 데이터 | Firestore 경로 | 비고 |
 |--------|-----------------|------|

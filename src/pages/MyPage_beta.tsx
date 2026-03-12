@@ -1,8 +1,3 @@
-/**
- * 베타 로컬 전용 마이페이지.
- * - 예측 합격률: 모의고사 3회 이상 응시 시에만 표시 (실서버는 1회부터 표시).
- * App.tsx에서 isBetaLocal일 때만 사용하며, 베타 실서버에는 영향 없음.
- */
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -347,11 +342,8 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
       : "-";
 
   const hasLearningHistory = trend.length > 0;
-  /** 베타 로컬: 3회 이상 응시 시에만 예측 합격률 표시 */
   const canShowPassRate = trend.length >= BETA_LOCAL_MIN_EXAMS_FOR_PASS_RATE;
-  /** 실력진단 3회 미만이면 합격률 대신 진행 카드 표시 */
   const showDiagnosticProgressCard = diagnosticProgress?.status === 'in_progress';
-  /** 베타 로컬: 3회 미만이면 합격률 숫자 미표시. 진행 카드일 때도 미표시 */
   const displayRecentPassRate = hasLearningHistory && !showDiagnosticProgressCard && recentPassRate != null && canShowPassRate ? recentPassRate : 0;
   const displayTrend = hasLearningHistory ? trend : [];
   const displaySubjectScores = hasLearningHistory ? subjectScores : [];
@@ -744,7 +736,6 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
                               // 개념 id: API의 w.id 우선, 없으면 "개념 79" / "개념79"에서 숫자 추출 (캐시된 구 데이터 대응)
                               const resolvedId =
                                 w.id ?? (typeof w.name === "string" ? (w.name.match(/^개념\s*(\d+)$/) ?? null)?.[1] : null) ?? null;
-                              // BIGDATA는 로컬 개념명 우선(코어컨셉1,2,3 대신 실제 개념명 표시)
                               const byId =
                                 resolvedId != null
                                   ? (activeCert?.code === "BIGDATA" && BIGDATA_CORE_CONCEPTS_BY_ID[resolvedId])

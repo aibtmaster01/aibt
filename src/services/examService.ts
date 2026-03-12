@@ -88,7 +88,7 @@ export interface FirestoreQuestionDoc {
   round?: number;
   table_data?: string | { headers: string[]; rows: string[][] } | null;
   stats?: Record<string, number>;
-  /** (베타) 문제 신고 목록 */
+  /** 문제 신고 목록 */
   reports?: { text: string; createdAt: string; userId?: string | null }[];
 }
 
@@ -1090,9 +1090,7 @@ function getUserGradeForCert(user: User | null, certId: string): UserGrade {
 /** BIGDATA 문항 경로: question_pools/contents_1681/questions/{q_id} (collectionGroup 인덱스 없어도 getDoc으로 조회) */
 const BIGDATA_QUESTION_POOL_ID = 'contents_1681';
 
-/**
- * 베타 로컬 BIGDATA: Firestore 문항에 메타가 비어 있으면 인덱스 캐시로 보강. 채점 시 subject_stats·problem_type_stats·core_concept_stats 반영되도록.
- */
+/** BIGDATA: 문항 메타 비어 있으면 인덱스 캐시로 보강. 채점 시 subject_stats·problem_type_stats·core_concept_stats 반영. */
 async function enrichBigDataQuestionsFromIndex(questions: Question[], certCode: string): Promise<Question[]> {
   if (questions.length === 0 || certCode !== 'BIGDATA' || !useBetaCertifications) return questions;
   let indexItems = await getQuestionIndexFromCache(certCode);
@@ -1181,7 +1179,7 @@ export async function fetchQuestionsFromPools(certCode: string, qIds: string[]):
   return qIds.map((id) => orderMap.get(id)).filter(Boolean) as Question[];
 }
 
-/** Round별 Static 문항 수 폴백 (certification_info 없을 때만 사용). 베타 로컬: 진단 40문항 */
+/** Round별 Static 문항 수 폴백. 진단 40문항(레벨드). */
 const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
   1: 80,
   2: 80,
@@ -1189,7 +1187,7 @@ const STATIC_QUESTIONS_PER_ROUND: Record<number, number> = {
 };
 const DIAGNOSTIC_QUESTIONS_PER_ROUND_BETA = 40;
 
-/** (베타 로컬) prepLevel + 회차 → 인덱스 round 키 (l_1, m_2, h_3 등) */
+/** prepLevel + 회차 → 인덱스 round 키 (l_1, m_2, h_3 등) */
 function getDiagnosticRoundKey(prepLevel: 'beginner' | 'intermediate' | 'advanced', round: number): string {
   const prefix = prepLevel === 'beginner' ? 'l' : prepLevel === 'intermediate' ? 'm' : 'h';
   return `${prefix}_${round}`;
@@ -1235,7 +1233,7 @@ function pickStaticRoundIdsInOrder(items: QuestionIndexItem[], count: number): s
 }
 
 export interface GetQuestionsForRoundOptions {
-  /** (베타 로컬) 맞춤형 문항 수: 40(빠른 학습) | 80(실전 학습) */
+  /** 맞춤형 문항 수: 40(빠른 학습) | 80(실전 학습) */
   questionCount?: number;
 }
 
@@ -1261,10 +1259,10 @@ export async function getQuestionsForRound(
 
   const grade = getUserGradeForCert(user, certId);
 
-  /** (베타) 진단 1~3회차: user_rounds 키·인덱스 필터를 레벨별 roundKey(l_1 등)로, certifications_beta 인덱스/문항 사용 */
-  const isBetaDiagnostic = useBetaCertifications && round <= 3 && user?.prepLevel;
+  const isBetaDiagnostic = useBetaCertifications && certCode === 'BIGDATA' && round <= 3;
+  const effectivePrepLevel: 'beginner' | 'intermediate' | 'advanced' = user?.prepLevel ?? 'intermediate';
   const roundKeyForStorage =
-    isBetaDiagnostic ? getDiagnosticRoundKey(user!.prepLevel!, round) : String(round);
+    isBetaDiagnostic ? getDiagnosticRoundKey(effectivePrepLevel, round) : String(round);
 
   /** [1] 유저 있고 UserRound 존재 → 즉시 반환 */
   if (user) {
@@ -1287,7 +1285,6 @@ export async function getQuestionsForRound(
   let sourceRounds: number[];
 
   if (useStatic) {
-    /** Static 1~3: 베타 로컬이면 40문항·roundKey(l_1 등) 필터, 아니면 기존 80·숫자 round */
     let needCount: number;
     let filterRound: number | string;
     if (isBetaDiagnostic) {
@@ -1315,7 +1312,6 @@ export async function getQuestionsForRound(
       indexItems = await getQuestionIndexFromCache(certCode);
     }
     let roundFiltered = filterIndexByRound(indexItems ?? [], filterRound);
-    // 베타 진단에서 0건이면 캐시 삭제 후 Firestore에서 한 번 더 동기화 시도
     if (roundFiltered.length < needCount && isBetaDiagnostic && (roundFiltered.length === 0 || !indexItems?.length)) {
       await clearQuestionIndexCache(certCode);
       await syncQuestionIndex(certCode);
@@ -1326,7 +1322,7 @@ export async function getQuestionsForRound(
       const roundLabel = isBetaDiagnostic ? roundKeyForStorage : round;
       const betaHint =
         isBetaDiagnostic && (roundFiltered.length === 0 || !indexItems?.length)
-          ? ' 베타에서는 레벨드 인덱스가 Firestore certifications_beta/BIGDATA/public/index_leveled 에 있어야 합니다. backend에서 upload_leveled_contents_and_index.py 를 실행해 업로드한 뒤 페이지를 새로고침해 주세요.'
+          ? ' 레벨드 인덱스가 Firestore certifications/BIGDATA/public/index_leveled 에 있어야 합니다. backend에서 upload_leveled_contents_and_index.py --prod 를 실행해 업로드한 뒤 페이지를 새로고침해 주세요.'
           : ' Firebase Storage/Firestore에 index가 업로드되어 있는지 확인하고 다시 시도해 주세요.';
       throw new Error(
         `Round ${roundLabel} 문제를 불러오려면 인덱스에 해당 회차 문항이 필요합니다. (문항: ${roundFiltered.length}건, 필요: ${needCount}건).${betaHint}`
@@ -1337,13 +1333,13 @@ export async function getQuestionsForRound(
     if (questions.length < qIds.length) throw new Error(`문제 로딩 실패: ${qIds.length}개 중 ${questions.length}개만 불러왔습니다.`);
     sourceRounds = [round];
   } else {
-    /** 맞춤형: round >= 4 → 큐레이션 기반 생성 후 user_rounds 저장. 베타에서 40/80 선택 가능 */
+    /** 맞춤형: round >= 4 → 큐레이션 기반 생성 후 user_rounds 저장 */
     if (!user) throw new Error('맞춤형 모의고사는 로그인이 필요합니다.');
     questions = await fetchAdaptiveQuestions(user.id, certId, user, round, undefined, options?.questionCount);
     sourceRounds = [round];
   }
 
-  /** [3] UserRound 저장: 이미 있으면 덮어쓰지 않음. 베타 진단은 roundKeyForStorage(l_1 등) 사용 */
+  /** [3] UserRound 저장: 이미 있으면 덮어쓰지 않음 */
   if (user && questions.length > 0) {
     const userRoundRef = doc(db, 'users', user.id, 'user_rounds', roundKeyForStorage);
     const beforeWrite = await getDoc(userRoundRef);

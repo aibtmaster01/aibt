@@ -1043,7 +1043,7 @@ export const Quiz: React.FC<QuizProps> = ({
         </div>
       )}
 
-      {/* 문제 신고 팝업 (베타) — 옵션 3종, problem_reports 저장 (로그인 필요) */}
+      {/* 문제 신고 팝업 — 옵션 3종, problem_reports 저장 (로그인 필요) */}
       {reportModalOpen && currentQ && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => !reportSending && setReportModalOpen(false)} />

@@ -21,8 +21,8 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({
   onUpdateUser,
   onLogout,
 }) => {
-  const [familyName, setFamilyName] = useState(user.familyName || '김');
-  const [givenName, setGivenName] = useState(user.givenName || user.name.replace(/^김/, '') || '');
+  const [familyName, setFamilyName] = useState(user.familyName ?? '');
+  const [givenName, setGivenName] = useState(user.givenName || user.name || '');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
 
@@ -42,15 +42,15 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({
   const handleSaveName = async () => {
     const f = familyName.trim();
     const g = givenName.trim();
-    if (!f || !g) {
-      setNameError('성과 이름을 모두 입력해 주세요.');
+    if (!g) {
+      setNameError('이름을 입력해 주세요.');
       return;
     }
     setNameError('');
     setNameSaving(true);
     try {
       await updateDisplayName(user.id, f, g);
-      onUpdateUser((u) => ({ ...u, familyName: f, givenName: g, name: f + g }));
+      onUpdateUser((u) => ({ ...u, familyName: f, givenName: g, name: (f + g).trim() || g }));
     } catch (e) {
       setNameError(e instanceof AuthError ? e.message : '저장에 실패했습니다.');
     } finally {
@@ -119,7 +119,7 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({
             value={familyName}
             onChange={(e) => setFamilyName(e.target.value)}
             className="w-24 px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#0034d3] focus:border-transparent"
-            placeholder="성"
+            placeholder="성 (선택)"
             required
           />
           <input

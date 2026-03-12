@@ -19,9 +19,7 @@ export interface DashboardSidebarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
   onLogout?: () => void;
-  /** 베타 전용: 쿠폰 입력 모달 열기 */
   onOpenCoupon?: () => void;
-  /** 베타 전용: 오리엔테이션(핵심 기능 가이드) 팝업 열기 */
   onOpenOrientation?: () => void;
 }
 
@@ -278,7 +276,6 @@ export function DashboardSidebar({
 
       <div className="flex-1 min-h-[24px]" />
 
-      {/* 베타: 핵심 기능 가이드(오리엔테이션) 버튼 */}
       {user && onOpenOrientation && (
         <button
           type="button"

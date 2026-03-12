@@ -1,7 +1,7 @@
 export interface User {
   id: string;
   email: string;
-  /** 성 (예: 김) - 필수 */
+  /** 성 (예: 김) - 선택, 없을 수 있음 */
   familyName: string;
   /** 이름 (예: 철수) - 필수 */
   givenName: string;
@@ -30,10 +30,18 @@ export interface User {
   purchasedScheduleIdsByCert?: Record<string, string[]>;
   /** 이메일 인증 완료 여부 — 미인증 시 앱 내 안내·재발송 배너 노출 */
   is_verified?: boolean;
-  /** (베타 로컬) 학습 준비 수준 — 쿠폰 입력 완료 시에만 저장 */
+  /** 학습 준비 수준 — 쿠폰 입력 완료 시에만 저장 */
   prepLevel?: 'beginner' | 'intermediate' | 'advanced';
-  /** BETATEST 배포용 쿠폰 사용 이력 — 사용 중지 시 로그인 시 '베타테스트 기간이 종료되었습니다' 안내용 */
+  /** BETATEST 배포용 쿠폰 사용 이력 — 사용 중지 시 로그인 시 안내 팝업용 */
   usedBetatestCoupon?: boolean;
+  /**
+   * 온보딩 단계. Firestore onboarding_status와 동기화.
+   * 0 = 방금 가입(신규) → 난이도 선택 + 쿠폰 입력
+   * 1 = 기존 가입자, 쿠폰 인증됨, 레벨 미선택 → 난이도 선택 + 응원 문구
+   * 2 = 레벨 선택 완료(쿠폰 인증) → 대시보드
+   * 미존재(레거시) = 1로 간주
+   */
+  onboardingStatus?: 0 | 1 | 2;
 }
 
 /** 이용권 정보 (시험당일 12:00 KST 활성화) */
@@ -62,8 +70,10 @@ export interface FirestoreUserDoc {
   max_devices?: number; // default 3
   /** Firestore: certCode → PassInfo */
   passes?: Record<string, Omit<PassInfo, 'boughtAt'> & { boughtAt?: string }>;
-  /** (베타 로컬) 학습 준비 수준 */
+  /** 학습 준비 수준 */
   prep_level?: 'beginner' | 'intermediate' | 'advanced';
+  /** 온보딩 단계. 0=신규, 1=기존 쿠폰인증 레벨전, 2=레벨선택완료. 없으면 1 */
+  onboarding_status?: 0 | 1 | 2;
 }
 
 export interface Certification {
@@ -121,7 +131,7 @@ export interface Question {
   round?: number;
   /** 문제 본문 내 표: HTML 문자열 또는 { headers, rows } (문제 화면에서 렌더) */
   tableData?: string | { headers: string[]; rows: string[][] } | null;
-  /** (베타) 문제 신고 목록 */
+  /** 문제 신고 목록 */
   reports?: { text: string; createdAt: string; userId?: string | null }[];
 }
 

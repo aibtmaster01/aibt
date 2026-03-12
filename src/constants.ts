@@ -110,7 +110,7 @@ export function getRoundLabel(roundId: string | null | undefined, _certId?: stri
   return `${roundId}회차`;
 }
 
-/** (베타 로컬) l_1, m_2 등 roundId → 회차 번호(1,2,3) */
+/** l_1, m_2 등 roundId → 회차 번호(1,2,3) */
 export function getRoundNumberFromRoundId(roundId: string | null | undefined): number | null {
   if (!roundId || typeof roundId !== 'string') return null;
   const m = /^(l|m|h)_([123])$/.exec(roundId);

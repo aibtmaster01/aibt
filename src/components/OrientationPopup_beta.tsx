@@ -1,12 +1,13 @@
 /**
- * 베타 로컬 전용 오리엔테이션 팝업.
- * - 난이도(레벨) 선택을 항상 먼저 노출 (forced && !fromLNB 시).
- * - 쿠폰 등록 후 setInitialEloByPrepLevel 항상 호출.
- * App.tsx에서 isBetaLocal일 때만 이 컴포넌트를 사용하며, 베타 실서버에는 영향 없음.
+ * AiBT 전용 오리엔테이션 팝업.
+ * - 난이도(레벨) 선택을 먼저 노출 (forced && !fromLNB 시).
+ * - 쿠폰 등록 후 setInitialEloByPrepLevel 호출.
+ * App.tsx에서 useBetaCertifications일 때 이 컴포넌트 사용.
  */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut } from 'lucide-react';
+import { APP_BRAND } from '../config/brand';
 import { updateUserPrepLevel, setInitialEloByPrepLevel } from '../services/authService';
 
 export type PrepLevel = 'beginner' | 'intermediate' | 'advanced';
@@ -14,10 +15,14 @@ export type PrepLevel = 'beginner' | 'intermediate' | 'advanced';
 export interface OrientationPopupBetaProps {
   forced?: boolean;
   fromLNB?: boolean;
+  /** true: 업데이트 안내 후 플로우 → 난이도 선택 먼저, 마지막 페이지는 응원 문구+닫기만 */
+  fromUpdateFlow?: boolean;
   onClose: () => void;
   onCouponRegistered?: () => void;
   onSelectLevel?: (level: PrepLevel) => void;
   onLogout?: () => void | Promise<void>;
+  /** 레벨 선택 직전 업데이트 안내 화면에서 "새로운 진단 시작하기" 클릭 시 (seen 저장·이력 초기화 등) */
+  onConfirmUpdateNotice?: () => void | Promise<void>;
   userId?: string;
   userEmail?: string;
 }
@@ -87,27 +92,32 @@ function renderContent(text: string) {
 export function OrientationPopupBeta({
   forced = false,
   fromLNB = false,
+  fromUpdateFlow = false,
   onClose,
   onCouponRegistered,
   onSelectLevel,
   onLogout,
+  onConfirmUpdateNotice,
   userId = '',
   userEmail = '',
 }: OrientationPopupBetaProps) {
-  /** 베타 로컬 전용: forced 시 항상 난이도 선택 먼저 노출 */
-  const showLevelFirst = forced && !fromLNB;
-  const [phase, setPhase] = useState<'level' | 'orientation'>(showLevelFirst ? 'level' : 'orientation');
+  /** status 0·undefined·1 모두: 레벨 선택 플로우일 때 업뎃안내 무조건 먼저 → 레벨선택 → 오티(→ 쿠폰) */
+  const showLevelFirst = (forced && !fromLNB) || fromUpdateFlow;
+  const [phase, setPhase] = useState<'update_notice' | 'level' | 'orientation'>(
+    showLevelFirst ? 'update_notice' : 'orientation'
+  );
   const [page, setPage] = useState(0);
   const [selectedLevel, setSelectedLevel] = useState<PrepLevel | null>(null);
   const [couponCode, setCouponCode] = useState('');
   const [couponError, setCouponError] = useState('');
   const [couponLoading, setCouponLoading] = useState(false);
+  const [updateNoticeConfirming, setUpdateNoticeConfirming] = useState(false);
 
   const slide = SLIDES[page];
   const isLastPage = page === SLIDES.length - 1;
   const isCouponPage = slide?.content === null;
-  const showCouponInput = isCouponPage && forced && !fromLNB;
-  const showCloseOnly = isCouponPage && fromLNB;
+  const showCouponInput = isCouponPage && forced && !fromLNB && !fromUpdateFlow;
+  const showCloseOnly = isCouponPage && (fromLNB || fromUpdateFlow);
 
   const handleLevelSelect = (level: PrepLevel) => {
     setSelectedLevel(level);
@@ -150,7 +160,11 @@ export function OrientationPopupBeta({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="shrink-0 px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold text-slate-900">🚀 AiBT 베타테스터 핵심 기능 가이드</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {phase === 'update_notice'
+              ? (APP_BRAND === 'AiBT' ? '🎉 AiBT 베타 2.0 - 더 똑똑해졌어요!' : '🎉 핀셋 베타 2.0 - 더 똑똑해졌어요!')
+              : '🚀 AiBT 베타테스터 핵심 기능 가이드'}
+          </h2>
           {onLogout && (
             <button
               type="button"
@@ -168,7 +182,37 @@ export function OrientationPopupBeta({
 
         <div className="flex-1 overflow-hidden min-h-[560px] relative flex items-center justify-center">
           <AnimatePresence mode="wait" initial={false}>
-            {phase === 'level' ? (
+            {phase === 'update_notice' ? (
+              <motion.div
+                key="update_notice"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.25 }}
+                className="absolute inset-0 px-8 py-6 flex flex-col items-center justify-center overflow-auto"
+              >
+                <div className="w-full max-w-2xl text-slate-600 text-base text-center space-y-4">
+                  <p className="text-blue-600 font-semibold text-lg">
+                    베타 테스터 피드백으로 더 나은 기능을 준비했습니다.
+                  </p>
+                  <p className="text-slate-400 text-xs text-center">
+                    (26/3/10 12:00 기준)
+                  </p>
+                  <ul className="list-disc list-inside space-y-1.5 text-left text-slate-700">
+                    <li>진단 50% 단축 (240→120문항)</li>
+                    <li>문제 내 오류신고 기능 추가</li>
+                    <li>과목별 안전도 영역 로직 개선</li>
+                    <li>내 합격률 예측 로직 개선</li>
+                  </ul>
+                  <p className="text-slate-600 text-sm text-left">
+                    * 합격률 예측은 정확한 측정을 위해, 실력 확인이 완료된 후 제공됩니다.
+                  </p>
+                  <p className="text-slate-500 text-sm text-left">
+                    베타테스트 기간 푼 문제 데이터는, 개선된 로직에서 정교한 분석을 제공하기 위해 반영되지 않음을 양해 부탁드립니다.
+                  </p>
+                </div>
+              </motion.div>
+            ) : phase === 'level' ? (
               <motion.div
                 key="level"
                 initial={{ opacity: 0 }}
@@ -261,7 +305,24 @@ export function OrientationPopupBeta({
         </div>
 
         <div className="shrink-0 px-6 py-4 border-t border-slate-200 bg-white flex items-center justify-between gap-3">
-          {phase === 'level' ? (
+          {phase === 'update_notice' ? (
+            <button
+              type="button"
+              onClick={async () => {
+                setUpdateNoticeConfirming(true);
+                try {
+                  await onConfirmUpdateNotice?.();
+                  setPhase('level');
+                } finally {
+                  setUpdateNoticeConfirming(false);
+                }
+              }}
+              disabled={updateNoticeConfirming}
+              className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 disabled:opacity-50"
+            >
+              {updateNoticeConfirming ? '처리 중...' : '새로운 진단 시작하기'}
+            </button>
+          ) : phase === 'level' ? (
             <p className="text-slate-500 text-sm w-full text-center">위 카드 중 하나를 선택해 주세요.</p>
           ) : showCloseOnly ? (
             <button

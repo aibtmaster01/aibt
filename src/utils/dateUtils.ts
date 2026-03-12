@@ -3,7 +3,7 @@ import type { CertificationInfo } from '../types';
 import { CERTIFICATIONS } from '../constants';
 import { EXAM_SCHEDULES, EXAM_SCHEDULE_DATES } from '../constants';
 
-/** 오늘 12:00 KST(한국시간) 기준 날짜 문자열 YYYY-MM-DD (로컬 기준 근사) */
+/** 오늘 12:00 KST 기준 날짜 문자열 YYYY-MM-DD */
 function getTodayKSTDateString(): string {
   const now = new Date();
   const kstOffset = 9 * 60;

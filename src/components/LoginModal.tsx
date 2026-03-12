@@ -4,7 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { APP_BRAND, FEATURE_COUPON } from '../config/brand';
 import { redeemBetaCoupon } from '../services/couponService';
 
-/** 베타 빌드: 구글 로그인만 노출 (FEATURE_COUPON 또는 AiBT 브랜드) */
 const IS_BETA_GOOGLE_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 import { AuthError, type GoogleRedirectIntent } from '../services/authService';
 import { canResend, recordResend, RESEND_COOLDOWN_SEC } from '../utils/verificationResendLimit';
@@ -17,21 +16,22 @@ export interface LoginModalProps {
   intentDataForGoogle?: GoogleRedirectIntent | null;
   onBack?: () => void;
   onAuthSuccess?: (options?: {
-    isNewUser?: boolean;
-    /** 가입 후 이메일 인증 대기: 모달 닫고 상단 노란 배너로 안내, 인증완료 버튼으로 로그인 적용 */
+    /** 로그인/가입한 사용자 uid */
+    uid?: string;
+    /** 이메일 인증 완료 여부 */
+    is_verified?: boolean;
+    /** 가입 후 이메일 인증 대기: 모달 닫고 상단 노란 배너로 안내 */
     needsVerificationBanner?: boolean;
     email?: string;
     password?: string;
+    onboardingStatus?: 0 | 1 | 2;
+    hasCoupon?: boolean;
   }) => void;
-  /** true면 바깥 클릭/닫기 없음, 로그인 필수 */
   persistent?: boolean;
-  /** 게스트 20문제 후 이어하기 등: 인증 대기 문구·미인증 시 21번 차단 */
   intent?: LoginModalIntent;
-  /** 베타: 리다이렉트 복귀 시 쿠폰 입력 단계로 바로 표시 (userId, userEmail과 함께 사용) */
   initialBetaCouponStep?: boolean;
   initialBetaUserId?: string;
   initialBetaUserEmail?: string;
-  /** 베타: 팝업 로그인 성공 시 쿠폰 단계 진입 시 호출 (랜딩→메인 전환 시 상태 유지용) */
   onEnterBetaCouponStep?: (data: { userId: string; userEmail: string }) => void;
 }
 
@@ -59,7 +59,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [successMessage, setSuccessMessage] = useState('');
   /** 회원가입 후 이메일 인증 대기 화면 (인증완료 버튼 노출) */
   const [pendingVerification, setPendingVerification] = useState(false);
-  /** 베타: 구글 로그인 성공 후 쿠폰 입력 단계 (리다이렉트 복귀 시 initialBetaCouponStep으로 초기화) */
   const [betaPostLoginCouponStep, setBetaPostLoginCouponStep] = useState(initialBetaCouponStep);
   const [betaCouponCode, setBetaCouponCode] = useState('');
   const [betaCouponError, setBetaCouponError] = useState('');
@@ -104,10 +103,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           setError('이메일 인증을 완료한 뒤 로그인해주세요. 메일함을 확인해주세요.');
           return;
         }
-        (onAuthSuccess ?? onBack)?.();
+        (onAuthSuccess ?? onBack)?.({ uid: loggedInUser.id, is_verified: loggedInUser.is_verified === true, onboardingStatus: (loggedInUser as { onboardingStatus?: 0 | 1 | 2 }).onboardingStatus ?? 1 });
       } else {
         await register(email, password, familyName, givenName);
-        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+        (onAuthSuccess ?? onBack)?.({ is_verified: false });
       }
     } catch (err) {
       if (timeoutId != null) clearTimeout(timeoutId);
@@ -120,7 +119,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           return;
         }
         (onAuthSuccess ?? onBack)?.({
-          isNewUser: true,
+          is_verified: false,
           needsVerificationBanner: true,
           email,
           password,
@@ -147,15 +146,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setLoading(false);
         submittingRef.current = false;
         if (IS_BETA_GOOGLE_ONLY) {
-          /** standalone(로그아웃 후 로그인 버튼 등): 쿠폰 단계 없이 구글 로그인만 하고 닫기 */
+          /** standalone(로그아웃 후 로그인 버튼 등): onboardingStatus 기반 플로우 */
           if (intent === 'standalone') {
-            (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+            const status = appUser.onboardingStatus ?? 1;
+            const payload = { uid: appUser.id ?? undefined, is_verified: appUser.is_verified === true, onboardingStatus: status };
+            (onAuthSuccess ?? onBack)?.(payload);
             return;
           }
-          /** 이미 쿠폰 등록된 회원(재로그인)이면 쿠폰 입력 단계 건너뛰기 */
+          /** 이미 쿠폰 등록된 회원(재로그인): onboardingStatus + hasCoupon 전달 */
           const hasCoupon = appUser.isPremium === true || (appUser.paidCertIds?.length ?? 0) > 0;
           if (hasCoupon) {
-            (onAuthSuccess ?? onBack)?.();
+            const status = appUser.onboardingStatus ?? 1;
+            (onAuthSuccess ?? onBack)?.({ uid: appUser.id, is_verified: appUser.is_verified === true, hasCoupon: true, onboardingStatus: status });
             return;
           }
           const uid = appUser.id ?? '';
@@ -168,7 +170,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           onEnterBetaCouponStep?.({ userId: uid, userEmail: uemail });
           return;
         }
-        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+        const status = appUser?.onboardingStatus ?? 1;
+        const payload = { uid: appUser?.id ?? undefined, is_verified: appUser?.is_verified === true, onboardingStatus: status };
+        (onAuthSuccess ?? onBack)?.(payload);
       }
       // 리다이렉트인 경우 페이지가 이동하므로 여기서 추가 호출 없음 (복귀 시 App에서 intent 복원)
     } catch (err) {
@@ -179,7 +183,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  /** 베타: 쿠폰 확인 클릭 시 유료 전환 후 학습 진행 */
   const handleBetaCouponConfirm = async () => {
     const code = betaCouponCode.trim();
     if (!code) {
@@ -198,7 +201,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       await redeemBetaCoupon(code, uemail, uid);
       await refreshUser();
       setBetaPostLoginCouponStep(false);
-      (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+      (onAuthSuccess ?? onBack)?.({ uid, is_verified: true, hasCoupon: true, onboardingStatus: 1 as const });
     } catch (err) {
       setBetaCouponError(err instanceof Error ? err.message : '쿠폰 적용에 실패했습니다.');
     } finally {
@@ -215,7 +218,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       const loggedInUser = await login(email, password);
       if (loggedInUser.is_verified !== false) {
         setPendingVerification(false);
-        (onAuthSuccess ?? onBack)?.({ isNewUser: true });
+        const payload = { uid: loggedInUser.id, is_verified: loggedInUser.is_verified === true, onboardingStatus: (loggedInUser as { onboardingStatus?: 0 | 1 | 2 }).onboardingStatus ?? 1 };
+        (onAuthSuccess ?? onBack)?.(payload);
       } else {
         setError('이메일에서 인증을 완료해주세요.');
       }
@@ -468,7 +472,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     value={familyName}
                     onChange={(e) => setFamilyName(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0034d3] font-medium"
-                    placeholder="김"
+                    placeholder="성 (선택)"
                     required
                   />
                 </div>

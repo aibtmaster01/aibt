@@ -101,7 +101,7 @@ function getQuestionDocRef(certCode: string, qId: string) {
 /** 신고 유형 (problem_reports 저장용) */
 export type ProblemReportType = 'wrong_answer' | 'typo_or_error' | 'out_of_scope';
 
-/** (베타) 문제 신고 — problem_reports 컬렉션에 저장, 콘솔 즉시 로그. userElo는 읽기 실패 시 null로 둠. */
+/** 문제 신고 — problem_reports 컬렉션에 저장. userElo는 읽기 실패 시 null. */
 export async function submitProblemReport(
   certCode: string,
   qid: string,
@@ -128,8 +128,7 @@ export async function submitProblemReport(
     userElo,
     createdAt: serverTimestamp(),
   };
-  const docRef = await addDoc(collection(db, 'problem_reports'), payload);
-  console.log('[문제 신고] 접수됨 — 확인하세요:', { id: docRef.id, ...payload, createdAt: '(serverTimestamp)' });
+  await addDoc(collection(db, 'problem_reports'), payload);
 }
 
 /** (레거시) 문항 문서 reports 배열에 추가. 신규는 submitProblemReport 사용 권장 */

@@ -55,7 +55,7 @@ function expectedScore(userProficiency: number, problemElo: number = PROBLEM_DIF
   return 1 / (1 + Math.pow(10, (problemElo - userProficiency) / 400));
 }
 
-/** 3차원 플래그 기반 가중치 (베타 보수적). Δ_final = Δ_base × WeightMultiplier */
+/** 3차원 플래그 기반 가중치. Δ_final = Δ_base × WeightMultiplier */
 function getWeightMultiplier(
   outcome: number,
   isDontKnow: boolean,
@@ -122,7 +122,7 @@ export interface SubmitQuizResultOptions {
   roundId?: string;
   /** 집중학습(과목/유형/개념) 완료 시 나의 학습 기록 표시용 라벨 (예: "과목 강화 학습 - 3과목 강화") */
   roundLabel?: string;
-  /** (베타 로컬) 진단 Elo 재조정 시 사용 — 가입 시 선택한 난이도 */
+  /** 진단 Elo 재조정 시 사용 — 가입 시 선택한 난이도 */
   prepLevel?: 'beginner' | 'intermediate' | 'advanced';
 }
 
@@ -207,9 +207,6 @@ function computePredictedPassRate(
   let rawPassRate = Math.max(0, Math.min(100, avgScore - penalty));
   const sigmoidPassRate = applySigmoidTransform(rawPassRate);
   const finalPassRate = Math.max(PASS_RATE_MIN, Math.min(PASS_RATE_MAX, sigmoidPassRate));
-  if (import.meta.env.DEV) {
-    console.log(`[computePredictedPassRate] 원점수 ${Math.round(rawPassRate)} → 시그모이드 ${sigmoidPassRate}% → 최종 ${finalPassRate}%`);
-  }
   return finalPassRate;
 }
 
@@ -644,7 +641,7 @@ export async function submitQuizResult(
     );
   }
 
-  // ---- Elo (베타: 진단 round 시 prepLevel 기반 재조정, 최초 1회만) ----
+  // ---- Elo (진단 round 시 prepLevel 기반 재조정, 최초 1회만) ----
   if (useBetaCertifications && isDiagnosticRoundId && prepLevel) {
     if (hasPrevDiagnosticSubmission) {
       await updateEloRating(uid, certId, sessionHistory);
@@ -658,7 +655,7 @@ export async function submitQuizResult(
   return { examId, subject_scores, is_passed };
 }
 
-/** (베타 로컬) 진단 회차 최초 제출 시에만 Elo 보정. 보정폭 ±300 제한 */
+/** 진단 회차 최초 제출 시에만 Elo 보정. 보정폭 ±300 제한 */
 const EXPECTED_SCORE_PERCENT: Record<'beginner' | 'intermediate' | 'advanced', number> = {
   beginner: 40,
   intermediate: 60,

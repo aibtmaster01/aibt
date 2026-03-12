@@ -78,7 +78,7 @@ export const ExamList: React.FC<ExamListProps> = ({
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
   const [showModeModal, setShowModeModal] = useState(false);
   const [pendingRoundId, setPendingRoundId] = useState<string | null>(null);
-  /** (베타 로컬) 맞춤형 모의고사 문항 수: 40(빠른 학습) | 80(실전 학습) */
+  /** 맞춤형 모의고사 문항 수: 40(빠른 학습) | 80(실전 학습) */
   const [pendingQuestionCount, setPendingQuestionCount] = useState<40 | 80>(80);
   /** 평균 정답률 0~100 (stats 표시 등) */
   const [avgCorrectRate, setAvgCorrectRate] = useState<number | null>(null);
@@ -412,7 +412,7 @@ export const ExamList: React.FC<ExamListProps> = ({
       onSelectRound(roundId, mode);
       return;
     }
-    /** 4회차 이상(맞춤형): 5초 오버레이 + getQuestionsForRound 후 /quiz. 베타에서 40/80 선택 반영 */
+    /** 4회차 이상(맞춤형): 5초 오버레이 + getQuestionsForRound 후 /quiz */
     if (roundNum >= 4 && user && certId) {
       staticPreFetchedQuestionsRef.current = null;
       autoStartAfterOverlayRef.current = { roundId, mode };

@@ -6,7 +6,6 @@ export interface CouponModalProps {
   onSubmit?: (code: string) => Promise<void>;
 }
 
-/** 베타 전용: 쿠폰 코드 입력 모달 (FEATURE_COUPON 시에만 노출) */
 export function CouponModal({ onClose, onSubmit }: CouponModalProps) {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);

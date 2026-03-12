@@ -14,7 +14,7 @@ import {
   GoogleAuthProvider,
   type User as FirebaseAuthUser,
 } from 'firebase/auth';
-import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
 import { CERTIFICATIONS } from '../constants';
@@ -70,15 +70,15 @@ function normalizeNameFields(docData: Record<string, unknown>): { familyName: st
   const familyName = (docData.familyName as string) || '';
   const givenName = (docData.givenName as string) || '';
   const legacyName = (docData.name as string) || '';
-  // 신규: familyName + givenName 있음
-  if (familyName && givenName) {
-    return { familyName, givenName, name: familyName + givenName };
+  // 신규: familyName 또는 givenName 있음
+  if (familyName || givenName) {
+    return { familyName, givenName, name: (familyName + givenName).trim() || givenName || familyName || '학습자' };
   }
-  // 레거시: name만 있음 → 성=김, 이름=기존이름
+  // 레거시: name만 있음 → 성 없이 이름만 사용 (familyName 빈 문자열)
   if (legacyName) {
-    return { familyName: '김', givenName: legacyName, name: '김' + legacyName };
+    return { familyName: '', givenName: legacyName, name: legacyName };
   }
-  return { familyName: '김', givenName: '학습자', name: '김학습자' };
+  return { familyName: '', givenName: '학습자', name: '학습자' };
 }
 
 function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User {
@@ -95,6 +95,10 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
 
   const prepLevel = docData.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
   const usedBetatestCoupon = docData.usedBetatestCoupon === true;
+  const rawStatus = docData.onboarding_status as 0 | 1 | 2 | undefined;
+  const hasLevel = prepLevel != null;
+  const onboardingStatus: 0 | 1 | 2 =
+    rawStatus === 0 ? 0 : (rawStatus === 2 || hasLevel ? 2 : 1);
 
   const baseUser = {
     familyName,
@@ -106,6 +110,7 @@ function firestoreDocToUser(uid: string, docData: Record<string, unknown>): User
     purchasedScheduleIdsByCert,
     ...(prepLevel != null && { prepLevel }),
     ...(usedBetatestCoupon && { usedBetatestCoupon: true }),
+    onboardingStatus,
   };
 
   const isVerified = (docData.is_verified as boolean) !== false;
@@ -242,7 +247,7 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
   const email = fbUser.email ?? '';
   const displayName = (fbUser.displayName ?? '').trim() || email.split('@')[0];
   const parts = displayName.split(/\s+/);
-  const familyName = parts.length > 1 ? parts[0] : '김';
+  const familyName = parts.length > 1 ? parts[0] : '';
   const givenName = parts.length > 1 ? parts.slice(1).join(' ') : displayName || '학습자';
 
   const userRef = doc(db, 'users', uid);
@@ -258,10 +263,23 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
     const deviceId = getDeviceId();
     const registeredDevices = (data.registered_devices as string[]) || [];
     if (!registeredDevices.includes(deviceId)) {
-      // 기기 캐치는 유지, 등록 수 제한 없음
       await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
     }
-    const fresh = (await getDoc(userRef)).data() ?? data;
+    let fresh = (await getDoc(userRef)).data() ?? data;
+    if (fresh.onboarding_status === undefined) {
+      const prepLevel = fresh.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
+      let backfillStatus: 0 | 1 | 2;
+      if (prepLevel != null) {
+        backfillStatus = 2;
+      } else {
+        const createdAt = fresh.created_at as string | undefined;
+        const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
+        const isNewWithinMinute = Date.now() - createdMs < 60 * 1000;
+        backfillStatus = isNewWithinMinute ? 0 : 1;
+      }
+      await updateDoc(userRef, { onboarding_status: backfillStatus });
+      fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
+    }
     return firestoreDocToUser(uid, fresh);
   }
 
@@ -271,12 +289,13 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
     email,
     familyName,
     givenName,
-    name: familyName + givenName,
+    name: (familyName + givenName).trim() || givenName,
     isAdmin: false,
     is_verified: true,
     registered_devices: [deviceId],
     memberships: {},
     created_at: now,
+    onboarding_status: 0,
   });
   const data = (await getDoc(userRef)).data() ?? {};
   return firestoreDocToUser(uid, data);
@@ -407,7 +426,7 @@ export async function registerWithEmailAndPassword(
 
   const userRef = doc(db, 'users', uid);
   const now = new Date().toISOString();
-  const f = (familyName || '').trim() || '김';
+  const f = (familyName || '').trim();
   const g = (givenName || '').trim() || email.split('@')[0];
 
   try {
@@ -415,7 +434,7 @@ export async function registerWithEmailAndPassword(
       email,
       familyName: f,
       givenName: g,
-      name: f + g,
+      name: (f + g).trim() || g,
       isAdmin: false,
       is_verified: false,
       registered_devices: [],
@@ -457,15 +476,13 @@ export async function registerWithEmailAndPassword(
   throw new AuthError('인증 메일을 보냈습니다. 메일을 확인한 뒤 로그인해주세요.', 'EMAIL_VERIFICATION_SENT');
 }
 
-/** 레거시 유저: name만 있으면 familyName=김, givenName=name으로 Firestore 마이그레이션 */
+/** 레거시 유저: name만 있으면 familyName='', givenName=name으로 Firestore 마이그레이션 (성 없이 이름만) */
 async function migrateUserNamesIfNeeded(userRef: ReturnType<typeof doc>, data: Record<string, unknown>): Promise<void> {
-  const hasNew = (data.familyName as string) && (data.givenName as string);
+  const hasNew = (data.familyName as string) !== undefined && (data.givenName as string) !== undefined;
   if (hasNew) return;
   const legacyName = (data.name as string) || '';
   if (!legacyName) return;
-  const familyName = '김';
-  const givenName = legacyName;
-  await updateDoc(userRef, { familyName, givenName });
+  await updateDoc(userRef, { familyName: '', givenName: legacyName });
 }
 
 export async function getSessionForCurrentAuth(uid: string): Promise<User | null> {
@@ -483,13 +500,25 @@ export async function getSessionForCurrentAuth(uid: string): Promise<User | null
 
   if (registeredDevices.includes(deviceId)) {
     await migrateUserNamesIfNeeded(userRef, data);
-    const fresh = (await getDoc(userRef)).data() ?? data;
+    let fresh = (await getDoc(userRef)).data() ?? data;
+    if (fresh.onboarding_status === undefined) {
+      const prepLevel = fresh.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
+      const backfillStatus: 0 | 1 | 2 = prepLevel != null ? 2 : 1;
+      await updateDoc(userRef, { onboarding_status: backfillStatus });
+      fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
+    }
     return firestoreDocToUser(uid, fresh);
   }
   // 기기 캐치는 유지, 등록 수 제한 없음
   await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
   await migrateUserNamesIfNeeded(userRef, data);
-  const fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };
+  let fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };
+  if (fresh.onboarding_status === undefined) {
+    const prepLevel = fresh.prep_level as 'beginner' | 'intermediate' | 'advanced' | undefined;
+    const backfillStatus: 0 | 1 | 2 = prepLevel != null ? 2 : 1;
+    await updateDoc(userRef, { onboarding_status: backfillStatus });
+    fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
+  }
   return firestoreDocToUser(uid, fresh);
 }
 
@@ -513,28 +542,54 @@ export async function reauthenticate(currentPassword: string): Promise<void> {
   }
 }
 
-/** 이름 변경 (Auth displayName + Firestore users 문서) - 성/이름 분리 저장 */
+/** 이름 변경 (Auth displayName + Firestore users 문서) - 성/이름 분리 저장, 성은 없을 수 있음 */
 export async function updateDisplayName(uid: string, familyName: string, givenName: string): Promise<void> {
   const u = auth.currentUser;
   if (!u || u.uid !== uid) throw new AuthError('로그인이 필요합니다.', 'INVALID_CREDENTIALS');
-  const f = (familyName || '').trim() || '김';
+  const f = (familyName || '').trim();
   const g = (givenName || '').trim() || '학습자';
-  const fullName = f + g;
+  const fullName = (f + g).trim() || g;
   await updateProfile(u, { displayName: fullName });
   const userRef = doc(db, 'users', uid);
   await updateDoc(userRef, { familyName: f, givenName: g, name: fullName });
 }
 
-/** (베타 로컬) 학습 준비 수준 저장 — 쿠폰 입력 완료 시에만 호출 */
+/**
+ * 해당 자격증의 학습 이력만 초기화 (쿠폰/유료 정보는 유지).
+ * - users/{uid}/exam_results 중 certCode 일치 문서 전부 삭제
+ * - users/{uid}/stats/{certCode} 문서 삭제
+ * "새로운 진단 시작하기" 시 호출.
+ */
+const FIRESTORE_BATCH_LIMIT = 500;
+export async function resetLearningHistoryForCert(uid: string, certCode: string): Promise<void> {
+  const examRef = collection(db, 'users', uid, 'exam_results');
+  const q = query(examRef, where('certCode', '==', certCode));
+  const snapshot = await getDocs(q);
+  const ids = snapshot.docs.map((d) => d.id);
+  for (let i = 0; i < ids.length; i += FIRESTORE_BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    const chunk = ids.slice(i, i + FIRESTORE_BATCH_LIMIT);
+    for (const id of chunk) {
+      batch.delete(doc(db, 'users', uid, 'exam_results', id));
+    }
+    await batch.commit();
+  }
+  const statsRef = doc(db, 'users', uid, 'stats', certCode);
+  await deleteDoc(statsRef).catch(() => {
+    // 문서 없으면 무시
+  });
+}
+
+/** 학습 준비 수준 저장 — 레벨 선택 시 onboarding_status 2로 갱신 */
 export async function updateUserPrepLevel(
   uid: string,
   level: 'beginner' | 'intermediate' | 'advanced'
 ): Promise<void> {
   const userRef = doc(db, 'users', uid);
-  await updateDoc(userRef, { prep_level: level });
+  await updateDoc(userRef, { prep_level: level, onboarding_status: 2 });
 }
 
-/** (베타 로컬) 쿠폰 완료 시 1회만 초기 Elo 세팅. 이미 해당 cert Elo가 있으면 건너뜀 */
+/** 쿠폰 완료 시 1회만 초기 Elo 세팅. 이미 해당 cert Elo가 있으면 건너뜀 */
 const INITIAL_ELO_BY_PREP: Record<'beginner' | 'intermediate' | 'advanced', number> = {
   beginner: 1000,
   intermediate: 1300,

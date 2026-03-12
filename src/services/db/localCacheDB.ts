@@ -10,10 +10,10 @@ import { doc, getDoc } from 'firebase/firestore';
 import { storage, db } from '../../firebase';
 import { FEATURE_COUPON, APP_BRAND, useBetaCertifications } from '../../config/brand';
 
-/** 베타: Storage CORS 이슈 회피를 위해 index는 Firestore에서만 로드 */
+/** Index는 Firestore에서만 로드 (Storage CORS 회피) */
 const USE_FIRESTORE_INDEX_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 
-/** 베타용 인덱스 캐시 키 (certifications_beta 인덱스 저장) */
+/** 베타 BIGDATA 레벨드 인덱스 캐시 키 (certifications/BIGDATA/public/index_leveled 기반) */
 const BETA_INDEX_CACHE_KEY = 'BIGDATA_beta';
 
 // ========== 스토어 스키마 ==========
@@ -26,7 +26,7 @@ export interface QuestionIndexItem {
     subject?: number;
     problem_type?: string;
     tags?: string[];
-    /** 레벨드 인덱스(베타): "l_1"|"m_2"|"h_3"|"99", 기존: 1|2|3|99 */
+    /** 레벨드 인덱스: "l_1"|"m_2"|"h_3"|"99" */
     round?: number | string;
     sub_core_id?: string;
     [key: string]: unknown;
@@ -360,11 +360,10 @@ function toUpdatedAtMs(data: Record<string, unknown>): number {
   return typeof raw === 'number' ? raw : Date.now();
 }
 
-/** 베타: certifications_beta/BIGDATA/public/index_leveled 에서 레벨드 인덱스 로드. 없으면 certifications_beta/public 문서(단일 문서) fallback */
+/** BIGDATA: index_leveled에서 레벨드 인덱스 로드 */
 async function fetchBetaIndexFromFirestore(): Promise<{ items: QuestionIndexItem[]; updatedAt: number } | null> {
-  // 1) 정식 경로: certifications_beta → BIGDATA(문서) → public(하위 컬렉션) → index_leveled(문서)
   try {
-    const ref = doc(db, 'certifications_beta', 'BIGDATA', 'public', 'index_leveled');
+    const ref = doc(db, 'certifications', 'BIGDATA', 'public', 'index_leveled');
     const snap = await getDoc(ref);
     if (snap.exists()) {
       const data = snap.data();
@@ -372,25 +371,13 @@ async function fetchBetaIndexFromFirestore(): Promise<{ items: QuestionIndexItem
       if (items && items.length > 0) return { items, updatedAt: toUpdatedAtMs(data ?? {}) };
     }
   } catch {
-    // ignore, try fallback
-  }
-  // 2) fallback: certifications_beta/public 단일 문서에 items 배열이 있는 경우
-  try {
-    const ref = doc(db, 'certifications_beta', 'public');
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const data = snap.data();
-      const items = Array.isArray(data?.items) ? (data.items as QuestionIndexItem[]) : null;
-      if (items && items.length > 0) return { items, updatedAt: toUpdatedAtMs(data ?? {}) };
-    }
-  } catch {
-    return null;
+    // ignore
   }
   return null;
 }
 
 /**
- * IndexedDB에 저장된 index 캐시 조회. 베타 시 BIGDATA는 certifications_beta 인덱스 캐시 사용.
+ * IndexedDB에 저장된 index 캐시 조회. BIGDATA는 레벨드 인덱스 캐시(BIGDATA_beta 키) 사용.
  */
 export async function getQuestionIndexFromCache(certCode: string): Promise<QuestionIndexItem[] | null> {
   const idb = await getDB();
@@ -401,7 +388,7 @@ export async function getQuestionIndexFromCache(certCode: string): Promise<Quest
 }
 
 /**
- * 해당 자격증 인덱스 캐시만 삭제. 베타 BIGDATA는 BIGDATA_beta 키 삭제.
+ * 해당 자격증 인덱스 캐시만 삭제. BIGDATA는 BIGDATA_beta 키 삭제.
  * 동기화 실패·0건 시 Firestore에서 다시 불러오기 위해 사용.
  */
 export async function clearQuestionIndexCache(certCode: string): Promise<void> {

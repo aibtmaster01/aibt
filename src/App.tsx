@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check, Loader2, Sparkles } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
@@ -20,12 +20,12 @@ import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
 import { invalidateMyPageCache } from './services/db/localCacheDB';
 import { clearGuestQuizProgress } from './utils/guestQuizStorage';
-import { ensureUserSubscription, setPaymentComplete, getStoredGoogleRedirectIntent, clearStoredGoogleRedirectIntent } from './services/authService';
+import { ensureUserSubscription, setPaymentComplete, getStoredGoogleRedirectIntent, clearStoredGoogleRedirectIntent, updateUserPrepLevel, setInitialEloByPrepLevel, resetLearningHistoryForCert } from './services/authService';
 import { getExamService } from './services/examServiceLoader';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { canResend, recordResend } from './utils/verificationResendLimit';
-import { APP_BRAND, FEATURE_COUPON, useBetaCertifications, canShowAdmin, isBetaLocal } from './config/brand';
+import { APP_BRAND, FEATURE_COUPON, useBetaCertifications, canShowAdmin } from './config/brand';
 import { getBetatestCouponEnabled } from './services/couponService';
 import { CouponModal } from './components/CouponModal';
 import { OrientationPopup } from './components/OrientationPopup';
@@ -34,6 +34,15 @@ import { MyPageBeta } from './pages/MyPage_beta';
 import { useAppNavigation } from './hooks/useAppNavigation';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import type { LoginModalIntent } from './components/LoginModal';
+
+const BETA_UPDATE_MODAL_SEEN_KEY = 'aibt_beta_update_modal_seen';
+function setBetaUpdateModalSeen(): void {
+  try {
+    localStorage.setItem(BETA_UPDATE_MODAL_SEEN_KEY, '1');
+  } catch {
+    // ignore
+  }
+}
 
 const App: React.FC = () => {
   const isMobile = useIsMobile();
@@ -78,10 +87,11 @@ const App: React.FC = () => {
   /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
-  /** 베타: 구글 리다이렉트 복귀 시 쿠폰 입력 단계로 모달 열기용 */
   const [loginModalInitialCouponStep, setLoginModalInitialCouponStep] = useState<{ userId: string; userEmail: string } | null>(null);
   /** 로그인 모달 진입 시 처음 보여줄 탭 */
   const [loginInitialMode, setLoginInitialMode] = useState<'login' | 'signup' | null>(null);
+  /** 로그인 성공 직후 user 미반영 시 effect가 모달을 다시 여는 것 방지 */
+  const loginSuccessJustHandledRef = useRef(false);
   /** 미인증 사용자: 인증 메일 재발송 모달 */
   const [showResendVerificationModal, setShowResendVerificationModal] = useState(false);
   const [resendPassword, setResendPassword] = useState('');
@@ -113,13 +123,12 @@ const App: React.FC = () => {
     type: 'subject_strength' | 'weak_type' | 'weak_concept';
     certId: string;
   } | null>(null);
-  /** 베타: 오리엔테이션 팝업. 'forced' = 쿠폰 미등록 강제 노출, 'fromLNB' = LNB에서 연 경우 */
-  const [showOrientationPopup, setShowOrientationPopup] = useState<'forced' | 'fromLNB' | null>(null);
-  /** 베타: BETATEST 쿠폰 사용 중지 시, 해당 쿠폰 사용자 로그인 시 "베타테스트 기간이 종료되었습니다" 안내 팝업 */
+  const [showOrientationPopup, setShowOrientationPopup] = useState<'forced' | 'fromLNB' | 'fromUpdate' | null>(null);
   const [showBetatestEndedPopup, setShowBetatestEndedPopup] = useState(false);
 
   const isBeta = FEATURE_COUPON || APP_BRAND === 'AiBT';
   const hasCoupon = user?.isPremium === true || (user?.paidCertIds?.length ?? 0) > 0;
+  const hasBigDataPremium = hasCoupon;
 
   const { route, setRoute, navigate, navigateToAuth } = useAppNavigation({
     user,
@@ -209,7 +218,11 @@ const App: React.FC = () => {
   }, [route, selectedRoundId, selectedCertId]);
 
   const handleLogout = async () => {
+    setShowLoginModal(false);
+    setLoginModalIntent(null);
+    setLoginModalInitialCouponStep(null);
     await logout();
+    loginSuccessJustHandledRef.current = false;
     setShowLogoutToast(true);
     setRoute('/');
   };
@@ -425,8 +438,6 @@ const App: React.FC = () => {
           if (result) {
             const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
             if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
-          } else {
-            console.warn('[퀴즈 결과 저장 실패] submitQuizResult가 null 반환 (certCode 변환 실패 가능)');
           }
         })
         .catch((e) => {
@@ -502,8 +513,7 @@ const App: React.FC = () => {
 
   const handleCheckoutComplete = async () => {
     setPaymentSuccessError(null);
-    // 베타: 결제 모달만 열고 자격증 미선택 시 BIGDATA(c1)로 결제 완료 처리해 열공 모드 개방
-    const certIdToComplete = selectedCertId ?? (FEATURE_COUPON ? CERTIFICATIONS[0]?.id : null);
+  const certIdToComplete = selectedCertId ?? (FEATURE_COUPON ? CERTIFICATIONS[0]?.id : null);
     if (user && certIdToComplete) {
       try {
         await setPaymentComplete(user.id, certIdToComplete);
@@ -527,7 +537,6 @@ const App: React.FC = () => {
     if (user && pendingVerificationBanner) setPendingVerificationBanner(null);
   }, [user, pendingVerificationBanner]);
 
-  // 구글 로그인 리다이렉트 복귀 시 guestContinue intent 복원 (팝업 대신 전체 화면 이동한 경우). 베타는 게스트 비허용이라 복원하지 않음.
   React.useEffect(() => {
     if (authLoading || !user) return;
     if (isBeta) {
@@ -555,22 +564,43 @@ const App: React.FC = () => {
     setShowGuestContinueModal(true);
   }, [user, authLoading, isBeta]);
 
-  // 베타: auth 초기화 완료 후 비로그인일 때만 로그인 모달 노출 (AuthContext에서 loading은 persistence 복구 후에만 false)
+  // 로그인된 상태면 로그인 모달은 항상 닫기 (리다이렉트 로그인·로그아웃 후 재로그인 시 모달 안 남는 버그 방지)
   React.useEffect(() => {
-    if (!authLoading && isBeta && !user) {
+    if (!authLoading && user) {
+      setShowLoginModal(false);
+      setLoginModalIntent(null);
+      setLoginModalInitialCouponStep(null);
+    }
+  }, [authLoading, user]);
+
+  React.useEffect(() => {
+    if (!authLoading && isBeta && !user && route === '/' && !loginSuccessJustHandledRef.current) {
       setShowLoginModal(true);
       setLoginModalIntent('standalone');
     }
-  }, [authLoading, isBeta, user]);
+  }, [authLoading, isBeta, user, route]);
 
-  // 베타: 로그인했지만 쿠폰 미등록 시 오리엔테이션 팝업 강제 노출
   React.useEffect(() => {
-    if (!authLoading && user && isBeta && !hasCoupon && showOrientationPopup === null) {
+    if (!authLoading && user?.onboardingStatus === 0 && isBeta && !hasCoupon && showOrientationPopup === null) {
+      setShowOrientationPopup('forced');
+    }
+  }, [authLoading, user?.onboardingStatus, isBeta, hasCoupon, showOrientationPopup]);
+
+  React.useEffect(() => {
+    if (!authLoading && user && isBeta && !hasCoupon && showOrientationPopup === null && user.onboardingStatus !== 0) {
       setShowOrientationPopup('forced');
     }
   }, [authLoading, user, isBeta, hasCoupon, showOrientationPopup]);
 
-  // 베타: 구글 로그인 리다이렉트 복귀 시 — 쿠폰 있으면 무시, 없으면 오리엔테이션만 표시 (로그인 모달과 중복 방지)
+  React.useEffect(() => {
+    if (authLoading || !user || !isBeta || !hasBigDataPremium) return;
+    const needLevelSelection =
+      user.onboardingStatus === 1 || (user.onboardingStatus === undefined && !user.prepLevel);
+    if (!needLevelSelection) return;
+    if (showOrientationPopup !== null || showSignupSuccessModal) return;
+    setShowOrientationPopup('fromUpdate');
+  }, [authLoading, user?.id, user?.onboardingStatus, user?.prepLevel, isBeta, hasBigDataPremium, showOrientationPopup, showSignupSuccessModal]);
+
   React.useEffect(() => {
     if (authLoading || !user || !isBeta) return;
     try {
@@ -585,10 +615,10 @@ const App: React.FC = () => {
       // ignore
     }
     if (isPremium) return;
+    if (user.onboardingStatus === 0) return;
     setShowOrientationPopup('forced');
   }, [user, authLoading, isBeta]);
 
-  // 베타: BETATEST 쿠폰 사용 이력이 있는 사용자 — 쿠폰 사용 중지 시 로그인하면 "베타테스트 기간이 종료되었습니다" 팝업 (세션당 1회)
   React.useEffect(() => {
     if (!user?.usedBetatestCoupon || !isBeta || authLoading) return;
     let cancelled = false;
@@ -636,7 +666,7 @@ const App: React.FC = () => {
             onViewExamResult: handleViewExamResult,
             onLogout: handleLogout,
           };
-          return isBetaLocal ? <MyPageBeta {...myPageProps} /> : <MyPage {...myPageProps} />;
+          return useBetaCertifications ? <MyPageBeta {...myPageProps} /> : <MyPage {...myPageProps} />;
         }
         return (
           <EmptyState
@@ -651,7 +681,7 @@ const App: React.FC = () => {
           return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
         }
         return user ? (
-          isBetaLocal ? (
+          useBetaCertifications ? (
             <MyPageBeta
               user={user}
               initialCertId={selectedCertId ?? undefined}
@@ -882,11 +912,15 @@ const App: React.FC = () => {
   };
 
   const handleLoginModalAuthSuccess = (options?: {
-    isNewUser?: boolean;
+    uid?: string;
+    is_verified?: boolean;
     needsVerificationBanner?: boolean;
     email?: string;
     password?: string;
+    onboardingStatus?: 0 | 1 | 2;
+    hasCoupon?: boolean;
   }) => {
+    loginSuccessJustHandledRef.current = true;
     const intent = loginModalIntent;
     setShowLoginModal(false);
     setLoginModalIntent(null);
@@ -896,7 +930,8 @@ const App: React.FC = () => {
       setVerificationBannerError('');
       return;
     }
-    if (!options?.isNewUser) setShowLoginToast(true);
+    const status = options?.onboardingStatus ?? 1;
+    if (status !== 0) setShowLoginToast(true);
     if (intent === 'guestContinue' && pendingGuestContinue) {
       setRoute('/quiz');
       setSelectedCertId(pendingGuestContinue.certId);
@@ -911,9 +946,13 @@ const App: React.FC = () => {
       setSelectedCertId(pendingCheckoutCertId ?? selectedCertId);
       setPendingCheckoutCertId(null);
       navigate('/checkout');
-    } else if (options?.isNewUser) {
-      setShowSignupSuccessModal(true);
+    } else if (status === 0) {
+      setShowOrientationPopup('forced');
+    } else if (status === 1 && isBeta && (options?.hasCoupon ?? hasBigDataPremium)) {
+      setShowOrientationPopup('fromUpdate');
+      window.scrollTo(0, 0);
     } else {
+      // 2: 레벨 선택·쿠폰 완료(프리미엄) — 업데이트/안내 모달 없이 대시보드만
       setRoute('/mypage');
       window.scrollTo(0, 0);
     }
@@ -1036,6 +1075,25 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
+        {/* 신규 가입: 회원가입 완료 모달 (랜딩에서 로그인해도 표시 → 확인 시 오리엔테이션은 메인 브랜치에서 user와 함께 렌더) */}
+        {showSignupSuccessModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl text-center">
+              <p className="text-lg font-bold text-slate-900 mb-2">회원 가입 완료</p>
+              <p className="text-slate-600 text-sm mb-6">지금 바로 모의고사를 시작해보세요</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSignupSuccessModal(false);
+                  navigate('/exam-list');
+                }}
+                className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800"
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        )}
       </>
     );
   }
@@ -1104,20 +1162,39 @@ const App: React.FC = () => {
         </div>
       )}
       {showOrientationPopup && (
-        isBetaLocal ? (
+        useBetaCertifications ? (
           <OrientationPopupBeta
             forced={showOrientationPopup === 'forced'}
             fromLNB={showOrientationPopup === 'fromLNB'}
+            fromUpdateFlow={showOrientationPopup === 'fromUpdate'}
             onClose={() => setShowOrientationPopup(null)}
             onLogout={handleLogout}
+            onConfirmUpdateNotice={async () => {
+              setBetaUpdateModalSeen();
+              if (user?.id) {
+                try {
+                  await resetLearningHistoryForCert(user.id, 'BIGDATA');
+                  invalidateMyPageCache(user.id, 'BIGDATA').catch(() => {});
+                } catch {
+                  // ignore
+                }
+              }
+            }}
+            onSelectLevel={user?.id ? async (level) => {
+              await updateUserPrepLevel(user.id, level);
+              await setInitialEloByPrepLevel(user.id, 'c1', level);
+              await refreshUser();
+            } : undefined}
             onCouponRegistered={async () => {
+              const wasNewUserForced = showOrientationPopup === 'forced' && user?.onboardingStatus === 0;
               try {
                 await refreshUser();
               } finally {
                 setShowOrientationPopup(null);
                 setShowLoginModal(false);
                 setLoginModalInitialCouponStep(null);
-                navigate('/exam-list');
+                if (wasNewUserForced) setShowSignupSuccessModal(true);
+                else navigate('/exam-list');
               }
             }}
             userId={user?.id}
@@ -1127,8 +1204,14 @@ const App: React.FC = () => {
           <OrientationPopup
             forced={showOrientationPopup === 'forced'}
             fromLNB={showOrientationPopup === 'fromLNB'}
+            fromUpdateFlow={showOrientationPopup === 'fromUpdate'}
             onClose={() => setShowOrientationPopup(null)}
             onLogout={handleLogout}
+            onSelectLevel={showOrientationPopup === 'fromUpdate' && user?.id ? async (level) => {
+              await updateUserPrepLevel(user.id, level);
+              if (useBetaCertifications) await setInitialEloByPrepLevel(user.id, 'c1', level);
+              await refreshUser();
+            } : undefined}
             onCouponRegistered={async () => {
               try {
                 await refreshUser();
@@ -1330,7 +1413,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 베타: BETATEST 쿠폰 사용 중지 시, 해당 쿠폰 사용자 로그인 시 안내 (세션당 1회) */}
       {showBetatestEndedPopup && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-5">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" aria-hidden />

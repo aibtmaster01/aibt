@@ -70,9 +70,9 @@ function normalizeAdminUserName(docData: Record<string, unknown>): string {
   const familyName = (docData.familyName as string) || '';
   const givenName = (docData.givenName as string) || '';
   const legacyName = (docData.name as string) || '';
-  if (familyName && givenName) return familyName + givenName;
-  if (legacyName) return '김' + legacyName;
-  return '김학습자';
+  if (familyName || givenName) return (familyName + givenName).trim() || givenName || familyName || '학습자';
+  if (legacyName) return legacyName;
+  return '학습자';
 }
 
 function firestoreDocToAdminUser(uid: string, docData: Record<string, unknown>): AdminUser {
@@ -84,8 +84,8 @@ function firestoreDocToAdminUser(uid: string, docData: Record<string, unknown>):
   const registeredDevices = (docData.registered_devices as string[]) || [];
   const adminMemo = (docData.admin_memo as string) || '';
   const name = normalizeAdminUserName(docData);
-  const familyName = (docData.familyName as string) || '김';
-  const givenName = (docData.givenName as string) || name.replace(/^김/, '') || '학습자';
+  const familyName = (docData.familyName as string) || '';
+  const givenName = (docData.givenName as string) || name || '학습자';
 
   const baseUser = {
     targetExamDateByCert,
@@ -407,26 +407,98 @@ export async function fetchUserQuestionCount(uid: string): Promise<number> {
     return 0;
   }
   let total = 0;
-  let docCount = 0;
-  let missingTotalQuestions = 0;
   snapshot.forEach((docSnap) => {
-    docCount++;
-    const data = docSnap.data() as { totalQuestions?: number; certCode?: string; roundId?: string | null; answers?: unknown[] };
-    const qCount = data?.totalQuestions ?? 0;
-    if (qCount === 0 && data?.totalQuestions === undefined) {
-      missingTotalQuestions++;
-      console.warn(`[adminService] exam_results 문서에 totalQuestions 필드 없음: ${docSnap.id}`, {
-        certCode: data?.certCode,
-        roundId: data?.roundId,
-        hasAnswers: Array.isArray(data?.answers),
-      });
-    }
+    const data = docSnap.data() as { totalQuestions?: number; answers?: unknown[] };
+    const qCount = data?.totalQuestions ?? (Array.isArray(data?.answers) ? data.answers.length : 0);
     total += qCount;
   });
-  if (docCount > 0 && missingTotalQuestions > 0) {
-    console.warn(`[adminService] fetchUserQuestionCount: 총 ${docCount}개 문서 중 ${missingTotalQuestions}개에 totalQuestions 필드 없음 (uid: ${uid})`);
-  }
   return total;
+}
+
+/** 어드민 학습현황: 회차별 exam_result 한 건 */
+export interface AdminExamResultItem {
+  examId: string;
+  certCode: string;
+  roundId: string | null;
+  roundLabel: string | null;
+  subject_scores: Record<string, number>;
+  predicted_pass_rate: number | null;
+  totalQuestions: number;
+  correctCount: number;
+  is_passed: boolean;
+  submittedAt: string;
+}
+
+/** 어드민 학습현황: 해당 유저의 exam_results 목록 (1회차→N회차 순 권장) */
+export async function fetchUserExamResultsForAdmin(uid: string): Promise<AdminExamResultItem[]> {
+  const examRef = collection(db, 'users', uid, 'exam_results');
+  const q = query(examRef, orderBy('submittedAt', 'desc'), limit(EXAM_RESULTS_READ_LIMIT));
+  try {
+    const snapshot = await getDocs(q);
+    const items: AdminExamResultItem[] = [];
+    snapshot.forEach((docSnap) => {
+      const d = docSnap.data();
+      const submittedAt = d.submittedAt;
+      const dateStr =
+        submittedAt?.toDate?.()?.toISOString?.() ?? (typeof submittedAt === 'string' ? submittedAt : '');
+      if (d.roundId === 'weakness_retry') return;
+      const certCode = (d.certCode as string) || (d.certId as string) || '';
+      items.push({
+        examId: docSnap.id,
+        certCode,
+        roundId: (d.roundId as string | null) ?? null,
+        roundLabel: (d.roundLabel as string | null) ?? null,
+        subject_scores: (d.subject_scores as Record<string, number>) ?? {},
+        predicted_pass_rate:
+          typeof d.predicted_pass_rate === 'number' && Number.isFinite(d.predicted_pass_rate)
+            ? d.predicted_pass_rate
+            : null,
+        totalQuestions: Number(d.totalQuestions) || 0,
+        correctCount: Number(d.correctCount) || 0,
+        is_passed: Boolean(d.is_passed),
+        submittedAt: dateStr,
+      });
+    });
+    return items.reverse();
+  } catch (err) {
+    console.error('[adminService] fetchUserExamResultsForAdmin 실패:', uid, err);
+    return [];
+  }
+}
+
+/** stats 문서 한 엔트리 (Elo 등) */
+export interface AdminStatEntry {
+  correct?: number;
+  total?: number;
+  proficiency?: number;
+}
+
+/** 어드민 학습현황: 해당 유저·자격증의 stats (Elo 표시용) */
+export async function fetchUserStatsForAdmin(
+  uid: string,
+  certCode: string
+): Promise<{
+  subject_stats: Record<string, AdminStatEntry>;
+  core_concept_stats: Record<string, AdminStatEntry>;
+  problem_type_stats: Record<string, AdminStatEntry>;
+}> {
+  const statsRef = doc(db, 'users', uid, 'stats', certCode);
+  try {
+    const snap = await getDoc(statsRef);
+    const data = snap.exists() ? snap.data() ?? {} : {};
+    return {
+      subject_stats: (data.subject_stats as Record<string, AdminStatEntry>) ?? {},
+      core_concept_stats: (data.core_concept_stats as Record<string, AdminStatEntry>) ?? {},
+      problem_type_stats: (data.problem_type_stats as Record<string, AdminStatEntry>) ?? {},
+    };
+  } catch (err) {
+    console.error('[adminService] fetchUserStatsForAdmin 실패:', uid, certCode, err);
+    return {
+      subject_stats: {},
+      core_concept_stats: {},
+      problem_type_stats: {},
+    };
+  }
 }
 
 /** BIGDATA 자격증 시험회차/시험일/결과발표일 업로드 (certification_info.config에 merge) */

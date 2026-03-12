@@ -1,25 +1,21 @@
 /**
- * 빌드 모드별 브랜드/기능 플래그 (실서버=핀셋, 베타=AiBT + 쿠폰)
+ * 빌드 모드별 브랜드/기능 플래그.
  */
 const raw = import.meta.env.VITE_APP_BRAND as string | undefined;
 export const APP_BRAND: string = typeof raw === 'string' && raw.trim() ? raw.trim() : '핀셋';
 
-/** 랜딩 상단 문구: 실서버 "핀셋-MVP", 베타 "AiBT" */
+/** 랜딩 상단 문구 */
 export const APP_BRAND_LANDING: string = APP_BRAND === 'AiBT' ? 'AiBT' : '핀셋-MVP';
 
-/** 베타 전용 쿠폰 노출 여부 */
+/** 쿠폰 노출 여부 (AiBT 빌드에서 보통 true) */
 export const FEATURE_COUPON: boolean = import.meta.env.VITE_FEATURE_COUPON === 'true';
 
-/** 베타 로컬 전용: 레벨 선택·저장 등 새 플로우 (배포 베타 서버에는 미적용) */
-export const isBetaLocal: boolean =
-  import.meta.env.DEV && (FEATURE_COUPON || APP_BRAND === 'AiBT');
+/** AiBT 빌드 여부. 난이도 선택·MyPageBeta·레벨드 진단·40/80 선택 등 적용 */
+export const useBetaCertifications: boolean = APP_BRAND === 'AiBT';
 
-/** 베타 로컬에서만 certifications_beta 사용. 베타 실서버는 certifications 유지(신뢰도 보호) */
-export const useBetaCertifications: boolean = isBetaLocal;
-
-/** Firestore certifications 컬렉션명. 베타일 때 BIGDATA는 certifications_beta 사용 */
-export function getCertificationsCollection(certCode: string): 'certifications' | 'certifications_beta' {
-  return useBetaCertifications && certCode === 'BIGDATA' ? 'certifications_beta' : 'certifications';
+/** Firestore certifications 컬렉션명 */
+export function getCertificationsCollection(_certCode: string): 'certifications' {
+  return 'certifications';
 }
 
 /** 실서버 호스트 (관리자 화면 노출용). 이 호스트에서만 관리자 메뉴·라우트 표시 */
@@ -31,7 +27,7 @@ export function isProductionHost(): boolean {
   return window.location.hostname === PRODUCTION_HOST;
 }
 
-/** 관리자 메뉴/라우트 노출 여부 (실서버 + isAdmin) */
+/** 관리자 메뉴/라우트 노출 여부. Firestore users 문서의 isAdmin === true 이면 관리자 화면 노출 (호스트 무관). */
 export function canShowAdmin(user: { isAdmin?: boolean } | null): boolean {
-  return !!(user?.isAdmin && isProductionHost());
+  return !!user?.isAdmin;
 }

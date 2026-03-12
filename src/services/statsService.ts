@@ -17,7 +17,9 @@ import {
 import { eloToPercent, getEncouragementMessageForPassRate, PASS_RATE_MIN } from './gradingService';
 import { db } from '../firebase';
 import { CERTIFICATIONS, PROBLEM_TYPE_LABELS } from '../constants';
-import { isBetaLocal } from '../config/brand';
+
+/** 개발 모드에서만 orderBy 실패 시 fallback 사용 */
+const IS_DEV = import.meta.env.DEV;
 
 // ========== v0 UI 호환 인터페이스 ==========
 
@@ -223,11 +225,7 @@ export async function fetchUserTrendData(
   try {
     snapshot = await getDocs(q);
   } catch (err) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[Stats] fetchUserTrendData orderBy 쿼리 실패', { uid, certCode, err });
-    }
-    // 베타 로컬에서만: submittedAt 인덱스/필드 이슈 시 orderBy 없이 재조회 (베타 실서버에는 미적용)
-    if (isBetaLocal) {
+    if (IS_DEV) {
       try {
         const fallbackQ = query(examRef, limit(200));
         snapshot = await getDocs(fallbackQ);
@@ -236,8 +234,7 @@ export async function fetchUserTrendData(
           .filter((x) => isExamForCert(x.data, certCode) && x.data.roundId !== 'weakness_retry');
         withDate.sort((a, b) => b.t - a.t);
         snapshot = { docs: withDate.slice(0, 150).map((x) => x.doc) } as typeof snapshot;
-      } catch (fallbackErr) {
-        if (process.env.NODE_ENV === 'development') console.error('[Stats] fetchUserTrendData fallback 실패', fallbackErr);
+      } catch {
         return EMPTY_TREND_RESULT;
       }
     } else {
@@ -245,8 +242,7 @@ export async function fetchUserTrendData(
     }
   }
 
-  // 베타 로컬에서만: orderBy 결과 0건일 때 orderBy 없이 재조회 (베타 실서버에는 미적용)
-  if (isBetaLocal && snapshot.docs.length === 0) {
+  if (IS_DEV && snapshot.docs.length === 0) {
     try {
       const fallbackQ = query(examRef, limit(200));
       const fallbackSnap = await getDocs(fallbackQ);
@@ -255,11 +251,8 @@ export async function fetchUserTrendData(
         .filter((x) => isExamForCert(x.data, certCode) && x.data.roundId !== 'weakness_retry');
       withDate.sort((a, b) => b.t - a.t);
       snapshot = { docs: withDate.slice(0, 150).map((x) => x.doc) } as typeof snapshot;
-      if (process.env.NODE_ENV === 'development' && snapshot.docs.length > 0) {
-        console.info('[Stats] fetchUserTrendData: orderBy 결과 0건 → orderBy 없이 조회로 복구', { uid, certCode, recovered: snapshot.docs.length });
-      }
     } catch {
-      // 무시
+      // ignore
     }
   }
 
@@ -272,18 +265,6 @@ export async function fetchUserTrendData(
     return true;
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    const firstDoc = certDocs[0]?.data() as ExamResultDoc | undefined;
-    console.info('[Stats] fetchUserTrendData', {
-      uid,
-      certCode,
-      totalExamDocs: snapshot.docs.length,
-      afterCertFilter: certDocs.length,
-      firstDocCertCode: firstDoc?.certCode,
-      firstDocCertId: firstDoc?.certId,
-    });
-  }
-
   const completedDiagnostics = certDocs.filter((d) => {
     const rid = (d.data() as ExamResultDoc).roundId;
     return typeof rid === 'string' && DIAGNOSTIC_ROUND_ID_REGEX.test(rid);
@@ -291,6 +272,7 @@ export async function fetchUserTrendData(
 
   const docsToUse = certDocs.slice(0, 30); // 해당 자격증 기준 최근 30건 (이미 desc 정렬됨)
   let latestScore = 0;
+  const diagnosticPassRates: number[] = []; // 최근 회차 순 predicted_pass_rate (가중 평균용)
 
   docsToUse.forEach((docSnap, index) => {
     try {
@@ -320,6 +302,20 @@ export async function fetchUserTrendData(
         }
       }
 
+      const rid = data.roundId;
+      if (typeof rid === 'string' && DIAGNOSTIC_ROUND_ID_REGEX.test(rid)) {
+        const pr = data.predicted_pass_rate;
+        if (typeof pr === 'number' && Number.isFinite(pr)) {
+          diagnosticPassRates.push(Math.min(99, Math.max(0, pr)));
+        } else if (score > 0) {
+          diagnosticPassRates.push(score);
+        } else {
+          const total = Number(data.totalQuestions ?? 0);
+          const correct = Number(data.correctCount ?? 0);
+          diagnosticPassRates.push(total > 0 ? Math.min(99, Math.max(0, Math.round((correct / total) * 100))) : 0);
+        }
+      }
+
       items.push({
         name: dateObj ? formatTrendName(index, dateObj) : `${index + 1}회`,
         score,
@@ -331,22 +327,22 @@ export async function fetchUserTrendData(
         totalQuestions,
         correctCount,
       });
-
-      if (completedDiagnostics >= 3 && index === 0) {
-        if (data.predicted_pass_rate != null && Number.isFinite(Number(data.predicted_pass_rate))) {
-          recentPassRate = Math.min(99, Math.max(0, Number(data.predicted_pass_rate)));
-        } else if (score > 0) {
-          recentPassRate = score;
-        } else {
-          const total = Number(data.totalQuestions ?? 0);
-          const correct = Number(data.correctCount ?? 0);
-          recentPassRate = total > 0 ? Math.min(99, Math.max(0, Math.round((correct / total) * 100))) : 0;
-        }
-      }
     } catch {
       // 한 건이라도 파싱 실패 시 해당 doc만 스킵 (2회차 등 추가 후 전체 빈 화면 방지)
     }
   });
+
+  if (completedDiagnostics >= 3 && diagnosticPassRates.length >= 1) {
+    const weights = [0.2, 0.3, 0.5]; // 오래된 → 최신 순
+    const recentRates = diagnosticPassRates.slice(0, 3);
+    const oldestFirst = [...recentRates].reverse();
+    const w = weights.slice(weights.length - oldestFirst.length);
+    const wSum = w.reduce((a, b) => a + b, 0);
+    recentPassRate = Math.round(
+      oldestFirst.reduce((acc, val, i) => acc + val * w[i], 0) / wSum
+    );
+    recentPassRate = Math.min(99, Math.max(0, recentPassRate));
+  }
 
   items.reverse(); // UI는 오래된 순(시간순)으로 표시
 
@@ -415,20 +411,8 @@ export async function fetchDashboardStats(
       .map((d) => d.data() as ExamResultDoc)
       .filter((doc) => isExamForCert(doc, certCode) && doc.roundId !== 'weakness_retry')
       .slice(0, 5);
-    if (process.env.NODE_ENV === 'development') {
-      console.info('[Stats] fetchDashboardStats recentExamDocs', {
-        uid,
-        certCode,
-        totalExamDocs: examSnap.docs.length,
-        afterFilter: recentExamDocs.length,
-        firstCertCode: recentExamDocs[0]?.certCode,
-        firstCertId: recentExamDocs[0]?.certId,
-      });
-    }
-  } catch (e) {
-    if (process.env.NODE_ENV === 'development') console.warn('[Stats] fetchDashboardStats exam_results 조회 실패', e);
-    // 베타 로컬에서만: orderBy 실패 시 orderBy 없이 재조회 (베타 실서버에는 미적용)
-    if (isBetaLocal) {
+  } catch {
+    if (IS_DEV) {
       try {
         const fallbackQ = query(examRef, limit(100));
         const fallbackSnap = await getDocs(fallbackQ);
@@ -464,19 +448,6 @@ export async function fetchDashboardStats(
   const problemTypeStats = (data.problem_type_stats ?? {}) as Record<string, StatEntry>;
   const subjectStats = (data.subject_stats ?? {}) as Record<string, StatEntry>;
 
-  if (process.env.NODE_ENV === 'development') {
-    console.info('[Stats] fetchDashboardStats', {
-      uid,
-      certCode,
-      statsFromServer,
-      statsExists: snap.exists(),
-      statsPath: `users/${uid}/stats/${certCode}`,
-      conceptKeys: Object.keys(conceptStats).length,
-      subjectKeys: Object.keys(subjectStats).length,
-      problemTypeKeys: Object.keys(problemTypeStats).length,
-      recentExamCount: recentExamDocs.length,
-    });
-  }
   /** 과목별 최근 점수(트렌드·안전도용). 최근 시험 순으로 채움 */
   const subjectRecentScores: Record<string, number[]> = {};
   for (const exam of recentExamDocs) {

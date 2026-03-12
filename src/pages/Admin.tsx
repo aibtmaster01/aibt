@@ -30,8 +30,8 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { User } from '../types';
-import { CERTIFICATIONS } from '../constants';
-import { getCertDisplayName } from '../services/gradingService';
+import { CERTIFICATIONS, getRoundLabel } from '../constants';
+import { getCertDisplayName, eloToPercent } from '../services/gradingService';
 import { useAllCertificationInfos } from '../hooks/useCertificationInfo';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -47,6 +47,8 @@ import {
   fetchTodayVisitorCount,
   fetchVisitorCountsForRange,
   fetchErrorLogs,
+  fetchUserExamResultsForAdmin,
+  fetchUserStatsForAdmin,
   EXAM_SCHEDULES,
   USERS_PAGE_SIZE,
   fetchProblemReportsCount,
@@ -55,6 +57,8 @@ import {
   type MembershipUpdateInput,
   type ErrorLogEntry,
   type ProblemReportEntry,
+  type AdminExamResultItem,
+  type AdminStatEntry,
 } from '../services/adminService';
 import { getFlagDistribution, getProblemQualitySummary, type FlagDistribution, type ProblemQualitySummary } from '../services/qualityService';
 
@@ -91,9 +95,13 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [dropdownAnchor, setDropdownAnchor] = useState<{ top: number; left: number } | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [modal, setModal] = useState<'payment' | 'confirmBan' | 'confirmUnban' | 'confirmClearDevices' | 'memo' | null>(null);
+  const [modal, setModal] = useState<'payment' | 'confirmBan' | 'confirmUnban' | 'confirmClearDevices' | 'memo' | 'learningStatus' | null>(null);
   const [targetUser, setTargetUser] = useState<AdminUser | null>(null);
   const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
+  const [learningStatusUser, setLearningStatusUser] = useState<AdminUser | null>(null);
+  const [learningStatusExams, setLearningStatusExams] = useState<AdminExamResultItem[]>([]);
+  const [learningStatusStatsByCert, setLearningStatusStatsByCert] = useState<Record<string, { subject_stats: Record<string, AdminStatEntry>; core_concept_stats: Record<string, AdminStatEntry>; problem_type_stats: Record<string, AdminStatEntry> }>>({});
+  const [learningStatusLoading, setLearningStatusLoading] = useState(false);
   const [todayVisitors, setTodayVisitors] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterCertId, setFilterCertId] = useState<string>('');
@@ -457,6 +465,30 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
     setMemoText(user.adminMemo || '');
     setModal('memo');
     closeDropdown();
+  };
+
+  const handleLearningStatusOpen = async (user: AdminUser) => {
+    setLearningStatusUser(user);
+    setModal('learningStatus');
+    setLearningStatusExams([]);
+    setLearningStatusStatsByCert({});
+    setLearningStatusLoading(true);
+    closeDropdown();
+    try {
+      const exams = await fetchUserExamResultsForAdmin(user.id);
+      setLearningStatusExams(exams);
+      const certCodes = [...new Set(exams.map((e) => e.certCode).filter(Boolean))];
+      const statsByCert: Record<string, { subject_stats: Record<string, AdminStatEntry>; core_concept_stats: Record<string, AdminStatEntry>; problem_type_stats: Record<string, AdminStatEntry> }> = {};
+      for (const code of certCodes) {
+        const stats = await fetchUserStatsForAdmin(user.id, code);
+        statsByCert[code] = stats;
+      }
+      setLearningStatusStatsByCert(statsByCert);
+    } catch (e) {
+      console.error('학습현황 조회 실패', e);
+    } finally {
+      setLearningStatusLoading(false);
+    }
   };
 
   const handleMemoSave = async () => {
@@ -969,7 +1001,7 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                       <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">이름</th>
                       <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">상태</th>
                       <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">자격증명</th>
-                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">푼 문제</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">학습현황</th>
                       <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase w-24">관리</th>
                     </tr>
                   </thead>
@@ -1011,9 +1043,15 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-600">{row.certName}</td>
                           <td className="px-6 py-4 text-sm text-slate-600">
-                            {(!prevRow || prevRow.user.id !== row.user.id) && row.user.id in questionCounts
-                              ? `${questionCounts[row.user.id]}개`
-                              : (!prevRow || prevRow.user.id !== row.user.id) ? '-' : ''}
+                            {(!prevRow || prevRow.user.id !== row.user.id) ? (
+                              <button
+                                type="button"
+                                onClick={() => handleLearningStatusOpen(row.user)}
+                                className="text-[#0034d3] font-medium hover:underline"
+                              >
+                                학습현황 확인하기
+                              </button>
+                            ) : ''}
                           </td>
                           <td className="px-6 py-4 relative">
                             <button
@@ -1230,6 +1268,98 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
         </div>
       )}
 
+      {modal === 'learningStatus' && learningStatusUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6">
+            <h3 className="text-lg font-black text-slate-900 mb-1">{learningStatusUser.name} 학습현황</h3>
+            <p className="text-sm text-slate-500 mb-4">{learningStatusUser.email}</p>
+            {learningStatusLoading ? (
+              <p className="text-slate-500 py-8">로딩 중...</p>
+            ) : (
+              <>
+                <div className="mb-6">
+                  <h4 className="text-sm font-bold text-slate-700 mb-2">회차별 점수 · 합격률</h4>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-4 py-2 text-left font-semibold text-slate-600">회차</th>
+                          <th className="px-4 py-2 text-right font-semibold text-slate-600">점수</th>
+                          <th className="px-4 py-2 text-right font-semibold text-slate-600">합격률</th>
+                          <th className="px-4 py-2 text-left font-semibold text-slate-600">제출일시</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {learningStatusExams.map((exam) => {
+                          const scores = exam.subject_scores ?? {};
+                          const scoreValues = Object.values(scores).filter((v) => typeof v === 'number');
+                          const avgScore = scoreValues.length > 0
+                            ? Math.round(scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length)
+                            : (exam.totalQuestions > 0 ? Math.round((exam.correctCount / exam.totalQuestions) * 100) : 0);
+                          const roundLabel = exam.roundLabel ?? getRoundLabel(exam.roundId);
+                          return (
+                            <tr key={exam.examId} className="border-b border-slate-100 last:border-0">
+                              <td className="px-4 py-2 text-slate-800">{roundLabel}</td>
+                              <td className="px-4 py-2 text-right font-medium">{avgScore}점</td>
+                              <td className="px-4 py-2 text-right">
+                                {exam.predicted_pass_rate != null ? `${exam.predicted_pass_rate}%` : '-'}
+                              </td>
+                              <td className="px-4 py-2 text-slate-500 text-xs">{exam.submittedAt ? new Date(exam.submittedAt).toLocaleString('ko-KR') : '-'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {learningStatusExams.length === 0 && (
+                      <p className="px-4 py-6 text-slate-500 text-center">제출 이력이 없습니다.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <h4 className="text-sm font-bold text-slate-700 mb-2">현재 Elo (이해도 %)</h4>
+                  {Object.entries(learningStatusStatsByCert).map(([certCode, stats]) => {
+                    const cert = CERTIFICATIONS.find((c) => c.code === certCode);
+                    const certName = cert ? getCertDisplayName(cert, certInfos[certCode] ?? null) : certCode;
+                    const subjectEntries = Object.entries(stats.subject_stats ?? {}).filter(([, e]) => (e?.total ?? 0) > 0);
+                    return (
+                      <div key={certCode} className="mb-4 p-3 bg-slate-50 rounded-lg">
+                        <p className="text-xs font-semibold text-slate-600 mb-2">{certName}</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                          {subjectEntries.map(([key, ent]) => {
+                            const prof = ent?.proficiency ?? 1200;
+                            const pct = Math.round(eloToPercent(prof));
+                            return (
+                              <div key={key} className="flex justify-between">
+                                <span className="text-slate-600">과목 {key}</span>
+                                <span className="font-medium">{pct}% (Elo {prof})</span>
+                              </div>
+                            );
+                          })}
+                          {subjectEntries.length === 0 && (
+                            <p className="text-slate-500 col-span-full">과목별 Elo 없음</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {Object.keys(learningStatusStatsByCert).length === 0 && (
+                    <p className="text-slate-500 text-sm">Elo 데이터 없음</p>
+                  )}
+                </div>
+              </>
+            )}
+            <div className="flex justify-end pt-4">
+              <button
+                onClick={() => { setModal(null); setLearningStatusUser(null); setLearningStatusExams([]); setLearningStatusStatsByCert({}); }}
+                className="px-4 py-2 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {openDropdownId && dropdownAnchor && (() => {
         const openRow = allRows.find((r) => r.user.id === openDropdownId);
         if (!openRow) return null;
@@ -1242,6 +1372,9 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
             >
               <button onClick={() => handlePaymentModalOpen(openRow.user)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100">
                 <TicketIcon size={16} /> 수기 결제 / 권한 수정
+              </button>
+              <button onClick={() => handleLearningStatusOpen(openRow.user)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100">
+                <BarChart3 size={16} /> 학습현황 확인하기
               </button>
               <button onClick={() => handleMemoOpen(openRow.user)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100">
                 <FileText size={16} /> 메모

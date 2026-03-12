@@ -1,4 +1,6 @@
-# 베타 로컬 실행 방법
+# 베타(AiBT) 로컬 실행 방법
+
+> 베타 로컬/실서버 구분 없이, AiBT 빌드 시 동일 동작. 로컬에서 `dev:beta`로 실행하면 베타 실서버와 같은 기능이 동작합니다.
 
 ## 1. 프론트엔드 (로컬에서 베타 모드로 실행)
 
@@ -22,25 +24,25 @@ Windows (PowerShell) 예시:
 $env:VITE_APP_BRAND="AiBT"; $env:VITE_FEATURE_COUPON="true"; npm run dev
 ```
 
-실행 후 브라우저에서 표시되는 주소(예: `http://localhost:5173`)로 접속하면 베타 로컬로 동작합니다.
+실행 후 브라우저에서 표시되는 주소(예: `http://localhost:5173`)로 접속하면 베타(AiBT)와 동일하게 동작합니다.
 
 ---
 
 ## 2. Firebase에 레벨드 인덱스/문항 업로드 (최초 1회 또는 인덱스 수정 후)
 
-베타 로컬에서 **진단 40문항·맞춤형** 문항을 쓰려면 `certifications_beta` 에 데이터가 있어야 합니다.
+로컬에서 **진단 40문항·맞춤형** 문항을 쓰려면 Firestore **certifications**에 레벨드 인덱스/문항이 있어야 합니다. (베타 실서버와 동일 경로)
 
 ```bash
-# 프로젝트 루트가 아닌 backend 쪽에서 실행할 때
+# certifications에 업로드 (베타 실서버와 동일)
 cd backend
-python3 Contents/Bigdata/upload_leveled_contents_and_index.py
+python3 Contents/Bigdata/upload_leveled_contents_and_index.py --prod
 ```
 
 또는 스크립트가 있는 폴더에서:
 
 ```bash
 cd backend/Contents/Bigdata
-python3 upload_leveled_contents_and_index.py
+python3 upload_leveled_contents_and_index.py --prod
 ```
 
 **필요 조건**
@@ -68,6 +70,6 @@ python3 roundre_leveled.py
 
 | 목적 | 명령 |
 |------|------|
-| **베타 로컬 앱 실행** | `npm run dev:beta` |
-| **레벨드 데이터 Firebase 업로드** | `cd backend && python3 Contents/Bigdata/upload_leveled_contents_and_index.py` |
+| **베타(AiBT) 앱 실행** | `npm run dev:beta` |
+| **레벨드 데이터 Firebase 업로드 (certifications)** | `cd backend && python3 Contents/Bigdata/upload_leveled_contents_and_index.py --prod` |
 | **레벨드 인덱스만 재생성** | `cd backend/Contents/Bigdata && python3 roundre_leveled.py` |

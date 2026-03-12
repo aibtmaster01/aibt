@@ -69,7 +69,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(async (err) => {
         if (cancelled) return;
-        if (process.env.NODE_ENV === 'development') console.error('[Auth] getGoogleRedirectUser failed', err);
         const fbUser = auth.currentUser;
         if (!fbUser) return;
         try {
@@ -77,7 +76,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!appUser) appUser = await ensureAppUserFromFirebaseUser(fbUser);
           if (!cancelled && appUser) setUser(appUser);
         } catch (fallbackErr) {
-          if (process.env.NODE_ENV === 'development') console.error('[Auth] redirect fallback failed', fallbackErr);
         }
       })
       .finally(() => {
