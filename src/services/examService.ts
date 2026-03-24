@@ -976,7 +976,8 @@ type UserGrade = 'Guest' | 'Free' | 'Premium' | 'Expired';
 
 /**
  * [2] 회원 등급별 권한 체크 (개편 정책)
- * - Guest: Round 1만 (UI에서 20문제 제한)
+ * - 비로그인: 모의고사 접근 불가 (목록에서 구글 로그인 유도)
+ * - 로그인·구독 없음: Round 1만
  * - Free: Round 1, 2만. Round 3+ 접근 불가
  * - Premium/Admin: Round 1~3(고정형), Round 6+(맞춤형) 모두 무제한
  */
@@ -1003,14 +1004,11 @@ export function checkExamAccess(params: {
   const cert = CERTIFICATIONS.find((c) => c.id === certId);
   const certName = cert?.name ?? '해당 과목';
 
-  // === Guest 시나리오 ===
+  // === 비로그인 ===
   if (!user) {
-    if (round === 1) {
-      return { allowed: true }; // UI에서 20문제 제한
-    }
     return {
       allowed: false,
-      reason: '로그인하면 더 많은 회차를 풀 수 있어요.',
+      reason: '모의고사를 풀려면 구글 로그인이 필요합니다.',
     };
   }
 

@@ -265,7 +265,7 @@ export const ExamList: React.FC<ExamListProps> = ({
       onConsumedStartNext();
       return;
     }
-    if (!user && nextRound.round >= 2) {
+    if (!user) {
       consumedStartNextRef.current = null;
       setLockedMessage('로그인이 필요한 서비스입니다.');
       setLockedAction('login');
@@ -273,7 +273,7 @@ export const ExamList: React.FC<ExamListProps> = ({
       onConsumedStartNext();
       return;
     }
-    if (user && !isPremiumUser && nextRound.round >= 3) {
+    if (!isPremiumUser && nextRound.round >= 3) {
       consumedStartNextRef.current = null;
       setShowFreePaymentModal(true);
       onConsumedStartNext();
@@ -335,8 +335,9 @@ export const ExamList: React.FC<ExamListProps> = ({
   function getLockState(round: ExamRound): { locked: boolean; reason: LockReason } {
     if (isExpired) return { locked: false, reason: null };
     const n = round.round;
+    /** 비로그인: 목록은 볼 수 있으나 모든 회차는 로그인 후 풀이 */
     if (!user) {
-      return { locked: n >= 2, reason: n >= 2 ? 'guest' : null };
+      return { locked: true, reason: 'guest' };
     }
     // 1·2·3회차만 이전 회차 완료 제약 (4회차 이상은 목록 노출 자체가 조건부라 순차 잠금 없음)
     if (n >= 2 && n <= 3) {
@@ -436,6 +437,11 @@ export const ExamList: React.FC<ExamListProps> = ({
         </span>
         <h1 className="text-3xl font-black text-slate-900 mb-2">{cert?.name}</h1>
         <p className="text-slate-500">원하는 모의고사 회차를 선택하세요.</p>
+        {!user && (
+          <p className="text-sm text-[#1e56cd] font-semibold mt-3">
+            로그인 후 회차를 선택하면 모의고사를 풀 수 있습니다. (구글 로그인)
+          </p>
+        )}
         {isExpired && (
           <div className="mt-4 bg-red-50 text-red-600 text-xs font-bold py-2 px-4 rounded-lg inline-block">
             기간 만료: 문제 풀이가 제한되며, 결과 리포트만 확인 가능합니다.
