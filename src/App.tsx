@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check, Loader2, Sparkles } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { useIsMobile } from './hooks/use-mobile';
-import { EmptyState } from './components/dashboard/empty-state';
 import { LoginModal } from './components/LoginModal';
 import { MyPage } from './pages/MyPage';
 import { ExamList } from './pages/ExamList';
@@ -88,8 +87,6 @@ const App: React.FC = () => {
   const [loginModalInitialCouponStep, setLoginModalInitialCouponStep] = useState<{ userId: string; userEmail: string } | null>(null);
   /** 로그인 모달 진입 시 처음 보여줄 탭 */
   const [loginInitialMode, setLoginInitialMode] = useState<'login' | 'signup' | null>(null);
-  /** 로그인 성공 직후 user 미반영 시 effect가 모달을 다시 여는 것 방지 */
-  const loginSuccessJustHandledRef = useRef(false);
   /** 미인증 사용자: 인증 메일 재발송 모달 */
   const [showResendVerificationModal, setShowResendVerificationModal] = useState(false);
   const [resendPassword, setResendPassword] = useState('');
@@ -144,6 +141,14 @@ const App: React.FC = () => {
     selectedCertId,
     setSelectedCertId,
   });
+
+  /** 비로그인 시 '/'(구 홈) 접근은 모의고사 목록으로만 유도 */
+  useLayoutEffect(() => {
+    if (authLoading) return;
+    if (user) return;
+    if (route !== '/') return;
+    navigate('/exam-list');
+  }, [authLoading, user, route, navigate]);
 
   /** 결과 화면 "다음 회차" 모드 선택 후 5초 준비 → 퀴즈 직행 */
   useEffect(() => {
@@ -212,17 +217,16 @@ const App: React.FC = () => {
     if (selectedRoundId && selectedCertId) return;
     setPreFetchedQuestions(null);
     setQuizStartIndex(undefined);
-    navigate(selectedCertId ? '/exam-list' : '/');
-  }, [route, selectedRoundId, selectedCertId]);
+    navigate('/exam-list');
+  }, [route, selectedRoundId, selectedCertId, navigate]);
 
   const handleLogout = async () => {
     setShowLoginModal(false);
     setLoginModalIntent(null);
     setLoginModalInitialCouponStep(null);
     await logout();
-    loginSuccessJustHandledRef.current = false;
     setShowLogoutToast(true);
-    setRoute('/');
+    navigate('/exam-list');
   };
 
   // Flow Handlers
@@ -575,13 +579,6 @@ const App: React.FC = () => {
   }, [authLoading, user, isBeta, user?.onboardingStatus]);
 
   React.useEffect(() => {
-    if (!authLoading && isBeta && !user && route === '/' && !loginSuccessJustHandledRef.current) {
-      setShowLoginModal(true);
-      setLoginModalIntent('standalone');
-    }
-  }, [authLoading, isBeta, user, route]);
-
-  React.useEffect(() => {
     if (!authLoading && user?.onboardingStatus === 0 && isBeta && !hasCoupon && showOrientationPopup === null) {
       setShowOrientationPopup('forced');
     }
@@ -669,14 +666,7 @@ const App: React.FC = () => {
           };
           return useBetaCertifications ? <MyPageBeta {...myPageProps} /> : <MyPage {...myPageProps} />;
         }
-        return (
-          <EmptyState
-            onStartCert={(id) => {
-              setSelectedCertId(id);
-              navigate('/exam-list');
-            }}
-          />
-        );
+        return null;
       case '/mypage':
         if (canShowAdmin(user)) {
           return <Admin currentUser={user} initialMenu="dashboard" hideSidebar onNavigate={navigate} />;
@@ -743,7 +733,7 @@ const App: React.FC = () => {
             user={user}
             onSelectRound={handleSelectRound}
             onSelectAiRound={handleSelectAiRound}
-            onBack={() => navigate(user ? '/mypage' : '/')}
+            onBack={() => navigate(user ? '/mypage' : '/exam-list')}
             onNavigate={navigate}
             isPremiumUser={!!isCurrentCertPremium}
             isExpired={!!isCurrentCertExpired}
@@ -780,7 +770,7 @@ const App: React.FC = () => {
               onExit={() => {
                 setPreFetchedQuestions(null);
                 setQuizStartIndex(undefined);
-                navigate(user ? '/mypage' : '/');
+                navigate(user ? '/mypage' : '/exam-list');
               }}
               onGuestLimitReached={({ certId, roundId, sessionHistory, questions }) => {
                 setPendingGuestSession({ certId, roundId, sessionHistory, questions });
@@ -829,7 +819,7 @@ const App: React.FC = () => {
             sessionHistory={quizResult.sessionHistory}
             questions={quizResult.questions}
             roundMemo={quizResult.roundMemo}
-            onHome={() => navigate('/')}
+            onHome={() => navigate(user ? '/' : '/exam-list')}
             onRetry={() => {
               if (selectedRoundId) setShowRetryModeModal(true);
               else navigate('/exam-list');
@@ -841,7 +831,7 @@ const App: React.FC = () => {
             onGoToDashboard={() => navigate(selectedCertId ? `/mypage?cert=${selectedCertId}&refresh=1` : '/mypage?refresh=1')}
             onNextRoundAuto={() => {
               if (!user || !selectedCertId) {
-                navigate('/');
+                navigate('/exam-list');
                 return;
               }
               if (!isCurrentCertPremium) {
@@ -873,12 +863,9 @@ const App: React.FC = () => {
             onLogin={() => { setLoginInitialMode('login'); setShowLoginModal(true); setLoginModalIntent('standalone'); }}
             onGoToCheckout={() => {
               if (selectedCertId) navigate('/checkout');
-              else navigate('/'); 
+              else navigate('/exam-list');
             }}
-            onContinueLearning={() => {
-              if (selectedCertId) navigate('/exam-list');
-              else navigate('/');
-            }}
+            onContinueLearning={() => navigate('/exam-list')}
             onNextRoundPaymentRequest={() => setShowNextRoundPaymentModal(true)}
             showCouponEffect={showCouponEffect}
           />
@@ -921,7 +908,6 @@ const App: React.FC = () => {
     onboardingStatus?: 0 | 1 | 2;
     hasCoupon?: boolean;
   }) => {
-    loginSuccessJustHandledRef.current = true;
     const intent = loginModalIntent;
     setShowLoginModal(false);
     setLoginModalIntent(null);

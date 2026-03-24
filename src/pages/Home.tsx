@@ -69,6 +69,6 @@ export const Home: React.FC<HomeProps> = ({
     }
   };
 
-  // 리디자인 예정. App.tsx에서 '/' 경로는 로그인 시 마이페이지, 비로그인 시 자격증 목록(EmptyState)으로 렌더링됩니다.
+  // App 라우팅은 useAppNavigation·App.tsx 기준. 비로그인 기본 진입은 /exam-list, 로그인 시 대시보드는 /·/mypage.
   return null;
 };

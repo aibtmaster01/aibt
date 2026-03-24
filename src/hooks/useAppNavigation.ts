@@ -46,7 +46,7 @@ export function useAppNavigation(params: UseAppNavigationParams): UseAppNavigati
     setShowCheckoutModal,
   } = params;
 
-  const [route, setRouteState] = useState<Route>('/');
+  const [route, setRouteState] = useState<Route>('/exam-list');
 
   const setRoute = useCallback((r: Route) => {
     setRouteState(r);
@@ -85,7 +85,7 @@ export function useAppNavigation(params: UseAppNavigationParams): UseAppNavigati
         setLoginInitialMode('login');
         setShowLoginModal(true);
         setLoginModalIntent('standalone');
-        setRouteState(pathname === '/mypage' ? '/' : (pathname as Route));
+        setRouteState(pathname === '/mypage' ? '/exam-list' : (pathname as Route));
         return;
       }
       setRouteState(pathname as Route);

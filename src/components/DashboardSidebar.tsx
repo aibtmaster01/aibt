@@ -81,7 +81,7 @@ export function DashboardSidebar({
       {/* 로고 */}
       <button
         type="button"
-        onClick={() => onNavigate('/')}
+        onClick={() => onNavigate(user ? '/' : '/exam-list')}
         className="text-white font-black text-sm md:text-base mb-6 md:mb-8 tracking-tight"
       >
         {APP_BRAND}
