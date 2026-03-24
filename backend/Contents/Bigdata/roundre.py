@@ -199,6 +199,6 @@ class RoundRebalancerV3:
         print("="*70)
 
 if __name__ == "__main__":
-    BASE = "/Users/syun/Downloads/aibt_cursor/backend/Contents/Bigdata/"
+    BASE = os.path.dirname(os.path.abspath(__file__))
     rebalancer = RoundRebalancerV3(BASE)
     rebalancer.run()

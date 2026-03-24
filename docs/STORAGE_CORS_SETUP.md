@@ -36,7 +36,7 @@
 프로젝트에 CORS 적용 스크립트가 있습니다. **gcloud CLI가 설치·로그인**되어 있으면 아래만 실행하면 됩니다.
 
 ```bash
-cd /Users/syun/Downloads/aibt_cursor
+cd ~/Desktop/aibt_cursor
 gcloud config set project aibt-99bc6
 ./backend/Contents/Bigdata/apply-storage-cors.sh
 ```
@@ -55,7 +55,7 @@ gcloud config set project aibt-99bc6
 
 ```bash
 # 1) 프로젝트 루트로 이동
-cd /Users/syun/Downloads/aibt_cursor
+cd ~/Desktop/aibt_cursor
 
 # 2) 프로젝트 선택
 gcloud config set project aibt-99bc6

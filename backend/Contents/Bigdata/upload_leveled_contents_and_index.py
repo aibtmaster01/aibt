@@ -13,7 +13,8 @@ upload_leveled_contents_and_index.py
 - 문항:   certifications_beta/BIGDATA/question_pools/contents_1681/questions/{q_id}
 
 [실행]
-  업로드: python3 upload_leveled_contents_and_index.py
+  베타:   python3 upload_leveled_contents_and_index.py
+  실서버: python3 upload_leveled_contents_and_index.py --prod
   분리만: python3 upload_leveled_contents_and_index.py --split-only
   (스크립트가 있는 디렉터리에 Bigdata_Index_Leveled.json, Final_Bigdata_Contents.json 필요)
 
@@ -34,7 +35,7 @@ INDEX_LEVELED_PATH = os.path.join(SCRIPT_DIR, "Bigdata_Index_Leveled.json")
 
 CERT_CODE = "BIGDATA"
 POOL_ID = "contents_1681"
-# 베타 전용 컬렉션 (실서버 certifications와 분리)
+# --prod 이면 certifications, 아니면 certifications_beta
 CERT_COLLECTION = "certifications_beta"
 
 
@@ -226,17 +227,18 @@ def upload_questions_to_firestore(db, contents: dict, index_list: list):
     print(f"   => Firestore question_pools/{POOL_ID}/questions 업로드 완료: {total}건")
 
 
-def upload_index_to_storage(payload: list) -> None:
-    """레벨드 인덱스 배열 → Storage assets/BIGDATA/beta/index_leveled.json (베타 전용, 실서버와 분리)"""
+def upload_index_to_storage(payload: list, use_prod: bool = False) -> None:
+    """레벨드 인덱스 배열 → Storage. 베타: beta/index_leveled.json, 실서버: index_leveled.json"""
+    path = "assets/BIGDATA/index_leveled.json" if use_prod else "assets/BIGDATA/beta/index_leveled.json"
     try:
         from firebase_admin import storage
         bucket = storage.bucket()
-        blob = bucket.blob("assets/BIGDATA/beta/index_leveled.json")
+        blob = bucket.blob(path)
         blob.upload_from_string(
             json.dumps(payload, ensure_ascii=False, indent=0),
             content_type="application/json",
         )
-        print(f"   => Storage /assets/BIGDATA/beta/index_leveled.json 업로드 완료 ({len(payload)}건)")
+        print(f"   => Storage /{path} 업로드 완료 ({len(payload)}건)")
     except Exception as e:
         print(f"⚠️ Storage 업로드 실패: {e}")
 
@@ -262,7 +264,12 @@ def write_split_files(index_list: list, contents: dict) -> None:
 
 
 def main():
+    global CERT_COLLECTION
     split_only = "--split-only" in sys.argv
+    use_prod = "--prod" in sys.argv
+    if use_prod:
+        CERT_COLLECTION = "certifications"
+
     if split_only:
         print("=" * 60)
         print("📂 레벨드 인덱스/컨텐츠 분리 (파일만 저장)")
@@ -272,14 +279,16 @@ def main():
         print("\n✨ 분리 완료. 업로드 시 이 스크립트를 --split-only 없이 실행하세요.")
         return
 
+    storage_path = "assets/BIGDATA/index_leveled.json" if use_prod else "assets/BIGDATA/beta/index_leveled.json"
     print("=" * 60)
     print("🔥 레벨드 인덱스 + 컨텐츠 → Firestore & Storage")
     print("=" * 60)
+    print(f"   대상: {'certifications (실서버)' if use_prod else 'certifications_beta (베타)'}")
     print(f"   인덱스: {os.path.basename(INDEX_LEVELED_PATH)}")
     print(f"   컨텐츠: {os.path.basename(CONTENTS_PATH)}")
     print(f"   Firestore: {CERT_COLLECTION}/{CERT_CODE}/question_pools/{POOL_ID}/questions/{{q_id}}")
     print(f"   Firestore: {CERT_COLLECTION}/{CERT_CODE}/public/index_leveled")
-    print(f"   Storage:   /assets/BIGDATA/beta/index_leveled.json")
+    print(f"   Storage:   /{storage_path}")
     print()
     contents, index_list = load_leveled_contents_and_index()
     init_firebase()
@@ -290,7 +299,7 @@ def main():
     upload_questions_to_firestore(db, contents, index_list)
 
     print("\n[Step 2] 레벨드 인덱스 업로드 (Storage + Firestore)...")
-    upload_index_to_storage(index_list)
+    upload_index_to_storage(index_list, use_prod=use_prod)
     upload_index_to_firestore(db, index_list)
 
     print("\n✨ 완료.")

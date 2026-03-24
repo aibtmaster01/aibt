@@ -1,5 +1,5 @@
 """
-레벨별 고정 모의고사 라운드 재편 (베타 로컬 전용).
+레벨별 고정 모의고사 라운드 재편 (베타/AiBT용 레벨드 인덱스 생성).
 - 입력: Final_Bigdata_Index.json + Final_Bigdata_Contents.json
 - l_1~l_3 / m_1~m_3 / h_1~h_3 (각 40문항×3) + 나머지 99
 

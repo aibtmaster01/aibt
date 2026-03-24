@@ -3,9 +3,8 @@ import os
 import re
 from tqdm import tqdm
 
-# --- [1] 경로 및 설정 ---
-# 유저님의 실제 파일 경로 환경에 맞춰 설정되어 있습니다.
-DIR_WORK = "/Users/syun/Downloads/aibt_cursor/backend/Contents/Bigdata"
+# --- [1] 경로 및 설정 (스크립트 위치 기준, 프로젝트 이동 시 수정 불필요) ---
+DIR_WORK = os.path.dirname(os.path.abspath(__file__))
 FILE_CONTENTS = os.path.join(DIR_WORK, "Bigdata_contents_1681.json")
 FILE_BACKUP = os.path.join(DIR_WORK, "backup_Bigdata_contents_1681.json")
 
