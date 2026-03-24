@@ -2,11 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_BRAND, FEATURE_COUPON } from '../config/brand';
-import { redeemBetaCoupon } from '../services/couponService';
-
-const IS_BETA_GOOGLE_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 import { AuthError, type GoogleRedirectIntent } from '../services/authService';
 import { canResend, recordResend, RESEND_COOLDOWN_SEC } from '../utils/verificationResendLimit';
+
+const IS_BETA_GOOGLE_ONLY = FEATURE_COUPON || APP_BRAND === 'AiBT';
 
 export type LoginModalIntent = 'standalone' | 'guestContinue' | 'checkout' | 'guestQuizLogin';
 
@@ -60,14 +59,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   /** 회원가입 후 이메일 인증 대기 화면 (인증완료 버튼 노출) */
   const [pendingVerification, setPendingVerification] = useState(false);
   const [betaPostLoginCouponStep, setBetaPostLoginCouponStep] = useState(initialBetaCouponStep);
-  const [betaCouponCode, setBetaCouponCode] = useState('');
-  const [betaCouponError, setBetaCouponError] = useState('');
-  const [betaCouponLoading, setBetaCouponLoading] = useState(false);
+  const [betaWelcomeLoading, setBetaWelcomeLoading] = useState(false);
   const [betaUserEmail, setBetaUserEmail] = useState(initialBetaUserEmail);
   const [betaUserId, setBetaUserId] = useState(initialBetaUserId);
   const submittingRef = useRef(false);
 
-  /** prop으로 쿠폰 단계 전달 시(리다이렉트 복귀/랜딩→메인 전환) state 동기화 */
+  /** prop으로 오픈 베타 안내 단계 전달 시(리다이렉트 복귀/랜딩→메인 전환) state 동기화 */
   React.useEffect(() => {
     if (initialBetaCouponStep) {
       setBetaPostLoginCouponStep(true);
@@ -146,28 +143,34 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setLoading(false);
         submittingRef.current = false;
         if (IS_BETA_GOOGLE_ONLY) {
-          /** standalone(로그아웃 후 로그인 버튼 등): onboardingStatus 기반 플로우 */
-          if (intent === 'standalone') {
-            const status = appUser.onboardingStatus ?? 1;
-            const payload = { uid: appUser.id ?? undefined, is_verified: appUser.is_verified === true, onboardingStatus: status };
-            (onAuthSuccess ?? onBack)?.(payload);
-            return;
-          }
-          /** 이미 쿠폰 등록된 회원(재로그인): onboardingStatus + hasCoupon 전달 */
-          const hasCoupon = appUser.isPremium === true || (appUser.paidCertIds?.length ?? 0) > 0;
-          if (hasCoupon) {
-            const status = appUser.onboardingStatus ?? 1;
-            (onAuthSuccess ?? onBack)?.({ uid: appUser.id, is_verified: appUser.is_verified === true, hasCoupon: true, onboardingStatus: status });
-            return;
-          }
+          const status = appUser.onboardingStatus ?? 1;
           const uid = appUser.id ?? '';
           const uemail = appUser.email ?? '';
-          setBetaPostLoginCouponStep(true);
-          setBetaUserEmail(uemail);
-          setBetaUserId(uid);
-          setBetaCouponCode('');
-          setBetaCouponError('');
-          onEnterBetaCouponStep?.({ userId: uid, userEmail: uemail });
+          /** 게스트 이어하기·결제·퀴즈 로그인은 안내 없이 바로 진행 */
+          const skipBetaWelcome =
+            intent === 'guestContinue' || intent === 'checkout' || intent === 'guestQuizLogin';
+          /** 신규(온보딩 0): standalone 등에서만 오픈 베타 안내 */
+          if (status === 0 && !skipBetaWelcome) {
+            setBetaPostLoginCouponStep(true);
+            setBetaUserEmail(uemail);
+            setBetaUserId(uid);
+            onEnterBetaCouponStep?.({ userId: uid, userEmail: uemail });
+            return;
+          }
+          if (intent === 'standalone') {
+            (onAuthSuccess ?? onBack)?.({
+              uid: uid || undefined,
+              is_verified: appUser.is_verified === true,
+              onboardingStatus: status,
+            });
+            return;
+          }
+          (onAuthSuccess ?? onBack)?.({
+            uid,
+            is_verified: appUser.is_verified === true,
+            hasCoupon: true,
+            onboardingStatus: status,
+          });
           return;
         }
         const status = appUser?.onboardingStatus ?? 1;
@@ -183,29 +186,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  const handleBetaCouponConfirm = async () => {
-    const code = betaCouponCode.trim();
-    if (!code) {
-      setBetaCouponError('쿠폰 번호를 입력해 주세요.');
-      return;
-    }
+  const handleBetaWelcomeConfirm = async () => {
     const uid = betaUserId || initialBetaUserId;
-    const uemail = betaUserEmail || initialBetaUserEmail;
-    if (!uemail || !uid) {
-      setBetaCouponError('로그인 정보가 없습니다. 다시 로그인해 주세요.');
+    if (!uid) {
       return;
     }
-    setBetaCouponError('');
-    setBetaCouponLoading(true);
+    setError('');
+    setBetaWelcomeLoading(true);
     try {
-      await redeemBetaCoupon(code, uemail, uid);
       await refreshUser();
       setBetaPostLoginCouponStep(false);
-      (onAuthSuccess ?? onBack)?.({ uid, is_verified: true, hasCoupon: true, onboardingStatus: 1 as const });
-    } catch (err) {
-      setBetaCouponError(err instanceof Error ? err.message : '쿠폰 적용에 실패했습니다.');
+      (onAuthSuccess ?? onBack)?.({ uid, is_verified: true, hasCoupon: true, onboardingStatus: 0 });
+    } catch {
+      setError('정보를 불러오지 못했습니다. 네트워크를 확인한 뒤 다시 눌러 주세요.');
     } finally {
-      setBetaCouponLoading(false);
+      setBetaWelcomeLoading(false);
     }
   };
 
@@ -343,7 +338,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           <div className="mb-6 text-center">
             <h3 className="text-2xl font-black text-slate-900">
               {IS_BETA_GOOGLE_ONLY && (betaPostLoginCouponStep || initialBetaCouponStep)
-                ? '쿠폰 입력'
+                ? '오픈 베타 안내'
                 : IS_BETA_GOOGLE_ONLY
                   ? '로그인'
                   : pendingVerification
@@ -413,30 +408,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </button>
             </div>
           ) : IS_BETA_GOOGLE_ONLY && (betaPostLoginCouponStep || initialBetaCouponStep) ? (
-            /* 베타: 로그인 성공 후 쿠폰 입력 → 확인 시 유료 전환 및 학습 진행 */
             <div className="space-y-6">
-              <p className="text-sm text-emerald-600 font-medium text-center">
-                로그인 성공! 쿠폰 번호를 입력하고 확인을 누르면 유료 전환 후 학습을 시작할 수 있습니다.
+              <p className="text-sm text-emerald-600 font-semibold text-center">로그인되었습니다. 베타에 참여해 주셔서 감사합니다.</p>
+              <p className="text-sm text-slate-600 text-center leading-relaxed">
+                본 서비스는 <span className="font-semibold text-slate-800">2026년 4월 4일 빅데이터분석기사 필기 시험</span> 준비를 돕기 위해{' '}
+                <span className="font-semibold text-slate-800">무료로 제공되는 오픈 베타</span>입니다. 아래 버튼을 누르면 안내에 따라 학습을 시작할 수 있습니다.
               </p>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">쿠폰 번호</label>
-                <input
-                  type="text"
-                  value={betaCouponCode}
-                  onChange={(e) => { setBetaCouponCode(e.target.value); setBetaCouponError(''); }}
-                  placeholder="쿠폰 코드 입력"
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0034d3] font-medium"
-                  disabled={betaCouponLoading}
-                />
-              </div>
-              {betaCouponError && <p className="text-sm text-red-600 font-medium">{betaCouponError}</p>}
+              {error && <p className="text-sm text-red-600 font-medium text-center">{error}</p>}
               <button
                 type="button"
-                disabled={betaCouponLoading}
-                onClick={handleBetaCouponConfirm}
+                disabled={betaWelcomeLoading}
+                onClick={handleBetaWelcomeConfirm}
                 className="w-full bg-[#0034d3] text-white font-bold py-4 rounded-xl hover:bg-[#003087] transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {betaCouponLoading ? '적용 중...' : '확인'}
+                {betaWelcomeLoading ? '처리 중...' : '다음'}
               </button>
             </div>
           ) : IS_BETA_GOOGLE_ONLY ? (

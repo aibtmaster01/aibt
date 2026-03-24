@@ -18,6 +18,7 @@ import { doc, getDoc, updateDoc, arrayUnion, setDoc, deleteDoc, collection, quer
 import { auth, db } from '../firebase';
 import { User } from '../types';
 import { CERTIFICATIONS } from '../constants';
+import { useBetaCertifications } from '../config/brand';
 import { getDeviceId } from '../utils/deviceId';
 
 export class AuthError extends Error {
@@ -189,13 +190,17 @@ export async function loginWithEmailPassword(email: string, password: string): P
 
   if (registeredDevices.includes(deviceId)) {
     await migrateUserNamesIfNeeded(userRef, data);
-    const fresh = (await getDoc(userRef)).data() ?? data;
+    let fresh = (await getDoc(userRef)).data() ?? data;
+    await ensureOpenBetaBigdataPremium(uid);
+    fresh = (await getDoc(userRef)).data() ?? fresh;
     return firestoreDocToUser(uid, fresh);
   }
   // 기기 캐치는 유지, 등록 수 제한 없음 (기존: 3대 초과 시 로그인 차단 제거)
   await updateDoc(userRef, { registered_devices: arrayUnion(deviceId) });
   await migrateUserNamesIfNeeded(userRef, data);
-  const fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };
+  let fresh = (await getDoc(userRef)).data() ?? { ...data, registered_devices: [...registeredDevices, deviceId] };
+  await ensureOpenBetaBigdataPremium(uid);
+  fresh = (await getDoc(userRef)).data() ?? fresh;
   return firestoreDocToUser(uid, fresh);
 }
 
@@ -280,7 +285,9 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
       await updateDoc(userRef, { onboarding_status: backfillStatus });
       fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
     }
-    return firestoreDocToUser(uid, fresh);
+    await ensureOpenBetaBigdataPremium(uid);
+    const finalFresh = (await getDoc(userRef)).data() ?? fresh;
+    return firestoreDocToUser(uid, finalFresh);
   }
 
   const now = new Date().toISOString();
@@ -297,6 +304,7 @@ async function completeGoogleSignIn(fbUser: FirebaseAuthUser): Promise<User> {
     created_at: now,
     onboarding_status: 0,
   });
+  await ensureOpenBetaBigdataPremium(uid);
   const data = (await getDoc(userRef)).data() ?? {};
   return firestoreDocToUser(uid, data);
 }
@@ -507,6 +515,8 @@ export async function getSessionForCurrentAuth(uid: string): Promise<User | null
       await updateDoc(userRef, { onboarding_status: backfillStatus });
       fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
     }
+    await ensureOpenBetaBigdataPremium(uid);
+    fresh = (await getDoc(userRef)).data() ?? fresh;
     return firestoreDocToUser(uid, fresh);
   }
   // 기기 캐치는 유지, 등록 수 제한 없음
@@ -519,6 +529,8 @@ export async function getSessionForCurrentAuth(uid: string): Promise<User | null
     await updateDoc(userRef, { onboarding_status: backfillStatus });
     fresh = (await getDoc(userRef)).data() ?? { ...fresh, onboarding_status: backfillStatus };
   }
+  await ensureOpenBetaBigdataPremium(uid);
+  fresh = (await getDoc(userRef)).data() ?? fresh;
   return firestoreDocToUser(uid, fresh);
 }
 
@@ -691,4 +703,22 @@ export async function applyCouponMembership(uid: string, certCode: string, premi
     [certCode]: { tier: 'PREMIUM' as const, start_date: today, expiry_date: expiryDate },
   };
   await updateDoc(userRef, { memberships: nextMemberships });
+}
+
+/**
+ * AiBT 오픈 베타: BIGDATA 프리미엄이 없으면 자동 부여 (쿠폰 없이 이용)
+ */
+export async function ensureOpenBetaBigdataPremium(uid: string): Promise<void> {
+  if (!useBetaCertifications) return;
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  if (!snap.exists()) return;
+  const data = snap.data();
+  const memberships = (data.memberships as Record<string, MembershipEntry>) || {};
+  const entry = memberships.BIGDATA;
+  const today = new Date().toISOString().slice(0, 10);
+  const hasActive =
+    entry?.tier === 'PREMIUM' && (!entry.expiry_date || entry.expiry_date >= today);
+  if (hasActive) return;
+  await applyCouponMembership(uid, 'BIGDATA', 365);
 }

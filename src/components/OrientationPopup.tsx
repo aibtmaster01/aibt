@@ -2,12 +2,11 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut } from 'lucide-react';
 import { useBetaCertifications } from '../config/brand';
-import { updateUserPrepLevel, setInitialEloByPrepLevel } from '../services/authService';
 
 export type PrepLevel = 'beginner' | 'intermediate' | 'advanced';
 
 export interface OrientationPopupProps {
-  /** true: 최초 진입(쿠폰 미등록) → 4페이지에 쿠폰 입력, 등록 전까지 닫기 불가 */
+  /** true: 최초 진입 → 마지막 슬라이드에서 오픈 베타 안내 후 진행 */
   forced?: boolean;
   /** true: LNB에서 연 경우 → 4페이지에 닫기 버튼만 */
   fromLNB?: boolean;
@@ -61,8 +60,8 @@ const SLIDES = [
   },
   {
     id: 5,
-    title: <span className="font-bold text-blue-600">쿠폰코드 입력</span>,
-    content: null, // 쿠폰 페이지는 별도 UI
+    title: <span className="font-bold text-blue-600">오픈 베타 안내</span>,
+    content: null,
     hasPrev: true,
   },
 ];
@@ -97,50 +96,26 @@ export function OrientationPopup({
   const showLevelFirst = (useBetaCertifications && forced && !fromLNB) || fromUpdateFlow;
   const [phase, setPhase] = useState<'level' | 'orientation'>(showLevelFirst ? 'level' : 'orientation');
   const [page, setPage] = useState(0);
-  const [selectedLevel, setSelectedLevel] = useState<PrepLevel | null>(null);
-  const [couponCode, setCouponCode] = useState('');
-  const [couponError, setCouponError] = useState('');
-  const [couponLoading, setCouponLoading] = useState(false);
+  const [finishLoading, setFinishLoading] = useState(false);
 
   const slide = SLIDES[page];
-  const isLastPage = page === SLIDES.length - 1;
-  const isCouponPage = slide?.content === null; // 5페이지: 쿠폰코드 입력 또는 응원 문구
-  const showCouponInput = isCouponPage && forced && !fromLNB && !fromUpdateFlow;
+  const isCouponPage = slide?.content === null;
+  const showOpenBetaFinishPage = isCouponPage && forced && !fromLNB && !fromUpdateFlow;
   const showCloseOnly = isCouponPage && (fromLNB || fromUpdateFlow);
 
   const handleLevelSelect = (level: PrepLevel) => {
-    setSelectedLevel(level);
     onSelectLevel?.(level);
     setPhase('orientation');
     setPage(0);
   };
 
-  const handleCouponSubmit = async () => {
-    if (!couponCode.trim()) {
-      setCouponError('쿠폰 코드를 입력해 주세요.');
-      return;
-    }
-    if (!userId || !userEmail) {
-      setCouponError('로그인 정보가 없습니다.');
-      return;
-    }
-    setCouponError('');
-    setCouponLoading(true);
+  const handleOpenBetaFinish = async () => {
+    setFinishLoading(true);
     try {
-      const { redeemBetaCoupon } = await import('../services/couponService');
-      await redeemBetaCoupon(couponCode.trim(), userEmail, userId);
-      if (selectedLevel && userId) {
-        await updateUserPrepLevel(userId, selectedLevel);
-        if (useBetaCertifications) {
-          await setInitialEloByPrepLevel(userId, 'c1', selectedLevel);
-        }
-      }
       onCouponRegistered?.();
       onClose();
-    } catch (err) {
-      setCouponError(err instanceof Error ? err.message : '쿠폰 등록에 실패했습니다.');
     } finally {
-      setCouponLoading(false);
+      setFinishLoading(false);
     }
   };
 
@@ -228,26 +203,18 @@ export function OrientationPopup({
                     )}
                   </>
                 ) : (
-                  /* 5페이지: 쿠폰코드 입력(최초) 또는 LNB 도움말 마지막(쿠폰 등록 후) */
                   <div className="text-slate-700 text-base leading-relaxed text-center w-full">
-                    {showCouponInput && (
-                      <>
-                        <p className="mb-4">카카오톡 메신저를 통해 받으신 쿠폰번호를 입력해주세요.</p>
-                        <input
-                          type="text"
-                          value={couponCode}
-                          onChange={(e) => { setCouponCode(e.target.value); setCouponError(''); }}
-                          placeholder="쿠폰 코드 입력"
-                          className="w-full px-4 py-3.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-center"
-                          disabled={couponLoading}
-                        />
-                        {couponError && <p className="mt-2 text-sm text-red-600">{couponError}</p>}
-                        <p className="mt-6 text-slate-600 text-sm">
-                          혹시 쿠폰코드를 아직 못받으셨거나, 문제가 있으실 경우
-                          <br />
-                          카카오톡 <span className="font-semibold text-slate-800">@aibt_beta</span> 로 문의주시면 베타 헬퍼가 도와드리겠습니다.
+                    {showOpenBetaFinishPage && (
+                      <div className="text-slate-700 text-base leading-relaxed text-left max-w-xl mx-auto">
+                        <p className="mb-4">
+                          베타에 참여해 주셔서 감사합니다. 본 서비스는{' '}
+                          <span className="font-semibold text-slate-900">2026년 4월 4일 빅데이터분석기사 필기 시험</span> 준비를 돕기 위해 무료로
+                          제공되는 오픈 베타입니다.
                         </p>
-                      </>
+                        <p className="text-slate-600 text-sm">
+                          문의·피드백은 카카오톡 <span className="font-semibold text-slate-800">@aibt_beta</span> 로 연락 주세요.
+                        </p>
+                      </div>
                     )}
                     {showCloseOnly && (
                       <div className="text-slate-700 text-base leading-relaxed">
@@ -276,7 +243,7 @@ export function OrientationPopup({
             >
               닫기
             </button>
-          ) : showCouponInput ? (
+          ) : showOpenBetaFinishPage ? (
             <>
               <button
                 type="button"
@@ -287,11 +254,11 @@ export function OrientationPopup({
               </button>
               <button
                 type="button"
-                onClick={handleCouponSubmit}
-                disabled={couponLoading}
+                onClick={handleOpenBetaFinish}
+                disabled={finishLoading}
                 className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50"
               >
-                {couponLoading ? '등록 중...' : '등록하기'}
+                {finishLoading ? '처리 중...' : '학습 시작하기'}
               </button>
             </>
           ) : (

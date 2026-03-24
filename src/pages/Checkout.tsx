@@ -4,7 +4,6 @@ import { CERTIFICATIONS } from '../constants';
 import { getCertDisplayName } from '../services/gradingService';
 import { useCertificationInfo } from '../hooks/useCertificationInfo';
 import { FEATURE_COUPON } from '../config/brand';
-import { validateBetaCoupon, redeemBetaCoupon } from '../services/couponService';
 
 interface CheckoutProps {
   certId?: string;
@@ -16,9 +15,6 @@ interface CheckoutProps {
 
 export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, userEmail, userId }) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [couponCode, setCouponCode] = useState('');
-  const [couponError, setCouponError] = useState('');
-  const [couponSuccess, setCouponSuccess] = useState(false);
   const cert = CERTIFICATIONS.find(c => c.id === certId) || CERTIFICATIONS[0];
   const { certInfo } = useCertificationInfo(cert?.code);
 
@@ -27,33 +23,9 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
     setTimeout(() => onComplete(), 2000);
   };
 
-  const handleCouponSubmit = async () => {
-    setCouponError('');
-    const code = couponCode.trim();
-    if (!code) {
-      setCouponError('쿠폰 코드를 입력해 주세요.');
-      return;
-    }
-    if (!userEmail || !userId) {
-      setCouponError('로그인 후 쿠폰을 사용할 수 있습니다.');
-      return;
-    }
+  const handleOpenBetaComplete = () => {
     setIsProcessing(true);
-    try {
-      const { valid } = await validateBetaCoupon(code);
-      if (!valid) {
-        setCouponError('유효하지 않거나 이미 사용된 쿠폰입니다.');
-        return;
-      }
-      await redeemBetaCoupon(code, userEmail, userId);
-      setCouponSuccess(true);
-      setTimeout(() => onComplete(), 1500);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '쿠폰 적용 중 오류가 발생했습니다.';
-      setCouponError(message);
-    } finally {
-      setIsProcessing(false);
-    }
+    setTimeout(() => onComplete(), 400);
   };
 
   return (
@@ -82,43 +54,30 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
                    </ul>
                  </div>
               </div>
-              
+
               <div className="flex items-center gap-2 text-brand-600 bg-brand-50 p-4 rounded-xl font-bold text-sm">
                 <ShieldCheck size={18} />
-                <span>테스트기간 무료!</span>
+                <span>오픈 베타 기간 무료</span>
               </div>
             </div>
 
-            {/* 쿠폰 입력 영역 */}
             {FEATURE_COUPON && (
               <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
-                <h2 className="font-bold text-lg mb-2">베타테스터 전용 쿠폰 입력</h2>
-                <p className="text-sm text-slate-500 mb-6">쿠폰 코드를 입력하면 열공 모드가 적용됩니다.</p>
-                <input
-                  type="text"
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value)}
-                  placeholder="쿠폰 코드 입력"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 mb-3 focus:ring-2 focus:ring-[#0034d3] focus:border-transparent outline-none"
-                  disabled={isProcessing || couponSuccess}
-                />
-                {couponError && <p className="text-sm text-red-600 mb-3">{couponError}</p>}
-                {couponSuccess && <p className="text-sm text-green-600 mb-3">쿠폰이 적용되었습니다.</p>}
+                <h2 className="font-bold text-lg mb-2">오픈 베타</h2>
+                <p className="text-sm text-slate-600 leading-relaxed mb-6">
+                  2026년 4월 4일 빅데이터분석기사 필기 시험 준비를 위해 무료로 제공되는 베타입니다. 별도 쿠폰 없이 아래에서 이용 시작을 눌러 주세요.
+                </p>
                 <button
                   type="button"
-                  onClick={handleCouponSubmit}
-                  disabled={isProcessing || couponSuccess}
-                  className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 transition-all shadow-lg disabled:opacity-70 disabled:cursor-wait flex items-center justify-center gap-2"
+                  onClick={handleOpenBetaComplete}
+                  disabled={isProcessing}
+                  className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 transition-all shadow-lg disabled:opacity-70 disabled:cursor-wait"
                 >
-                  {isProcessing ? (
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : couponSuccess ? (
-                    '적용 완료'
-                  ) : (
-                    <>쿠폰 적용</>
-                  )}
+                  {isProcessing ? '처리 중...' : '이용 시작'}
                 </button>
-                <p className="text-xs text-slate-400 mt-4 text-center">로그인한 이메일로 쿠폰 사용 이력이 기록됩니다.</p>
+                {userEmail && userId && (
+                  <p className="text-xs text-slate-400 mt-4 text-center">로그인 계정: {userEmail}</p>
+                )}
               </div>
             )}
 
@@ -151,7 +110,7 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
                       <span>0원</span>
                     </div>
                     <div className="flex justify-between text-brand-600 font-bold">
-                      <span>테스트기간 무료!</span>
+                      <span>오픈 베타 무료</span>
                       <span>0원</span>
                     </div>
                     <div className="border-t border-slate-100 pt-4 flex justify-between items-center">
@@ -159,7 +118,7 @@ export const Checkout: React.FC<CheckoutProps> = ({ certId, onBack, onComplete, 
                       <span className="font-black text-2xl text-slate-900">0원</span>
                     </div>
                   </div>
-                  <p className="text-xs text-slate-400 text-center">위에서 쿠폰을 입력한 뒤 적용해 주세요.</p>
+                  <p className="text-xs text-slate-400 text-center">왼쪽에서 [이용 시작]을 눌러 주세요.</p>
                 </>
               ) : (
                 <>

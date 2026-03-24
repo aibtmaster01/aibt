@@ -27,7 +27,6 @@ import { db } from './firebase';
 import { canResend, recordResend } from './utils/verificationResendLimit';
 import { APP_BRAND, FEATURE_COUPON, useBetaCertifications, canShowAdmin } from './config/brand';
 import { getBetatestCouponEnabled } from './services/couponService';
-import { CouponModal } from './components/CouponModal';
 import { OrientationPopup } from './components/OrientationPopup';
 import { OrientationPopupBeta } from './components/OrientationPopup_beta';
 import { MyPageBeta } from './pages/MyPage_beta';
@@ -83,7 +82,6 @@ const App: React.FC = () => {
   /** 결제 완료 후 서비스 디자인 맞춤 성공 모달 */
   const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
   const [paymentSuccessError, setPaymentSuccessError] = useState<string | null>(null);
-  const [showCouponModal, setShowCouponModal] = useState(false);
   /** 로그인 모달 (전역): 페이지 이동 없이 블러 위에 모달 */
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalIntent, setLoginModalIntent] = useState<LoginModalIntent | null>(null);
@@ -513,7 +511,7 @@ const App: React.FC = () => {
 
   const handleCheckoutComplete = async () => {
     setPaymentSuccessError(null);
-  const certIdToComplete = selectedCertId ?? (FEATURE_COUPON ? CERTIFICATIONS[0]?.id : null);
+    const certIdToComplete = selectedCertId ?? (FEATURE_COUPON ? CERTIFICATIONS[0]?.id : null);
     if (user && certIdToComplete) {
       try {
         await setPaymentComplete(user.id, certIdToComplete);
@@ -564,14 +562,17 @@ const App: React.FC = () => {
     setShowGuestContinueModal(true);
   }, [user, authLoading, isBeta]);
 
-  // 로그인된 상태면 로그인 모달은 항상 닫기 (리다이렉트 로그인·로그아웃 후 재로그인 시 모달 안 남는 버그 방지)
+  // 로그인된 상태면 로그인 모달은 닫기. 단, AiBT·베타에서 신규(onboarding 0)는 LoginModal 안의 오픈 베타 안내(다음) 완료까지 유지
   React.useEffect(() => {
     if (!authLoading && user) {
+      if (isBeta && user.onboardingStatus === 0) {
+        return;
+      }
       setShowLoginModal(false);
       setLoginModalIntent(null);
       setLoginModalInitialCouponStep(null);
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, isBeta, user?.onboardingStatus]);
 
   React.useEffect(() => {
     if (!authLoading && isBeta && !user && route === '/' && !loginSuccessJustHandledRef.current) {
@@ -1235,12 +1236,8 @@ const App: React.FC = () => {
           currentPath={route}
           onNavigate={navigate}
           onLogout={handleLogout}
-          onOpenCoupon={FEATURE_COUPON ? () => setShowCouponModal(true) : undefined}
           onOpenOrientation={isBeta && user && hasCoupon ? () => setShowOrientationPopup('fromLNB') : undefined}
         />
-        {showCouponModal && (
-          <CouponModal onClose={() => setShowCouponModal(false)} />
-        )}
         <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
           {user && user.is_verified === false && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
