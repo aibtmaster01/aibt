@@ -13,6 +13,12 @@ export const FEATURE_COUPON: boolean = import.meta.env.VITE_FEATURE_COUPON === '
 /** AiBT 빌드 여부. 난이도 선택·MyPageBeta·레벨드 진단·40/80 선택 등 적용 */
 export const useBetaCertifications: boolean = APP_BRAND === 'AiBT';
 
+/**
+ * 결제·이용권·쿠폰·열공 업셀 등 상용 구독 카피/CTA 노출.
+ * AiBT 베타 빌드에서는 false로 두고, 정책성 마케팅 문구만 숨긴다(학습 UX·잠금 규칙 로직은 유지).
+ */
+export const showCommercialSubscriptionCopy: boolean = !useBetaCertifications;
+
 /** Firestore certifications 컬렉션명 */
 export function getCertificationsCollection(_certCode: string): 'certifications' {
   return 'certifications';

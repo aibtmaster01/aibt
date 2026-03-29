@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_BRAND, FEATURE_COUPON } from '../config/brand';
 import { AuthError, type GoogleRedirectIntent } from '../services/authService';
@@ -320,21 +320,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </li>
             </ul>
           </div>
-          <p className="text-xs text-slate-500 relative z-10">© 2026 반지고리. All Rights Reserved.</p>
+          <p className="text-xs text-slate-500 relative z-10">© 2026 AiBT. All Rights Reserved.</p>
         </div>
 
         {/* Right: 폼 (기존 로그인 페이지와 동일) */}
         <div className="p-8 md:p-10 flex flex-col justify-center relative">
-          {!persistent && onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              className="absolute top-6 left-6 text-slate-400 hover:text-slate-900"
-              aria-label="닫기"
-            >
-              <ArrowLeft size={20} />
-            </button>
-          )}
           <div className="mb-6 text-center">
             <h3 className="text-2xl font-black text-slate-900">
               {IS_BETA_GOOGLE_ONLY && (betaPostLoginCouponStep || initialBetaCouponStep)

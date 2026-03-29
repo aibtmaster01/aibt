@@ -1,12 +1,14 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, StickyNote, List } from 'lucide-react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { RefreshCcw, Lock, Ticket, CheckCircle, ArrowRight, FileText, ChevronDown, ChevronUp, StickyNote, List, LayoutDashboard } from 'lucide-react';
 import { User } from '../types';
 import type { CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
 import { RichText } from '../components/RichText';
+import { ResponsivePageContainer, SectionAccordion } from '../components/mobile';
+import { CopyrightNotice } from '../components/copyright';
 import { to1BasedAnswer } from '../utils/questionUtils';
 import { getCertificationInfo, buildIndexToSubject } from '../services/gradingService';
 import { CERTIFICATIONS, EXAM_ROUNDS } from '../constants';
-import { APP_BRAND } from '../config/brand';
+import { APP_BRAND, showCommercialSubscriptionCopy } from '../config/brand';
 import type { RoundMemo } from './Quiz';
 
 export interface QuizAnswerRecord {
@@ -191,6 +193,9 @@ export const Result: React.FC<ResultProps> = ({
   showCouponEffect,
 }) => {
   const [certInfo, setCertInfo] = useState<CertificationInfo | null>(null);
+  const [mobileAnalysisOpen, setMobileAnalysisOpen] = useState(false);
+  const [mobileMemoOpen, setMobileMemoOpen] = useState(false);
+  const [mobileWrongOpen, setMobileWrongOpen] = useState(false);
   const currentRoundNum = EXAM_ROUNDS.find((r) => r.id === roundId && r.certId === certId)?.round ?? 0;
   /** 무료 회원이 2회차 결과 화면인지 (다음 학습 클릭 시 결제 모달 열기용). roundId 직접 매칭 보강 */
   const isRound2Result =
@@ -297,6 +302,7 @@ export const Result: React.FC<ResultProps> = ({
   const isPass = totalScore100 >= 60 && failedSubjectNames.length === 0;
   const isGuest = !user;
   const showCouponCta = !isGuest && !isPaidUser;
+  const showCheckoutUpsell = showCouponCta && showCommercialSubscriptionCopy;
   const [showFullReview, setShowFullReview] = useState(false);
   const canShowFullReview = !isGuest && questions && questions.length > 0 && sessionHistory && sessionHistory.length > 0;
   const wrongAnswerItems = canShowFullReview
@@ -321,10 +327,95 @@ export const Result: React.FC<ResultProps> = ({
   }, [showCouponEffect]);
 
   const hasSubjectTable = certInfo?.subjects?.length && Object.keys(subject_scores).length > 0;
+  const displayScore100 = hasSubjectTable ? totalScore100 : Math.round((score / total) * 100);
+
+  const passFeedbackHeadline = isFocusTrainingMode
+    ? '집중 학습을 마쳤어요'
+    : isGuest
+      ? '수고하셨습니다!'
+      : gradeCfg.headline;
+
+  const passLikelihoodLine = useMemo(() => {
+    if (isFocusTrainingMode) return '이번 구간 학습을 모두 확인했어요.';
+    if (isGuest) return '가입하면 과목·개념 분석과 오답 리포트를 볼 수 있어요.';
+    if (isPass) return '합격 가능성: 높음 · 과락 없음 (합격선 60점 기준)';
+    if (failedSubjectNames.length > 0) {
+      const names = failedSubjectNames.slice(0, 2).join(', ');
+      const more = failedSubjectNames.length > 2 ? ` 외 ${failedSubjectNames.length - 2}과목` : '';
+      return `과락·보완 필요: ${names}${more}`;
+    }
+    if (totalScore100 >= 55) return '합격선에 가까워요. 약점만 보완하면 좋아요.';
+    return `현재 ${totalScore100}점 — 합격선(60)까지 여유가 있어요.`;
+  }, [isFocusTrainingMode, isGuest, isPass, failedSubjectNames, totalScore100]);
+
+  const primaryPostResultLabel = useMemo(() => {
+    if (isGuest || isFocusTrainingMode) return null;
+    if (showCheckoutUpsell && gradeBand === 'very_stable') return gradeCfg.ctaLabel;
+    if (showCouponCta && gradeBand === 'very_stable' && !showCheckoutUpsell) return '모의고사·학습 계속하기';
+    if (showCouponCta && gradeBand !== 'very_stable') {
+      return isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')) ? '다음 학습' : '계속해서 학습하기';
+    }
+    if (isPaidUser && !showCouponCta) return '다음 회차';
+    return null;
+  }, [
+    isGuest,
+    isFocusTrainingMode,
+    showCouponCta,
+    showCheckoutUpsell,
+    gradeBand,
+    gradeCfg.ctaLabel,
+    isRound2FreeUser,
+    isPaidUser,
+    roundId,
+  ]);
+
+  const runPrimaryPostResult = useCallback(() => {
+    if (showCheckoutUpsell && gradeBand === 'very_stable') {
+      onGoToCheckout();
+      return;
+    }
+    if (showCouponCta && gradeBand === 'very_stable' && !showCheckoutUpsell) {
+      (onContinueLearning ?? onHome)();
+      return;
+    }
+    if (showCouponCta && gradeBand !== 'very_stable') {
+      const openPayment =
+        showCommercialSubscriptionCopy &&
+        onNextRoundPaymentRequest &&
+        (isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')));
+      if (openPayment) {
+        onNextRoundPaymentRequest();
+      } else {
+        (onContinueLearning ?? onHome)();
+      }
+      return;
+    }
+    if (isPaidUser && !showCouponCta) {
+      (onNextRoundAuto ?? onHome)();
+    }
+  }, [
+    showCouponCta,
+    showCheckoutUpsell,
+    showCommercialSubscriptionCopy,
+    gradeBand,
+    isRound2FreeUser,
+    isPaidUser,
+    roundId,
+    onGoToCheckout,
+    onNextRoundPaymentRequest,
+    onContinueLearning,
+    onHome,
+    onNextRoundAuto,
+  ]);
+
+  const conceptRatesShort = useMemo(() => {
+    const withRate = conceptRatesThisRound.filter((c): c is { name: string; rate: number } => c.rate != null);
+    return [...withRate].sort((a, b) => a.rate - b.rate).slice(0, 6);
+  }, [conceptRatesThisRound]);
 
   return (
-    <div className="min-h-screen bg-[#edf1f5] relative overflow-hidden">
-      {showCouponEffect && (
+    <ResponsivePageContainer className="bg-[#edf1f5] relative" scrollClassName="overscroll-y-contain">
+      {showCouponEffect && showCommercialSubscriptionCopy && (
         <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
           <div className="absolute top-0 left-1/4 w-3 h-3 bg-red-500 rounded-full animate-[bounce_2s_infinite]"></div>
           <div className="absolute top-10 left-1/2 w-4 h-4 bg-blue-500 rotate-45 animate-[bounce_2.5s_infinite]"></div>
@@ -333,35 +424,138 @@ export const Result: React.FC<ResultProps> = ({
         </div>
       )}
 
-      <div className="max-w-6xl mx-auto px-5 py-12 pt-16 relative z-10">
-        {/* 상단: 목록으로 / 다시 풀기 / 학습 대시보드 */}
-        <div className="flex items-center justify-between gap-2 mb-4">
+      <div className="max-w-6xl mx-auto px-4 sm:px-5 py-6 sm:py-12 sm:pt-16 relative z-10 pb-[max(5.5rem,env(safe-area-inset-bottom)+1.25rem)] lg:pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+        {/* 모바일: 보조 네비(주요 다음 행동은 요약 카드 1순위) */}
+        <div className="flex lg:hidden items-center justify-between gap-2 mb-4">
           <button
             type="button"
             onClick={onGoToList ?? onHome}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50"
+            className="flex items-center gap-1.5 min-h-[40px] px-3 py-2 rounded-xl text-slate-600 text-sm font-semibold hover:bg-slate-100/80 border border-transparent hover:border-slate-200"
+          >
+            <List size={16} /> 목록
+          </button>
+          <button
+            type="button"
+            onClick={onGoToDashboard ?? onHome}
+            className="flex items-center gap-1 min-h-[40px] px-3 py-2 rounded-xl text-[#0034d3] text-sm font-semibold hover:bg-brand-50"
+          >
+            <LayoutDashboard size={16} /> 대시보드
+          </button>
+        </div>
+
+        {/* 모바일: 상단 요약 — 점수 → 합격 피드백 → 다음 행동 1개 */}
+        <div className="lg:hidden mb-5">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            {!isFocusTrainingMode && (
+              <>
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Total Score</p>
+                <div className="flex items-baseline justify-center gap-1 mt-1">
+                  <span className={`text-5xl font-black tabular-nums ${isPass ? 'text-brand-500' : 'text-slate-800'}`}>
+                    {displayScore100}
+                  </span>
+                  <span className="text-lg text-slate-400 font-bold">/ 100</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-3 relative">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${isPass ? 'bg-brand-500' : 'bg-slate-400'}`}
+                    style={{ width: `${Math.min(99, displayScore100)}%` }}
+                  />
+                  <div className="absolute top-0 w-px h-full bg-[#0034d3] opacity-90" style={{ left: '60%' }} title="합격선 60" />
+                </div>
+                <p className="text-center text-xs text-slate-600 mt-2.5 font-medium leading-snug">{passLikelihoodLine}</p>
+              </>
+            )}
+            <h2
+              className={`text-lg font-black text-slate-900 text-center leading-snug ${!isFocusTrainingMode ? 'mt-4' : ''}`}
+            >
+              {passFeedbackHeadline}
+            </h2>
+            {!isGuest && !isFocusTrainingMode && guideWithBreaks.length > 0 && (
+              <div className="text-slate-600 text-sm text-center mt-3 line-clamp-4 leading-relaxed">
+                {guideWithBreaks.map((line, lineIdx) => (
+                  <React.Fragment key={lineIdx}>
+                    {lineIdx > 0 && <span className="inline"> </span>}
+                    {(() => {
+                      const parts: { type: 'text' | 'highlight'; s: string }[] = [];
+                      const lineRe = /\*\*([^*]+)\*\*/g;
+                      let last = 0;
+                      let mm: RegExpExecArray | null;
+                      while ((mm = lineRe.exec(line)) !== null) {
+                        if (mm.index > last) parts.push({ type: 'text', s: line.slice(last, mm.index) });
+                        parts.push({ type: 'highlight', s: mm[1] });
+                        last = mm.index + mm[0].length;
+                      }
+                      if (last < line.length) parts.push({ type: 'text', s: line.slice(last) });
+                      return parts.map((part, i) =>
+                        part.type === 'highlight' ? (
+                          <span key={i} className="text-brand-600 font-bold">{part.s}</span>
+                        ) : (
+                          <span key={i}>{part.s}</span>
+                        )
+                      );
+                    })()}
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+            {isGuest && !isFocusTrainingMode && (
+              <p className="text-slate-500 text-sm text-center mt-3">첫 모의고사를 끝까지 완료하셨어요.</p>
+            )}
+            {!isGuest && isFocusTrainingMode && (
+              <button
+                type="button"
+                onClick={onGoToList ?? onHome}
+                className="mt-5 w-full min-h-[48px] rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 flex items-center justify-center gap-2"
+              >
+                <List size={18} /> 모의고사·학습 목록
+              </button>
+            )}
+            {!isGuest && !isFocusTrainingMode && primaryPostResultLabel && (
+              <button
+                type="button"
+                onClick={runPrimaryPostResult}
+                className="mt-5 w-full min-h-[48px] rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 flex items-center justify-center gap-2 shadow-sm"
+              >
+                {showCheckoutUpsell && gradeBand === 'very_stable' ? <CheckCircle size={18} /> : <ArrowRight size={18} />}
+                {primaryPostResultLabel}
+              </button>
+            )}
+            {showCouponEffect && showCommercialSubscriptionCopy && !isPaidUser && !isGuest && !isFocusTrainingMode && (
+              <p className="mt-4 text-xs text-center text-slate-600 rounded-xl border border-brand-200 bg-brand-50/90 px-3 py-2">
+                <span className="font-bold text-brand-600">10,000원 쿠폰</span> 지급! 결제 단계에서 사용할 수 있어요.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* 데스크톱: 기존 상단 툴바 */}
+        <div className="hidden lg:flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+          <button
+            type="button"
+            onClick={onGoToList ?? onHome}
+            className="flex items-center justify-center sm:justify-start gap-1.5 min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 w-full sm:w-auto"
           >
             <List size={16} /> 목록으로
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onRetry}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50"
-            >
-              <RefreshCcw size={16} /> 다시 풀기
-            </button>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <button
               type="button"
               onClick={onGoToDashboard ?? onHome}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-brand-200 bg-brand-50 text-slate-800 text-sm font-semibold hover:bg-brand-100"
+              className="flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-xl border border-brand-200 bg-brand-50 text-slate-800 text-sm font-semibold hover:bg-brand-100 order-first sm:order-none w-full sm:w-auto"
             >
               <ArrowRight size={16} /> 학습 대시보드
+            </button>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 w-full sm:w-auto"
+            >
+              <RefreshCcw size={16} /> 다시 풀기
             </button>
           </div>
         </div>
 
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 hidden lg:block">
           <div className="mb-6 relative">
             {!isFocusTrainingMode && (
               <span className="text-6xl block animate-[pop_0.4s_ease-out]">{isPass ? '🎉' : '🔥'}</span>
@@ -403,9 +597,9 @@ export const Result: React.FC<ResultProps> = ({
           )}
         </div>
 
-        {/* Total Score + 과목별 (집중학습 모드에서는 미노출) */}
+        {/* Total Score + 과목별 — 데스크톱 전체 카드 (모바일은 요약 카드 + 아코디언) */}
         {!isFocusTrainingMode && (
-        <div className="bg-white border border-slate-200 rounded-[2rem] p-8 mb-6 shadow-xl shadow-slate-200/50">
+        <div className="hidden lg:block bg-white border border-slate-200 rounded-[2rem] p-8 mb-6 shadow-xl shadow-slate-200/50">
           <div className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Total Score</div>
           <div className="flex items-baseline justify-center gap-1 mb-4">
             <span className={`text-6xl font-black ${isPass ? 'text-brand-500' : 'text-slate-800'}`}>
@@ -509,9 +703,187 @@ export const Result: React.FC<ResultProps> = ({
 
         {!isGuest && (
           <div className="animate-slide-up space-y-4">
+            {/* 모바일: 접이식 분석·회고(요약 화면에서는 2순위 이하) */}
+            <div className="lg:hidden space-y-2">
+              {!isFocusTrainingMode && hasSubjectTable && certInfo?.subjects && (
+                <SectionAccordion
+                  title="과목·개념 분석"
+                  open={mobileAnalysisOpen}
+                  onOpenChange={setMobileAnalysisOpen}
+                  className="shadow-sm"
+                  buttonClassName="hover:bg-slate-50/80"
+                  contentClassName="px-4 pb-4 space-y-1"
+                >
+                  {certInfo.subjects.map((subj) => {
+                    const key = String(subj.subject_number);
+                    const ct = subjectDetails[key] ?? { correct: 0, total: 0 };
+                    const scorePerQ = subj.score_per_question ?? certInfo.subjects?.[0]?.score_per_question ?? 5;
+                    const points = ct.total > 0 ? ct.correct * scorePerQ : 0;
+                    const minSubjectScore = certInfo.exam_config?.pass_criteria?.min_subject_score ?? MIN_SUBJECT_SCORE_FALLBACK;
+                    const failed = isSubjectFailByRate(ct.correct, ct.total, minSubjectScore);
+                    return (
+                      <div
+                        key={subj.subject_number}
+                        className="flex justify-between gap-2 text-sm py-2.5 border-b border-slate-50 last:border-b-0"
+                      >
+                        <span className="text-slate-700 truncate">{subj.name}</span>
+                        <span className={`shrink-0 tabular-nums ${failed ? 'text-red-600 font-bold' : 'text-slate-800'}`}>
+                          {points}점 · {ct.correct}/{ct.total}
+                          {failed ? ' · 과락' : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <p className="text-xs text-slate-400 pt-2">총점 환산 {totalScore100}/100 · 종합 {isPass ? '합격' : '불합격'}</p>
+                  {conceptRatesShort.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-2">이번 회차 · 낮은 이해도</p>
+                      <ul className="text-xs text-slate-600 space-y-1.5">
+                        {conceptRatesShort.map((c) => (
+                          <li key={c.name} className="flex justify-between gap-2">
+                            <span className="truncate">{c.name}</span>
+                            <span className="shrink-0 tabular-nums font-medium">{c.rate}%</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </SectionAccordion>
+              )}
+
+              {roundMemo && (roundMemo.freeText.trim() || roundMemo.pins.length > 0) && (
+                <SectionAccordion
+                  title={
+                    <span className="flex items-center gap-2">
+                      <StickyNote size={16} className="text-[#0034d3]" /> 회차 메모
+                    </span>
+                  }
+                  open={mobileMemoOpen}
+                  onOpenChange={setMobileMemoOpen}
+                  className="shadow-sm border-[#0034d3]/25"
+                  buttonClassName="hover:bg-[#0034d3]/5"
+                  contentClassName="px-4 pb-4 text-sm text-slate-700"
+                >
+                  {roundMemo.freeText.trim() && <p className="whitespace-pre-wrap mb-3">{roundMemo.freeText.trim()}</p>}
+                  {roundMemo.pins.length > 0 && (
+                    <div className="space-y-2">
+                      {roundMemo.pins.map((p, i) => (
+                        <div key={i} className="pl-2 border-l-2 border-[#0034d3]/30">
+                          <span className="font-bold text-slate-900">Q. {p.qNumber}</span> {p.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionAccordion>
+              )}
+
+              {canShowFullReview && wrongAnswerItems.length > 0 && (
+                <SectionAccordion
+                  title={
+                    <span className="flex items-center gap-2">
+                      <FileText size={16} className="text-red-500" /> 오답 풀이
+                    </span>
+                  }
+                  summary={`${wrongAnswerItems.length}문항`}
+                  open={mobileWrongOpen}
+                  onOpenChange={setMobileWrongOpen}
+                  className="shadow-sm"
+                  buttonClassName="hover:bg-slate-50/80"
+                  contentClassName="px-3 pb-3 space-y-3"
+                >
+                  {wrongAnswerItems.map(({ q, idx, rec }, listIdx) => {
+                        const optLen = q.options?.length ?? 0;
+                        const isSkipped = rec.selected === 0;
+                        const selectedNum = isSkipped ? 0 : Math.min(Math.max(rec.selected, 1), optLen || 4);
+                        const answerNum = to1BasedAnswer(q.answer, optLen);
+                        const selectedText = isSkipped ? '모르겠어요' : ((q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-');
+                        const correctText = (answerNum >= 1 && q.options?.[answerNum - 1]) ? q.options[answerNum - 1] : (q.explanation ? '(해설 참고)' : '—');
+                        const wrongReason = !isSkipped && q.wrongFeedback && (q.wrongFeedback[String(selectedNum)] ?? q.wrongFeedback[String(rec.selected)]);
+                        const showWrongReason = isPaidUser || listIdx < 2;
+                        return (
+                          <div key={q.id} className="p-3 rounded-xl border border-red-200 bg-red-50 text-left">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <span className="text-xs font-bold px-2 py-0.5 rounded bg-red-200 text-red-800">오답</span>
+                              <span className="text-slate-500 text-xs">문제 {idx + 1}</span>
+                            </div>
+                            <p className="text-xs font-medium text-slate-900 leading-relaxed line-clamp-6"><RichText content={q.content} as="span" /></p>
+                            <div className="mt-2 pt-2 border-t border-red-100 text-xs space-y-1">
+                              <p>
+                                <span className="bg-black text-white font-bold px-1 py-0.5 rounded text-[10px]">정답</span>
+                                <span className="text-green-700 ml-1">{answerNum >= 1 && answerNum <= 6 ? ['①', '②', '③', '④', '⑤', '⑥'][answerNum - 1] + ' ' : ''}<RichText content={correctText} as="span" /></span>
+                              </p>
+                              {showWrongReason && wrongReason && (
+                                <p className="text-slate-600">
+                                  <span className="font-semibold">오답이유: </span>
+                                  <RichText content={wrongReason} as="span" />
+                                </p>
+                              )}
+                              {!showWrongReason &&
+                                (showCommercialSubscriptionCopy ? (
+                                  <button type="button" onClick={onGoToCheckout} className="text-[#0034d3] text-xs font-medium hover:underline">
+                                    오답이유는 열공모드에서 확인
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-500 text-xs">오답이유는 상위 2문항까지 확인할 수 있어요.</span>
+                                ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                </SectionAccordion>
+              )}
+
+              {canShowFullReview && (
+                <SectionAccordion
+                  title={
+                    <span className="flex items-center gap-2">
+                      <FileText size={16} className="text-brand-500" /> 문제 전체 보기
+                    </span>
+                  }
+                  summary={questions && sessionHistory ? `${questions.length}문항` : undefined}
+                  open={showFullReview}
+                  onOpenChange={setShowFullReview}
+                  className="shadow-sm"
+                  buttonClassName="hover:bg-slate-50/80"
+                  contentClassName="px-3 pb-3 space-y-3"
+                >
+                  {questions!.map((q, idx) => {
+                    const rec = sessionHistory![idx];
+                    const isCorrect = rec?.isCorrect ?? false;
+                    const optLen = q.options?.length ?? 0;
+                    const isSkipped = rec?.selected === 0;
+                    const selectedNum = isSkipped ? 0 : (rec && (optLen ? Math.min(Math.max(rec.selected, 1), optLen) : rec.selected)) ?? 0;
+                    const answerNum = to1BasedAnswer(q.answer, optLen);
+                    const selectedText = isSkipped ? '모르겠어요' : ((q.options && selectedNum >= 1 && q.options[selectedNum - 1]) ? q.options[selectedNum - 1] : '-');
+                    const correctText = (answerNum >= 1 && q.options?.[answerNum - 1]) ? q.options[answerNum - 1] : (q.explanation ? '(해설 참고)' : '—');
+                    return (
+                      <div
+                        key={q.id}
+                        className={`p-3 rounded-xl border text-left text-xs ${isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isCorrect ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
+                            {isCorrect ? '정답' : '오답'}
+                          </span>
+                          <span className="text-slate-500">문제 {idx + 1}</span>
+                        </div>
+                        <p className="font-medium text-slate-900 leading-relaxed line-clamp-4"><RichText content={q.content} as="span" /></p>
+                        {rec != null && (
+                          <div className="text-slate-500 mt-2 space-y-0.5">
+                            <p>선택: <RichText content={selectedText} as="span" /></p>
+                            {!isCorrect && <p className="text-green-700">정답: <RichText content={correctText} as="span" /></p>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </SectionAccordion>
+              )}
+            </div>
+
             {!isFocusTrainingMode && (
-              <>
-            {showCouponEffect && !isPaidUser && (
+              <div className="hidden lg:block space-y-4">
+            {showCouponEffect && showCommercialSubscriptionCopy && !isPaidUser && (
               <div className="bg-gradient-to-br from-brand-50 to-white border-2 border-brand-200 rounded-2xl p-6 text-left relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10">
                   <Ticket size={120} className="text-brand-500" />
@@ -530,7 +902,7 @@ export const Result: React.FC<ResultProps> = ({
             )}
 
             {/* 등급별 CTA: 매우안정=쿠폰만 결제로, 그 외 무료회원=계속해서 학습하기(모의고사 목록) */}
-            {showCouponCta && gradeBand === 'very_stable' && (
+            {showCheckoutUpsell && gradeBand === 'very_stable' && (
               <button
                 onClick={onGoToCheckout}
                 className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 flex items-center justify-center gap-2"
@@ -538,11 +910,24 @@ export const Result: React.FC<ResultProps> = ({
                 <CheckCircle size={20} /> {gradeCfg.ctaLabel}
               </button>
             )}
+            {showCouponCta && gradeBand === 'very_stable' && !showCheckoutUpsell && (
+              <button
+                type="button"
+                onClick={() => (onContinueLearning ?? onHome)()}
+                className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 flex items-center justify-center gap-2"
+              >
+                <ArrowRight size={20} /> 모의고사·학습 계속하기
+              </button>
+            )}
             {showCouponCta && gradeBand !== 'very_stable' && (
               <button
                 type="button"
                 onClick={() => {
-                  if (onNextRoundPaymentRequest && (isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')))) {
+                  const openPayment =
+                    showCommercialSubscriptionCopy &&
+                    onNextRoundPaymentRequest &&
+                    (isRound2FreeUser || (!isPaidUser && (roundId === 'r2' || roundId === 'r2c2')));
+                  if (openPayment) {
                     onNextRoundPaymentRequest();
                   } else {
                     (onContinueLearning ?? onHome)();
@@ -561,12 +946,12 @@ export const Result: React.FC<ResultProps> = ({
                 <ArrowRight size={20} /> 다음 회차
               </button>
             )}
-              </>
+              </div>
             )}
 
             {/* 회차 메모: 풀이 중 찍어둔 메모 (오답 화면에서 다시 보기) */}
             {roundMemo && (roundMemo.freeText.trim() || roundMemo.pins.length > 0) && (
-              <div className="bg-white p-6 rounded-2xl border border-[#0034d3]/30 text-left mb-6">
+              <div className="hidden lg:block bg-white p-6 rounded-2xl border border-[#0034d3]/30 text-left mb-6">
                 <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
                   <StickyNote size={18} className="text-[#0034d3]" /> 회차 메모
                 </h3>
@@ -587,7 +972,7 @@ export const Result: React.FC<ResultProps> = ({
 
             {/* 오답 문제: 상위 2개는 설명+오답이유, 나머지 dim */}
             {canShowFullReview && wrongAnswerItems.length > 0 && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 text-left">
+              <div className="hidden lg:block bg-white p-6 rounded-2xl border border-slate-200 text-left">
                 <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
                   <FileText size={18} className="text-red-500" /> 오답 문제 ({wrongAnswerItems.length}개)
                 </h3>
@@ -660,16 +1045,22 @@ export const Result: React.FC<ResultProps> = ({
                             <RichText content={wrongReason} as="span" />
                           </p>
                         )}
-                        {!showWrongReason && (
-                          <p className="text-xs mt-2">
-                            <span className="font-semibold text-slate-700">오답이유: </span>
-                            <span className="italic text-[#0034d3]/90">
-                              <button type="button" onClick={onGoToCheckout} className="text-left hover:underline">
-                                열공모드에 가입하고 내가 왜 틀렸는지 알아보세요
-                              </button>
-                            </span>
-                          </p>
-                        )}
+                        {!showWrongReason &&
+                          (showCommercialSubscriptionCopy ? (
+                            <p className="text-xs mt-2">
+                              <span className="font-semibold text-slate-700">오답이유: </span>
+                              <span className="italic text-[#0034d3]/90">
+                                <button type="button" onClick={onGoToCheckout} className="text-left hover:underline">
+                                  열공모드에 가입하고 내가 왜 틀렸는지 알아보세요
+                                </button>
+                              </span>
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-500 mt-2">
+                              <span className="font-semibold text-slate-700">오답이유: </span>
+                              상위 2문항까지 무료로 제공돼요. 나머지는 목록에서 다른 회차를 풀며 복습해 보세요.
+                            </p>
+                          ))}
                       </div>
                     );
                   })}
@@ -687,7 +1078,7 @@ export const Result: React.FC<ResultProps> = ({
             )}
 
             {/* 문제 전체 보기 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 text-left">
+            <div className="hidden lg:block bg-white p-6 rounded-2xl border border-slate-200 text-left">
               <button
                 type="button"
                 onClick={() => setShowFullReview((v) => !v)}
@@ -751,7 +1142,27 @@ export const Result: React.FC<ResultProps> = ({
             </div>
           </div>
         )}
+
+        <div className="mt-6 mb-2 rounded-xl border border-slate-200/70 bg-white/70 px-3 py-2.5" role="note">
+          <CopyrightNotice variant="inline" tone="soft" context="result" />
+        </div>
+
+        {/* 모바일: 보조 CTA(재시도) — 상단 요약의 ‘다음 행동’과 경쟁하지 않도록 윤곽 1개만 고정 */}
+        <div
+          className="lg:hidden fixed bottom-0 left-0 right-0 z-20 border-t border-slate-200/90 bg-white/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.06)]"
+          style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+        >
+          <div className="max-w-6xl mx-auto px-4 py-2">
+            <button
+              type="button"
+              onClick={onRetry}
+              className="w-full min-h-[44px] rounded-xl border-2 border-slate-200 bg-white text-slate-800 text-sm font-bold hover:bg-slate-50 flex items-center justify-center gap-2"
+            >
+              <RefreshCcw size={16} /> 다시 풀기
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </ResponsivePageContainer>
   );
 };

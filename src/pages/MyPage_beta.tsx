@@ -23,9 +23,11 @@ import {
   FailCouponModal,
 } from "../components/dashboard/modals";
 import { Skeleton } from "../components/ui/skeleton";
-import { Lock, ChevronRight, ChevronDown, FileX, HelpCircle, RefreshCw } from "lucide-react";
+import { ResponsivePageContainer, SectionAccordion } from "../components/mobile";
+import { Lock, ChevronRight, ChevronDown, ChevronUp, FileX, HelpCircle, RefreshCw, Play } from "lucide-react";
 import { mockDashboardStats, MY_PAGE_EMPTY_MESSAGES } from "../data/myPageMockData";
 import { BIGDATA_CORE_CONCEPTS_BY_ID } from "../data/bigdataCoreConceptsById";
+import { showCommercialSubscriptionCopy } from "../config/brand";
 
 function formatExamDate(dateId: string | undefined): string {
   if (!dateId) return "";
@@ -128,7 +130,11 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
   const [learningRecordsPage, setLearningRecordsPage] = useState(1);
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [scheduleDropdownOpen, setScheduleDropdownOpen] = useState(false);
+  /** 모바일 학습 홈: 세부 분석·기록은 기본 접힘 */
+  const [mobileAnalysisOpen, setMobileAnalysisOpen] = useState(false);
+  const [mobileRecordsOpen, setMobileRecordsOpen] = useState(false);
   const scheduleDropdownRef = useRef<HTMLDivElement>(null);
+  const scheduleDropdownMobileRef = useRef<HTMLDivElement>(null);
   const weaknessCardRef = useRef<HTMLDivElement>(null);
   /** 데이터 로드 요청 순서 — 마지막 요청만 반영해 Strict Mode/경쟁 시 빈 화면 방지 */
   const loadIdRef = useRef(0);
@@ -194,9 +200,10 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
   useEffect(() => {
     if (!scheduleDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (scheduleDropdownRef.current && !scheduleDropdownRef.current.contains(e.target as Node)) {
-        setScheduleDropdownOpen(false);
-      }
+      const t = e.target as Node;
+      const inDesktop = scheduleDropdownRef.current?.contains(t);
+      const inMobile = scheduleDropdownMobileRef.current?.contains(t);
+      if (!inDesktop && !inMobile) setScheduleDropdownOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -445,7 +452,10 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
   const showNoHistoryMessage = showEmptyState && !!initialCertId;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 bg-[#edf1f5] relative">
+    <ResponsivePageContainer
+      className="flex-1 bg-[#edf1f5] relative"
+      scrollClassName="overscroll-y-contain px-3 py-4 sm:p-4 md:p-8 pb-[max(1rem,env(safe-area-inset-bottom))]"
+    >
         {showSubjectStrengthPreparing && (
           <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#edf1f5]/95 backdrop-blur-sm">
             <p className="text-[#1e56cd] font-bold text-lg mb-2">내가 취약한 과목 문제들을 재선별 중입니다...</p>
@@ -485,8 +495,427 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
           </div>
         )}
 
-        <header className="mb-6 md:mb-8 flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-3xl md:text-4xl tracking-tight font-extrabold flex flex-wrap items-center gap-2 flex-1 min-w-0">
+        {/* 모바일 · 학습 홈(요약 → 행동 → 접힌 분석·기록) */}
+        <div
+          className={`lg:hidden space-y-4 mb-6 ${isExpired ? "pointer-events-none opacity-60 grayscale" : ""}`}
+        >
+          <div className="rounded-2xl border border-[#99ccff]/50 bg-white shadow-sm p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">학습 홈</p>
+                <h2 className="text-lg font-black text-[#1e56cd] leading-tight truncate">{certDisplayName}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadMyPageData(true)}
+                disabled={loading}
+                aria-label="데이터 새로고침"
+                className="min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl text-[#1e56cd] hover:bg-[#99ccff]/40 disabled:opacity-50"
+              >
+                <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+              </button>
+            </div>
+            {loadError && (
+              <p className="text-xs text-amber-600 font-medium mt-2">일부 데이터를 불러오지 못했어요. 새로고침을 눌러 주세요.</p>
+            )}
+
+            {purchasedSchedules.length > 1 ? (
+              <div ref={scheduleDropdownMobileRef} className="relative mt-3">
+                <button
+                  type="button"
+                  onClick={() => setScheduleDropdownOpen((v) => !v)}
+                  className="w-full flex items-center justify-between gap-2 min-h-[44px] px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800"
+                >
+                  <span className="truncate">{sessionLabel}</span>
+                  <ChevronDown size={18} className={`shrink-0 transition-transform ${scheduleDropdownOpen ? "rotate-180" : ""}`} />
+                </button>
+                {scheduleDropdownOpen && (
+                  <div className="absolute left-0 right-0 top-full mt-1 py-1 bg-white rounded-xl border border-slate-200 shadow-lg z-50 max-h-48 overflow-y-auto">
+                    {purchasedSchedules.map((s) => {
+                      const label = s.label.includes("(") ? s.label.split(" (")[0]?.trim() ?? s.label : s.label;
+                      const isSelected = s.dateId === selectedScheduleId;
+                      return (
+                        <button
+                          key={s.dateId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedScheduleId(s.dateId);
+                            setScheduleDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2.5 text-sm ${isSelected ? "bg-[#99ccff] text-[#1e56cd] font-semibold" : "text-slate-700 hover:bg-slate-50"}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-slate-500 font-medium truncate">{sessionLabel}</p>
+            )}
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              {dDayText ? (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-[#1e56cd]/15 text-[#1e56cd] border border-[#1e56cd]/25">
+                  {dDayText}
+                </span>
+              ) : null}
+              <span className="text-slate-600 text-xs font-medium">{headerSub}</span>
+            </div>
+
+            <div className="mt-4 rounded-xl bg-slate-50 border border-slate-100 px-3 py-3">
+              {!hasLearningHistory ? (
+                <p className="text-sm text-slate-600 leading-snug">{MY_PAGE_EMPTY_MESSAGES.passRate}</p>
+              ) : showDiagnosticProgressCard ? (
+                <>
+                  <p className="text-xs font-bold text-[#1e56cd] uppercase tracking-wide mb-1">실력진단</p>
+                  <p className="text-2xl font-black text-slate-800">
+                    {diagnosticProgress?.completed ?? 0}<span className="text-base font-bold text-slate-500">/3</span>
+                    <span className="text-sm font-semibold text-slate-600 ml-2">회차 완료</span>
+                  </p>
+                  <p className="text-xs text-slate-600 mt-2 line-clamp-3">{encouragementMessage}</p>
+                </>
+              ) : !canShowPassRate ? (
+                <>
+                  <p className="text-xs font-bold text-slate-700">예측 합격률</p>
+                  <p className="text-sm text-slate-600 mt-1">
+                    모의고사 {trend.length}회 · 합격률은 <span className="font-bold text-[#1e56cd]">3회 이상</span>부터 보여드려요.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-0.5">합격 가능성(최근)</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-3xl font-black text-[#1e56cd] tabular-nums">{displayRecentPassRate}</span>
+                    <span className="text-lg font-bold text-slate-400">%</span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">{getPassRateMessage(displayRecentPassRate)}</p>
+                  <div className="mt-2 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#1e56cd] transition-all"
+                      style={{ width: `${Math.min(100, displayRecentPassRate)}%` }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {!isExpired && (
+              <button
+                type="button"
+                onClick={() => onSelectExam(activeCertId)}
+                className="mt-4 w-full min-h-[48px] rounded-xl bg-[#1e56cd] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 hover:bg-[#1e56cd]/90"
+              >
+                <Play size={18} className="shrink-0 fill-white" /> 학습 시작하기
+              </button>
+            )}
+          </div>
+
+          <div>
+            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-0.5">바로 행동하기</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isExpired}
+                onClick={() => activeCertId && onStartSubjectStrengthTraining?.(activeCertId)}
+                className="min-h-[48px] rounded-xl border-2 border-[#99ccff] bg-white px-2 py-2.5 text-left text-xs font-bold text-[#1e56cd] hover:bg-[#cce5ff]/50 disabled:opacity-40 flex flex-col justify-center gap-0.5"
+              >
+                <span>과목 강화</span>
+                <span className="text-[10px] font-normal text-slate-500 leading-tight">안전도 낮은 과목</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExpired}
+                onClick={() => {
+                  if (!isPremiumCert) {
+                    setWeaknessPaymentModalMessage("취약 유형 집중 학습은 열공 모드에서 이용할 수 있어요.");
+                    setShowWeaknessPaymentModal(true);
+                    return;
+                  }
+                  if (onStartWeakTypeFocus) onStartWeakTypeFocus(activeCertId);
+                  else handleNavigate(`/exam-list?cert=${activeCertId}`);
+                }}
+                className="min-h-[48px] rounded-xl border-2 border-[#99ccff] bg-white px-2 py-2.5 text-left text-xs font-bold text-[#1e56cd] hover:bg-[#cce5ff]/50 disabled:opacity-40 flex flex-col justify-center gap-0.5"
+              >
+                <span className="flex items-center gap-1">
+                  {!isPremiumCert && <Lock className="w-3 h-3 shrink-0" />}
+                  유형 집중
+                </span>
+                <span className="text-[10px] font-normal text-slate-500 leading-tight">취약 출제 유형</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExpired}
+                onClick={() => {
+                  if (!isPremiumCert) {
+                    setWeaknessPaymentModalMessage("취약 개념 집중 학습은 열공 모드에서 이용할 수 있어요.");
+                    setShowWeaknessPaymentModal(true);
+                    return;
+                  }
+                  if (onStartWeakConceptFocus) onStartWeakConceptFocus(activeCertId);
+                  else handleNavigate(`/exam-list?cert=${activeCertId}`);
+                }}
+                className="min-h-[48px] rounded-xl border-2 border-[#99ccff] bg-white px-2 py-2.5 text-left text-xs font-bold text-[#1e56cd] hover:bg-[#cce5ff]/50 disabled:opacity-40 flex flex-col justify-center gap-0.5"
+              >
+                <span className="flex items-center gap-1">
+                  {!isPremiumCert && <Lock className="w-3 h-3 shrink-0" />}
+                  개념 집중
+                </span>
+                <span className="text-[10px] font-normal text-slate-500 leading-tight">이해도 낮은 개념</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExpired}
+                onClick={() =>
+                  onStartWeaknessRetry ? onStartWeaknessRetry(activeCertId) : handleNavigate(`/exam-list?cert=${activeCertId}`)
+                }
+                className="min-h-[48px] rounded-xl border-2 border-slate-200 bg-white px-2 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 flex flex-col justify-center gap-0.5"
+              >
+                <span>회차·목록</span>
+                <span className="text-[10px] font-normal text-slate-500 leading-tight">모의고사 선택</span>
+              </button>
+            </div>
+          </div>
+
+          <SectionAccordion
+            title="취약·과목·유형 분석"
+            open={mobileAnalysisOpen}
+            onOpenChange={setMobileAnalysisOpen}
+            className="shadow-sm"
+            contentClassName="px-3 py-3 space-y-5"
+          >
+                <section>
+                  <h4 className="text-xs font-black text-[#1e56cd] uppercase tracking-wide mb-2">과목별 안전도</h4>
+                  {!hasLearningHistory ? (
+                    <p className="text-xs text-slate-600 whitespace-pre-line">데이터가 없어요.{"\n"}모의고사를 풀면 과목별 안전도가 표시돼요.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(displaySubjectScores.length ? displaySubjectScores : freeSubjectScoresForDisplay).slice(0, 4).map((s) => {
+                        const zone = getSubjectSafetyZone(s.score);
+                        return (
+                          <div key={s.subjectNumber} className="flex items-center gap-2">
+                            <span className="text-[11px] font-medium text-slate-600 w-12 shrink-0 tabular-nums">{s.subjectNumber}과</span>
+                            <div className="flex-1 min-w-0 h-2 bg-slate-200 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-[#1e56cd]" style={{ width: `${Math.min(99, s.score)}%` }} />
+                            </div>
+                            <span
+                              className={`text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded ${
+                                zone === "안정권"
+                                  ? "bg-[#99ccff] text-[#1e56cd]"
+                                  : zone === "보완 필요"
+                                  ? "bg-[#99ccff]/60 text-slate-700"
+                                  : "bg-[#1e56cd] text-white"
+                              }`}
+                            >
+                              {zone}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {hasLearningHistory && (
+                    <button
+                      type="button"
+                      disabled={isExpired}
+                      onClick={() => activeCertId && onStartSubjectStrengthTraining?.(activeCertId)}
+                      className="mt-3 w-full min-h-[44px] rounded-xl bg-[#99ccff] text-[#1e56cd] text-xs font-bold flex items-center justify-center gap-1 hover:bg-[#b3d9ff] disabled:opacity-40"
+                    >
+                      과목 강화 학습 <ChevronRight className="w-4 h-4" />
+                    </button>
+                  )}
+                </section>
+
+                <section>
+                  <h4 className="text-xs font-black text-[#1e56cd] uppercase tracking-wide mb-2">취약 개념 TOP</h4>
+                  {!hasLearningHistory ? (
+                    <p className="text-xs text-slate-600 whitespace-pre-line">{MY_PAGE_EMPTY_MESSAGES.weakness}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(displayWeaknessTop3.length ? displayWeaknessTop3 : mockDashboardStats.weaknessTop3).slice(0, 3).map((w, idx) => {
+                        const resolvedId =
+                          w.id ?? (typeof w.name === "string" ? (w.name.match(/^개념\s*(\d+)$/) ?? null)?.[1] : null) ?? null;
+                        const byId =
+                          resolvedId != null
+                            ? activeCert?.code === "BIGDATA" && BIGDATA_CORE_CONCEPTS_BY_ID[resolvedId]
+                              ? BIGDATA_CORE_CONCEPTS_BY_ID[resolvedId]
+                              : certInfo?.core_concepts_by_id?.[resolvedId] ?? null
+                            : null;
+                        const displayName = byId?.concept ?? w.name;
+                        const conceptTags =
+                          (byId?.keywords?.length
+                            ? byId.keywords
+                            : certInfo?.core_concept_keywords?.[displayName] ?? certInfo?.core_concept_keywords?.[w.name]) ?? [];
+                        return (
+                          <div key={idx} className="bg-[#cce5ff]/80 rounded-lg px-3 py-2 text-xs">
+                            <div className="flex justify-between items-start gap-2">
+                              <span className="font-bold text-slate-800 truncate">{displayName}</span>
+                              <button
+                                type="button"
+                                aria-label="키워드"
+                                onClick={() => setOpenKeywordPopoverIndex((prev) => (prev === idx ? null : idx))}
+                                className="shrink-0 p-1 rounded text-[#1e56cd]"
+                              >
+                                <HelpCircle className="w-4 h-4" />
+                              </button>
+                            </div>
+                            {openKeywordPopoverIndex === idx && conceptTags.length > 0 && (
+                              <ul className="mt-2 text-[10px] text-slate-600 list-disc pl-4 space-y-0.5">
+                                {conceptTags.slice(0, 6).map((tag, i) => (
+                                  <li key={i} className="truncate" title={tag}>
+                                    {tag}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isExpired}
+                    onClick={() => {
+                      if (!isPremiumCert) {
+                        setWeaknessPaymentModalMessage("해당 기능은 열공 모드 가입 후 무제한 이용하실 수 있습니다.");
+                        setShowWeaknessPaymentModal(true);
+                        return;
+                      }
+                      if (onStartWeakConceptFocus) onStartWeakConceptFocus(activeCertId);
+                      else handleNavigate(`/exam-list?cert=${activeCertId}`);
+                    }}
+                    className="mt-3 w-full min-h-[44px] rounded-xl bg-[#99ccff] text-[#1e56cd] text-xs font-bold flex items-center justify-center gap-1 hover:bg-[#b3d9ff] disabled:opacity-40"
+                  >
+                    {!isPremiumCert && <Lock className="w-3.5 h-3.5" />}
+                    취약 개념 집중 학습 <ChevronRight className="w-4 h-4" />
+                  </button>
+                </section>
+
+                <section>
+                  <h4 className="text-xs font-black text-[#1e56cd] uppercase tracking-wide mb-2">유형별 정답률</h4>
+                  {!hasLearningHistory ? (
+                    <p className="text-xs text-slate-600 whitespace-pre-line">{MY_PAGE_EMPTY_MESSAGES.weakness}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {[...radarChartData]
+                        .filter((d) => d.subject && d.subject !== "-")
+                        .sort((a, b) => (a.A ?? 0) - (b.A ?? 0))
+                        .slice(0, 6)
+                        .map((d) => (
+                          <div key={d.subject} className="flex items-center gap-2 text-xs">
+                            <span className={`flex-1 min-w-0 truncate ${d.subject === weakestSubject ? "font-bold text-[#1e56cd]" : "text-slate-700"}`}>
+                              {d.subject}
+                            </span>
+                            <div className="w-20 h-1.5 bg-slate-200 rounded-full overflow-hidden shrink-0">
+                              <div className="h-full bg-[#1e56cd] rounded-full" style={{ width: `${Math.min(100, d.A)}%` }} />
+                            </div>
+                            <span className="tabular-nums text-slate-600 w-8 text-right">{d.A}%</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isExpired}
+                    onClick={() => {
+                      if (!isPremiumCert) {
+                        setWeaknessPaymentModalMessage("해당 기능은 열공 모드 가입 후 무제한 이용하실 수 있습니다.");
+                        setShowWeaknessPaymentModal(true);
+                        return;
+                      }
+                      if (onStartWeakTypeFocus) onStartWeakTypeFocus(activeCertId);
+                      else handleNavigate(`/exam-list?cert=${activeCertId}`);
+                    }}
+                    className="mt-3 w-full min-h-[44px] rounded-xl bg-[#99ccff] text-[#1e56cd] text-xs font-bold flex items-center justify-center gap-1 hover:bg-[#b3d9ff] disabled:opacity-40"
+                  >
+                    {!isPremiumCert && <Lock className="w-3.5 h-3.5" />}
+                    취약 유형 집중 학습 <ChevronRight className="w-4 h-4" />
+                  </button>
+                </section>
+          </SectionAccordion>
+
+          <SectionAccordion
+            title="최근 학습 기록"
+            summary={displayTrend.length > 0 ? `${displayTrend.length}회` : undefined}
+            open={mobileRecordsOpen}
+            onOpenChange={setMobileRecordsOpen}
+            className="shadow-sm"
+            contentClassName="p-3"
+          >
+                {paginatedTrend.length === 0 ? (
+                  <p className="text-xs text-slate-600 py-6 text-center whitespace-pre-line">{MY_PAGE_EMPTY_MESSAGES.learningRecord}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {paginatedTrend.map((item, i) => {
+                      const passRow = item.isPass ?? item.score >= 60;
+                      return (
+                        <div
+                          key={item.examId ?? i}
+                          className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5 flex flex-col gap-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-slate-800 truncate">
+                              {item.roundLabel ?? getRoundLabel(item.roundId, activeCertId)}
+                              {item.date && <span className="text-slate-400 font-normal ml-1">({item.date})</span>}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                                passRow ? "bg-[#99ccff] text-[#1e56cd] border-[#1e56cd]/30" : "bg-white text-slate-600 border-slate-200"
+                              }`}
+                            >
+                              {passRow ? `${item.score}점` : "불합격"}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                item.roundId
+                                  ? handleNavigate(`/exam-list?cert=${activeCertId}&round=${item.roundId}`)
+                                  : alert("재응시할 회차 정보가 없습니다.")
+                              }
+                              className="flex-1 min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                            >
+                              재응시
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                item.examId
+                                  ? (onViewExamResult ? onViewExamResult(item.examId) : handleWrongAnswers(item.examId, item.roundId))
+                                  : undefined
+                              }
+                              disabled={wrongAnswersLoading}
+                              className="flex-1 min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700 disabled:opacity-50"
+                            >
+                              오답확인
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {totalPages > 1 && (
+                  <div className="flex justify-center items-center gap-3 text-xs font-bold text-slate-500 mt-3 pt-3 border-t border-slate-100">
+                    <button type="button" onClick={() => setLearningRecordsPage((p) => Math.max(1, p - 1))}>
+                      ‹
+                    </button>
+                    <span>
+                      {effectivePage} / {totalPages}
+                    </span>
+                    <button type="button" onClick={() => setLearningRecordsPage((p) => Math.min(totalPages, p + 1))}>
+                      ›
+                    </button>
+                  </div>
+                )}
+          </SectionAccordion>
+        </div>
+
+        <header className="hidden lg:flex mb-5 md:mb-8 flex-wrap items-center justify-between gap-3 md:gap-4">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl tracking-tight font-extrabold flex flex-wrap items-center gap-2 flex-1 min-w-0">
             <span className="text-[#1e56cd] font-black">{certDisplayName}</span>
             {purchasedSchedules.length > 1 ? (
               <span ref={scheduleDropdownRef} className="relative inline-flex items-center text-[#1e56cd]">
@@ -539,7 +968,7 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
               onClick={() => loadMyPageData(true)}
               disabled={loading}
               aria-label="데이터 새로고침"
-              className="p-2 rounded-lg text-[#1e56cd] hover:bg-[#99ccff]/50 disabled:opacity-50 transition-opacity"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#1e56cd] hover:bg-[#99ccff]/50 disabled:opacity-50 transition-opacity"
               title="데이터 새로고침"
             >
               <RefreshCw size={22} className={loading ? "animate-spin" : ""} />
@@ -547,9 +976,10 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
           </div>
         </header>
 
-        <div className={`grid grid-cols-12 gap-6 ${isExpired ? "pointer-events-none opacity-60 grayscale" : ""}`}>
+        <div className={isExpired ? "pointer-events-none opacity-60 grayscale" : ""}>
+        <div className="hidden lg:grid grid-cols-12 gap-6">
           {/* Left: 예측 합격률 또는 실력진단 진행 카드 */}
-          <div className="col-span-12 lg:col-span-3 backdrop-blur-md bg-[rgb(204,229,255)] rounded-3xl p-6 flex flex-col h-full items-center shadow-md min-h-[420px] lg:min-h-[520px] border border-white/50">
+          <div className="col-span-12 lg:col-span-3 backdrop-blur-md bg-[rgb(204,229,255)] rounded-3xl p-5 sm:p-6 flex flex-col h-full items-center shadow-md min-h-[300px] sm:min-h-[380px] lg:min-h-[520px] border border-white/50">
             <h3 className="w-full text-left text-[#1e56cd] text-lg font-bold mb-6">
               {showDiagnosticProgressCard ? '실력진단 진행' : '예측 합격률'}
             </h3>
@@ -1010,6 +1440,7 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
             </div>
           </div>
         </div>
+        </div>
         {isExpired && <DataPreservationCard />}
 
         <AddCertModal
@@ -1023,6 +1454,7 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
           isOpen={isFailModalOpen}
           onClose={() => setIsFailModalOpen(false)}
           onCheckout={() => handleNavigate("/checkout")}
+          showCheckout={showCommercialSubscriptionCopy}
         />
 
         {showWeaknessPaymentModal && (
@@ -1035,24 +1467,34 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
               <div className="w-12 h-12 rounded-full bg-[#99ccff] flex items-center justify-center mx-auto mb-4">
                 <Lock className="w-6 h-6 text-[#1e56cd]" />
               </div>
-              <h3 className="text-lg font-bold text-slate-900 mb-2">결제가 필요합니다</h3>
-              <p className="text-sm text-slate-500 mb-5">{weaknessPaymentModalMessage}</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowWeaknessPaymentModal(false);
-                  handleNavigate("/checkout");
-                }}
-                className="w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1e56cd]/90"
-              >
-                결제하러 가기
-              </button>
+              <h3 className="text-lg font-bold text-slate-900 mb-2">
+                {showCommercialSubscriptionCopy ? "결제가 필요합니다" : "베타 안내"}
+              </h3>
+              <p className="text-sm text-slate-500 mb-5">
+                {showCommercialSubscriptionCopy
+                  ? weaknessPaymentModalMessage
+                  : "이 집중 학습 기능은 정식 서비스에서 순차적으로 열릴 예정이에요. 지금은 모의고사·결과 화면 중심으로 학습해 주세요."}
+              </p>
+              {showCommercialSubscriptionCopy ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWeaknessPaymentModal(false);
+                    handleNavigate("/checkout");
+                  }}
+                  className="w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1e56cd]/90"
+                >
+                  결제하러 가기
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShowWeaknessPaymentModal(false)}
-                className="mt-3 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+                className={`w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl ${
+                  showCommercialSubscriptionCopy ? "mt-3" : ""
+                }`}
               >
-                취소
+                {showCommercialSubscriptionCopy ? "취소" : "확인"}
               </button>
             </div>
           </div>
@@ -1093,6 +1535,6 @@ export const MyPageBeta: React.FC<MyPageBetaProps> = ({
             </div>
           </div>
         )}
-    </div>
+    </ResponsivePageContainer>
   );
 };

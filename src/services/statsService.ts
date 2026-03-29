@@ -14,7 +14,14 @@ import {
   limit,
   Timestamp,
 } from 'firebase/firestore';
-import { eloToPercent, getEncouragementMessageForPassRate, PASS_RATE_MIN } from './gradingService';
+import {
+  eloToPercent,
+  getEncouragementMessageForPassRate,
+  PASS_RATE_MIN,
+  classifyExamPassRateContext,
+  isDiagnosticRound,
+  type PassRateKind,
+} from './gradingService';
 import { db } from '../firebase';
 import { CERTIFICATIONS, PROBLEM_TYPE_LABELS } from '../constants';
 
@@ -34,6 +41,8 @@ export interface TrendDataItem {
   roundId?: string | null;
   /** 집중학습 완료 시 저장된 표시 라벨 (예: "과목 강화 학습 - 3과목 강화") */
   roundLabel?: string | null;
+  /** 회차 성격 (진단 vs 맞춤형·집중학습 UI 구분) */
+  attemptKind?: PassRateKind;
   totalQuestions?: number;
   correctCount?: number;
 }
@@ -92,9 +101,20 @@ interface ExamResultDoc {
   subject_scores?: Record<string, number>;
   is_passed?: boolean;
   predicted_pass_rate?: number;
+  predicted_pass_rate_display?: number;
+  predicted_pass_rate_raw?: number;
   totalQuestions?: number;
   correctCount?: number;
   submittedAt?: Timestamp | { toDate: () => Date };
+}
+
+function displayPassRateFromExam(data: ExamResultDoc): number | null {
+  const v =
+    data.predicted_pass_rate_display ??
+    data.predicted_pass_rate ??
+    data.predicted_pass_rate_raw;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return Math.min(99, Math.max(0, Math.round(v)));
 }
 
 /** certCode 또는 certId로 해당 자격증 시험인지 판별 (학습 정보가 certId만 있는 구 데이터 호환) */
@@ -176,9 +196,6 @@ export async function fetchHasAnyExamRecord(uid: string): Promise<boolean> {
 }
 
 // ========== A. fetchUserTrendData ==========
-
-/** 실력진단 모의고사 roundId 패턴 (l_1~3, m_1~3, h_1~3) */
-const DIAGNOSTIC_ROUND_ID_REGEX = /^(l|m|h)_[123]$/;
 
 export interface DiagnosticProgress {
   completed: number;
@@ -267,7 +284,7 @@ export async function fetchUserTrendData(
 
   const completedDiagnostics = certDocs.filter((d) => {
     const rid = (d.data() as ExamResultDoc).roundId;
-    return typeof rid === 'string' && DIAGNOSTIC_ROUND_ID_REGEX.test(rid);
+    return isDiagnosticRound(typeof rid === 'string' ? rid : null);
   }).length;
 
   const docsToUse = certDocs.slice(0, 30); // 해당 자격증 기준 최근 30건 (이미 desc 정렬됨)
@@ -287,7 +304,7 @@ export async function fetchUserTrendData(
           ? Math.round(
               scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
             )
-          : (data.predicted_pass_rate ?? 0);
+          : (displayPassRateFromExam(data) ?? 0);
       const score = Number.isNaN(avgScore) ? 0 : Math.min(99, Math.max(0, avgScore));
       const isPass = Boolean(data.is_passed);
       const totalQuestions = data.totalQuestions ?? 0;
@@ -303,9 +320,9 @@ export async function fetchUserTrendData(
       }
 
       const rid = data.roundId;
-      if (typeof rid === 'string' && DIAGNOSTIC_ROUND_ID_REGEX.test(rid)) {
-        const pr = data.predicted_pass_rate;
-        if (typeof pr === 'number' && Number.isFinite(pr)) {
+      if (isDiagnosticRound(typeof rid === 'string' ? rid : null)) {
+        const pr = displayPassRateFromExam(data);
+        if (pr != null) {
           diagnosticPassRates.push(Math.min(99, Math.max(0, pr)));
         } else if (score > 0) {
           diagnosticPassRates.push(score);
@@ -324,6 +341,7 @@ export async function fetchUserTrendData(
         examId: docSnap.id,
         roundId: data.roundId ?? null,
         roundLabel: data.roundLabel ?? null,
+        attemptKind: classifyExamPassRateContext(data.roundId ?? null),
         totalQuestions,
         correctCount,
       });
@@ -461,13 +479,21 @@ export async function fetchDashboardStats(
   }
   /** 최근 1회 시험의 과목별 점수 (과목별 안전도 = 예측합격률과 스케일 통일). 첫 문서에 없으면 최근 시험 중 있는 것 사용 */
   let latestSubjectScores: Record<string, number> = {};
+  let latestExamForSubjects: ExamResultDoc | null = null;
   for (const exam of recentExamDocs) {
     const s = exam.subject_scores ?? {};
     if (Object.keys(s).length > 0) {
       latestSubjectScores = s;
+      latestExamForSubjects = exam;
       break;
     }
   }
+  const latestPassRateKind = latestExamForSubjects
+    ? classifyExamPassRateContext(latestExamForSubjects.roundId ?? null)
+    : 'diagnostic';
+  /** 맞춤형·집중학습 직후: 누적 subject_stats 안정도와 혼합해 대시보드 급락 체감 완화 */
+  const useDashboardStabilityBlend =
+    latestPassRateKind === 'adaptive' || latestPassRateKind === 'focus_training';
 
   // 세부 개념(sub_core_id) → 대분류(Core) 합산: core_id별 평균 proficiency·총 문제 수
   const coreAggFromSubCore: Record<string, { sumProficiency: number; total: number; count: number }> = {};
@@ -493,11 +519,12 @@ export async function fetchDashboardStats(
     fullMark: FULL_MARK,
   }));
 
-  // ─── 최근 3회 가중 이동 평균 합격률 ───
+  // ─── (참고) 진단 회차만 가중 평균 — 메인 예측 합격률은 fetchUserTrendData.recentPassRate 사용 ───
   let weightedPassRate: number | null = null;
   const passRates = recentExamDocs
-    .map((d) => d.predicted_pass_rate)
-    .filter((v): v is number => typeof v === 'number');
+    .filter((d) => isDiagnosticRound(d.roundId ?? null))
+    .map((d) => displayPassRateFromExam(d))
+    .filter((v): v is number => v != null);
   if (passRates.length >= 1) {
     const weights = [0.2, 0.3, 0.5]; // 오래된→최신 순
     const w = weights.slice(weights.length - passRates.length);
@@ -528,16 +555,23 @@ export async function fetchDashboardStats(
               recentScores.reduce((a, b) => a + b, 0) / recentScores.length
             )
           : null;
+      const fromStats = ent ? understandingFromStat(ent) : null;
       // 한 회차 0점만으로 과목이 0%로 보이지 않게: 최근 2회 이상이면 (최신, 최근평균) 중 큰 값 사용 후 하한 적용
       let rawScore: number;
-      if (recentScores.length >= 2 && (latestFromExam != null || avgRecent != null)) {
+      if (useDashboardStabilityBlend) {
+        const latest = latestFromExam ?? avgRecent ?? fromStats ?? 0;
+        rawScore =
+          fromStats != null
+            ? Math.round(0.7 * fromStats + 0.3 * latest)
+            : latest;
+      } else if (recentScores.length >= 2 && (latestFromExam != null || avgRecent != null)) {
         const latest = latestFromExam ?? avgRecent ?? 0;
         const avg = avgRecent ?? latest;
         rawScore = Math.max(latest, avg);
       } else {
         rawScore =
           latestFromExam ??
-          (avgRecent ?? (ent ? understandingFromStat(ent) : 0));
+          (avgRecent ?? (fromStats ?? 0));
       }
       const score = Math.max(
         SUBJECT_SCORE_MIN,

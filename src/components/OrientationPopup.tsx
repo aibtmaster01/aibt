@@ -31,7 +31,7 @@ const SLIDES = [
     id: 1,
     title: <span className="font-bold text-blue-600">안녕하세요, <br/> AiBT 베타테스터에 참여해주셔서 감사합니다!</span>,
     content:
-      '현재 AiBT는 최적화된 분석 환경을 위해 <b> 웹 버전</b>만 운영 중입니다.\n\n다음 안내에 따라 당신만의 합격 세트를 경험해 보세요.',
+      '다음 안내에 따라 당신만의 합격 세트를 경험해 보세요.',
     hasPrev: false,
   },
   {

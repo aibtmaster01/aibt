@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS } from '../constants';
 import { useAllCertificationInfos } from '../hooks/useCertificationInfo';
+import { showCommercialSubscriptionCopy } from '../config/brand';
 import { User } from '../types';
 import { getNearestExamDate } from '../utils/dateUtils';
 
@@ -21,12 +22,13 @@ const TESTIMONIALS = Array.from({ length: 15 }).map((_, i) => ({
   rating: 5,
 }));
 
+/** 랜딩 본문이 다시 켜질 때를 대비해, 베타 빌드에서는 환불·결제 정책 FAQ만 제외 */
 const FAQS = [
   { q: '비전공자도 이용할 수 있나요?', a: '네, 물론입니다. AIbT는 초기 진단 평가를 통해 사용자 개인별 수준을 정밀하게 분석합니다. 기초가 부족한 비전공자에게는 핵심 개념 위주의 커리큘럼을, 실전 감각이 필요한 전공자에게는 고난도 킬러 문항을 추천하여 단계적으로 합격선에 도달하도록 돕습니다.' },
   { q: 'AI 모의고사는 어떤 원리인가요?', a: 'AIbT의 알고리즘은 사용자의 문제 풀이 패턴, 소요 시간, 오답 원인 등을 실시간으로 학습합니다. 이를 바탕으로 출제 가능성이 높은 문제와 사용자가 가장 취약한 유형을 조합하여 매번 새로운 \'나만의 시험지\'를 생성합니다.' },
   { q: '결제 후 환불 규정은 어떻게 되나요?', a: '결제일로부터 7일 이내에 콘텐츠를 전혀 이용하지 않은 경우 전액 환불이 가능합니다. 단, 모의고사를 1회 이상 응시하거나 오답노트 등의 유료 콘텐츠를 열람한 경우에는 이용 분량을 제외하고 부분 환불됩니다.' },
   { q: '모바일에서도 문제 풀이가 가능한가요?', a: '네, PC, 태블릿, 모바일 등 모든 기기에서 최적화된 학습 환경을 제공합니다. 출퇴근길 지하철이나 버스에서도 간편하게 퀴즈를 풀고, 자기 전 침대에서 오답 노트를 복습하세요.' },
-];
+].filter((item) => showCommercialSubscriptionCopy || !item.q.includes('환불'));
 
 export const Home: React.FC<HomeProps> = ({
   user,

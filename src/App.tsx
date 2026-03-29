@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect } from 'react';
-import { Lock, ClipboardCheck, BookOpen, X, Info, Monitor, Check, Loader2, Sparkles } from 'lucide-react';
+import { Lock, ClipboardCheck, BookOpen, X, Info, Check, Loader2, Sparkles } from 'lucide-react';
 import { DashboardSidebar } from './components/DashboardSidebar';
+import { MobileAppShell } from './components/MobileAppShell';
 import { useIsMobile } from './hooks/use-mobile';
 import { LoginModal } from './components/LoginModal';
 import { MyPage } from './pages/MyPage';
@@ -13,7 +14,7 @@ import { AdminCerts } from './pages/AdminCerts';
 import { AdminQuestions } from './pages/AdminQuestions';
 import { Checkout } from './pages/Checkout';
 import { AccountSettings } from './pages/AccountSettings';
-import { User } from './types';
+import { User, type Question } from './types';
 import { CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, EXAM_ROUNDS, getRoundLabel } from './constants';
 import { useAuth } from './contexts/AuthContext';
 import { submitQuizResult } from './services/gradingService';
@@ -29,11 +30,75 @@ import { getBetatestCouponEnabled } from './services/couponService';
 import { OrientationPopup } from './components/OrientationPopup';
 import { OrientationPopupBeta } from './components/OrientationPopup_beta';
 import { MyPageBeta } from './pages/MyPage_beta';
-import { useAppNavigation } from './hooks/useAppNavigation';
+import { useAppNavigation, type Route } from './hooks/useAppNavigation';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import type { LoginModalIntent } from './components/LoginModal';
+import {
+  getMobileRouteShellKind,
+  getPrimaryMobileGlobalOverlay,
+  shouldSuppressMobileShellChrome,
+} from './mobile/shellPolicy';
+import { CopyrightFooterStrip } from './components/copyright';
+import { COPYRIGHT_COPY } from './constants/copyrightCopy';
 
 const BETA_UPDATE_MODAL_SEEN_KEY = 'aibt_beta_update_modal_seen';
+
+/** 퀴즈 제출 시 roundLabel (handleQuizFinish / 약점·재풀기 저장 공통) */
+function buildQuizRoundLabelForSubmit(roundId: string | undefined, questions: Question[]): string | undefined {
+  if (!roundId || !questions.length) return undefined;
+  if (roundId === '__subject_strength__') {
+    const subjects = new Set(questions.map((q) => q.subject_number ?? 1));
+    const n = subjects.size;
+    return `과목 강화 학습 - ${n}과목 강화`;
+  }
+  if (roundId === '__weak_type_focus__') {
+    const count: Record<string, number> = {};
+    for (const q of questions) {
+      for (const pt of q.problem_types ?? []) {
+        const t = String(pt).trim();
+        if (t) count[t] = (count[t] ?? 0) + 1;
+      }
+    }
+    const main = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0];
+    return main ? `취약 유형 집중 학습 - ${main} 강화` : '취약 유형 집중 학습';
+  }
+  if (roundId === '__weak_concept_focus__') {
+    const concepts = [...new Set(questions.map((q) => (q.core_concept ?? '').trim()).filter(Boolean))];
+    const n = concepts.length;
+    const first = concepts[0];
+    if (n <= 0) return '취약 개념 집중 학습';
+    if (n === 1) return `취약 개념 집중 학습 - ${first} 강화`;
+    return `취약 개념 집중 학습 - ${first} 외 ${n - 1}개 개념 강화`;
+  }
+  return getRoundLabel(roundId);
+}
+
+function getMobileShellTitle(route: Route): string {
+  switch (route) {
+    case '/':
+    case '/mypage':
+      return '학습 홈';
+    case '/exam-list':
+      return '모의고사';
+    case '/quiz':
+      return '문제 풀이';
+    case '/result':
+      return '시험 결과';
+    case '/account-settings':
+      return '계정 설정';
+    case '/admin':
+      return '회원 관리';
+    case '/admin/certs':
+      return '자격증 관리';
+    case '/admin/questions':
+      return '문제 관리';
+    case '/admin/billing':
+      return '쿠폰 관리';
+    default:
+      return APP_BRAND;
+  }
+}
+
 function setBetaUpdateModalSeen(): void {
   try {
     localStorage.setItem(BETA_UPDATE_MODAL_SEEN_KEY, '1');
@@ -108,6 +173,8 @@ const App: React.FC = () => {
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   /** 로그인 성공 시 "로그인되었습니다" 토스트 (하단 작게) */
   const [showLoginToast, setShowLoginToast] = useState(false);
+  /** 로그인 후 계정당 1회 저작권 안내 (스크린샷 감지 아님) */
+  const [showCopyrightWelcomeToast, setShowCopyrightWelcomeToast] = useState(false);
   /** 가입 후 이메일 인증 대기: 백그라운드 상단 노란 배너 + 인증완료 버튼으로 로그인 적용 */
   const [pendingVerificationBanner, setPendingVerificationBanner] = useState<{ email: string; password: string } | null>(null);
   const [verificationBannerError, setVerificationBannerError] = useState('');
@@ -120,6 +187,7 @@ const App: React.FC = () => {
   } | null>(null);
   const [showOrientationPopup, setShowOrientationPopup] = useState<'forced' | 'fromLNB' | 'fromUpdate' | null>(null);
   const [showBetatestEndedPopup, setShowBetatestEndedPopup] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   const isBeta = FEATURE_COUPON || APP_BRAND === 'AiBT';
   const hasCoupon = user?.isPremium === true || (user?.paidCertIds?.length ?? 0) > 0;
@@ -134,6 +202,31 @@ const App: React.FC = () => {
     setSelectedRoundId,
     setShowCheckoutModal,
   });
+
+  useEffect(() => {
+    setMobileDrawerOpen(false);
+  }, [route]);
+
+  /** 전역 로그인/결제/오리엔테이션 등이 뜨면 드로어를 닫아 레이어 중첩·포커스 충돌 완화 */
+  useEffect(() => {
+    if (!isMobile) return;
+    const overlay = getPrimaryMobileGlobalOverlay({
+      isMobile,
+      showOrientationPopup,
+      showLoginModal,
+      showCheckoutModal,
+      showResendVerificationModal,
+      showSignupSuccessModal,
+    });
+    if (overlay !== 'none') setMobileDrawerOpen(false);
+  }, [
+    isMobile,
+    showOrientationPopup,
+    showLoginModal,
+    showCheckoutModal,
+    showResendVerificationModal,
+    showSignupSuccessModal,
+  ]);
 
   useAppBootstrap({
     route,
@@ -210,6 +303,12 @@ const App: React.FC = () => {
     const t = setTimeout(() => setShowLoginToast(false), 2500);
     return () => clearTimeout(t);
   }, [showLoginToast]);
+
+  useEffect(() => {
+    if (!showCopyrightWelcomeToast) return;
+    const t = setTimeout(() => setShowCopyrightWelcomeToast(false), 6500);
+    return () => clearTimeout(t);
+  }, [showCopyrightWelcomeToast]);
 
   // /quiz 진입 시 round/cert 없으면 목록으로 복귀 (흰 화면 방지)
   useEffect(() => {
@@ -396,45 +495,20 @@ const App: React.FC = () => {
     total: number,
     sessionHistory?: import('./pages/Result').QuizAnswerRecord[],
     questions?: import('./types').Question[],
-    roundMemo?: import('./pages/Quiz').RoundMemo
+    roundMemo?: import('./pages/Quiz').RoundMemo,
+    finishMeta?: import('./pages/Quiz').QuizFinishMeta
   ) => {
     setQuizResult({ score, total, sessionHistory, questions, roundMemo });
 
     // 로그인 회원: 학습 이력 저장 + 참여 자격증 구독 반영 (마이페이지 진입 가능)
     if (user && sessionHistory?.length && questions?.length && selectedCertId) {
       const rid = selectedRoundId ?? undefined;
-      const roundLabel = (() => {
-        if (!rid || !questions.length) return undefined;
-        if (rid === '__subject_strength__') {
-          const subjects = new Set(questions.map((q) => q.subject_number ?? 1));
-          const n = subjects.size;
-          return `과목 강화 학습 - ${n}과목 강화`;
-        }
-        if (rid === '__weak_type_focus__') {
-          const count: Record<string, number> = {};
-          for (const q of questions) {
-            for (const pt of q.problem_types ?? []) {
-              const t = String(pt).trim();
-              if (t) count[t] = (count[t] ?? 0) + 1;
-            }
-          }
-          const main = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0];
-          return main ? `취약 유형 집중 학습 - ${main} 강화` : '취약 유형 집중 학습';
-        }
-        if (rid === '__weak_concept_focus__') {
-          const concepts = [...new Set(questions.map((q) => (q.core_concept ?? '').trim()).filter(Boolean))];
-          const n = concepts.length;
-          const first = concepts[0];
-          if (n <= 0) return '취약 개념 집중 학습';
-          if (n === 1) return `취약 개념 집중 학습 - ${first} 강화`;
-          return `취약 개념 집중 학습 - ${first} 외 ${n - 1}개 개념 강화`;
-        }
-        return getRoundLabel(rid);
-      })();
+      const roundLabel = buildQuizRoundLabelForSubmit(rid, questions);
       submitQuizResult(user.id, selectedCertId, sessionHistory, questions, {
         roundId: rid,
         roundLabel: roundLabel ?? undefined,
         ...(useBetaCertifications && user.prepLevel ? { prepLevel: user.prepLevel } : {}),
+        ...(finishMeta?.excludeFromLearningStats ? { excludeFromLearningStats: true } : {}),
       })
         .then((result) => {
           if (result) {
@@ -766,7 +840,43 @@ const App: React.FC = () => {
                   ? pendingGuestSession.sessionHistory
                   : undefined
               }
-              onFinish={handleQuizFinish} 
+              onFinish={handleQuizFinish}
+              onWeaknessRetrySave={(_score, _total, sessionHistory, questions, finishMeta) => {
+                if (!user || !sessionHistory?.length || !questions?.length || !selectedCertId) return;
+                const rid = selectedRoundId ?? undefined;
+                const roundLabel = buildQuizRoundLabelForSubmit(rid, questions);
+                submitQuizResult(user.id, selectedCertId, sessionHistory, questions, {
+                  roundId: rid,
+                  roundLabel: roundLabel ?? undefined,
+                  ...(useBetaCertifications && user.prepLevel ? { prepLevel: user.prepLevel } : {}),
+                  ...(finishMeta?.excludeFromLearningStats ? { excludeFromLearningStats: true } : {}),
+                })
+                  .then((result) => {
+                    if (result) {
+                      const certCode = CERTIFICATIONS.find((c) => c.id === selectedCertId)?.code;
+                      if (certCode) invalidateMyPageCache(user.id, certCode).catch(() => {});
+                    }
+                  })
+                  .catch((e) => {
+                    console.error('[약점·재풀기 결과 저장 실패]', {
+                      error: e,
+                      userId: user.id,
+                      certId: selectedCertId,
+                      roundId: rid,
+                      questionCount: sessionHistory.length,
+                      stack: e instanceof Error ? e.stack : undefined,
+                    });
+                  });
+                ensureUserSubscription(user.id, selectedCertId).catch((e) => console.error('구독 반영 실패', e));
+                if (!user.subscriptions.some((s) => s.id === selectedCertId)) {
+                  const newCert = CERTIFICATIONS.find((c) => c.id === selectedCertId);
+                  if (newCert) {
+                    updateUser((u) => ({ ...u, subscriptions: [...u.subscriptions, newCert] }));
+                  }
+                }
+                setPendingGuestSession(null);
+                clearGuestQuizProgress();
+              }}
               onExit={() => {
                 setPreFetchedQuestions(null);
                 setQuizStartIndex(undefined);
@@ -789,6 +899,7 @@ const App: React.FC = () => {
                   navigate('/checkout');
                 }
               }}
+              onOpenAppMenu={isMobile ? () => setMobileDrawerOpen(true) : undefined}
             />
             {showGuestContinueModal && (
               <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
@@ -919,6 +1030,18 @@ const App: React.FC = () => {
     }
     const status = options?.onboardingStatus ?? 1;
     if (status !== 0) setShowLoginToast(true);
+    const uidMark = options?.uid;
+    if (uidMark && status !== 0 && !options?.needsVerificationBanner) {
+      try {
+        const k = `aibt_copyright_welcome_v1_${uidMark}`;
+        if (!localStorage.getItem(k)) {
+          localStorage.setItem(k, '1');
+          setShowCopyrightWelcomeToast(true);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (intent === 'guestContinue' && pendingGuestContinue) {
       setRoute('/quiz');
       setSelectedCertId(pendingGuestContinue.certId);
@@ -1095,17 +1218,26 @@ const App: React.FC = () => {
     );
   }
 
-  if (isMobile) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#edf1f5] p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-[#99ccff] flex items-center justify-center mb-6">
-          <Monitor className="w-8 h-8 text-[#1e56cd]" />
-        </div>
-        <h1 className="text-xl font-bold text-slate-900 mb-2">{APP_BRAND}은 PC에 최적화되었습니다</h1>
-        <p className="text-slate-600 text-sm">PC로 학습해 주세요.</p>
-      </div>
-    );
-  }
+  const showMobileShell = isMobile;
+  const mobileRouteShell = getMobileRouteShellKind(route);
+  const mobileGlobalOverlay = getPrimaryMobileGlobalOverlay({
+    isMobile,
+    showOrientationPopup,
+    showLoginModal,
+    showCheckoutModal,
+    showResendVerificationModal,
+    showSignupSuccessModal,
+  });
+  const suppressMobileChrome = shouldSuppressMobileShellChrome(mobileGlobalOverlay);
+  const showMobileBottomNav =
+    !!user &&
+    route !== '/quiz' &&
+    route !== '/result' &&
+    route !== '/account-settings' &&
+    !route.startsWith('/admin');
+  const examListHref = selectedCertId ? `/exam-list?cert=${selectedCertId}` : '/exam-list';
+  const showGlobalCopyrightFooter =
+    route !== '/quiz' && route !== '/result' && !route.startsWith('/admin');
 
   return (
     <>
@@ -1214,8 +1346,12 @@ const App: React.FC = () => {
           />
         )
       )}
-      <div className="h-screen bg-[#edf1f5] flex overflow-hidden">
-        {/* 항상 파란색 LNB 표시 (Admin 포함). Admin 내부는 hideSidebar로 흰색 LNB 비표시 */}
+      <div
+        className="h-[100dvh] md:h-screen bg-[#edf1f5] flex overflow-hidden"
+        aria-hidden={isMobile && suppressMobileChrome ? true : undefined}
+        inert={isMobile && suppressMobileChrome ? true : undefined}
+      >
+        {/* 데스크톱: 좌측 LNB. 모바일: 동일 컴포넌트가 드로어만 담당(md:hidden 오버레이). */}
         <DashboardSidebar
           user={user}
           certId={selectedCertId}
@@ -1223,28 +1359,67 @@ const App: React.FC = () => {
           onNavigate={navigate}
           onLogout={handleLogout}
           onOpenOrientation={isBeta && user && hasCoupon ? () => setShowOrientationPopup('fromLNB') : undefined}
+          mobileDrawerOpen={mobileDrawerOpen}
+          onMobileDrawerClose={() => setMobileDrawerOpen(false)}
         />
-        <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
-          {user && user.is_verified === false && (
-            <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-              <span className="text-amber-900 text-sm font-medium">
-                이메일 인증을 완료해주세요. 메일이 오지 않았나요?
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setResendError(null);
-                  setResendPassword('');
-                  setShowResendVerificationModal(true);
-                }}
-                className="text-amber-800 underline font-semibold text-sm hover:text-amber-900 shrink-0"
-              >
-                인증 메일 재발송
-              </button>
-            </div>
-          )}
-          {renderContent()}
-        </main>
+        {showMobileShell ? (
+          <MobileAppShell
+            title={getMobileShellTitle(route)}
+            onOpenMenu={() => setMobileDrawerOpen(true)}
+            showBottomNav={showMobileBottomNav}
+            route={route}
+            examListHref={examListHref}
+            onNavigate={navigate}
+            user={user}
+            routeShell={mobileRouteShell}
+            suppressChrome={suppressMobileChrome}
+            hideAppBar={route === '/quiz'}
+          >
+            {user && user.is_verified === false && (
+              <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap shrink-0">
+                <span className="text-amber-900 text-sm font-medium">
+                  이메일 인증을 완료해주세요. 메일이 오지 않았나요?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResendError(null);
+                    setResendPassword('');
+                    setShowResendVerificationModal(true);
+                  }}
+                  className="text-amber-800 underline font-semibold text-sm hover:text-amber-900 shrink-0 min-h-[44px]"
+                >
+                  인증 메일 재발송
+                </button>
+              </div>
+            )}
+            {renderContent()}
+            {showGlobalCopyrightFooter ? <CopyrightFooterStrip /> : null}
+          </MobileAppShell>
+        ) : (
+          <main className="flex-1 min-h-0 bg-[#edf1f5] rounded-tl-[40px] overflow-y-auto">
+            {user && user.is_verified === false && (
+              <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+                <span className="text-amber-900 text-sm font-medium">
+                  이메일 인증을 완료해주세요. 메일이 오지 않았나요?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResendError(null);
+                    setResendPassword('');
+                    setShowResendVerificationModal(true);
+                  }}
+                  className="text-amber-800 underline font-semibold text-sm hover:text-amber-900 shrink-0"
+                >
+                  인증 메일 재발송
+                </button>
+              </div>
+            )}
+            {renderContent()}
+            {showGlobalCopyrightFooter ? <CopyrightFooterStrip /> : null}
+          </main>
+        )}
       </div>
       {showSignupSuccessModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
@@ -1279,6 +1454,25 @@ const App: React.FC = () => {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-slide-up">
           <div className="px-4 py-2.5 rounded-xl bg-slate-800 text-white shadow-lg border border-slate-700/50 text-xs font-semibold">
             로그인되었습니다
+          </div>
+        </div>
+      )}
+
+      {showCopyrightWelcomeToast && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-[100] w-[min(100%-1.5rem,380px)] animate-slide-up px-3"
+          style={{ bottom: 'max(5.5rem, env(safe-area-inset-bottom) + 4.5rem)' }}
+          role="status"
+        >
+          <div className="rounded-xl border border-slate-200/90 bg-white/95 backdrop-blur-sm shadow-lg px-3 py-2.5 text-left">
+            <p className="text-[11px] sm:text-xs text-slate-700 leading-snug font-medium">{COPYRIGHT_COPY.postLoginOnce}</p>
+            <button
+              type="button"
+              onClick={() => setShowCopyrightWelcomeToast(false)}
+              className="mt-2 text-[11px] font-bold text-[#1e56cd] hover:underline"
+            >
+              확인
+            </button>
           </div>
         </div>
       )}

@@ -29,12 +29,12 @@ export function AddCertModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center md:items-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-5">
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
-      <div className="animate-slide-up relative z-10 w-full max-h-[80vh] overflow-y-auto rounded-t-3xl bg-card p-7 shadow-2xl md:w-[440px] md:rounded-3xl">
+      <div className="animate-scale-in relative z-10 w-full max-w-[440px] max-h-[min(80vh,90dvh)] overflow-y-auto rounded-2xl bg-card p-7 shadow-2xl md:w-[440px]">
         <button
           onClick={onClose}
           className="absolute right-5 top-5 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-foreground"
@@ -163,12 +163,15 @@ interface FailCouponModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCheckout: () => void;
+  /** false: 할인·결제 CTA 숨김 (베타 등 상용 카피 비노출 빌드) */
+  showCheckout?: boolean;
 }
 
 export function FailCouponModal({
   isOpen,
   onClose,
   onCheckout,
+  showCheckout = true,
 }: FailCouponModalProps) {
   if (!isOpen) return null;
 
@@ -179,30 +182,45 @@ export function FailCouponModal({
         onClick={onClose}
       />
       <div className="animate-scale-in relative z-10 w-full max-w-sm rounded-3xl bg-card p-7 shadow-2xl text-center">
-        <div className="mb-4 inline-block rounded-full bg-brand-400 px-4 py-1.5 text-sm font-black text-slate-900">
-          50% 할인
-        </div>
+        {showCheckout ? (
+          <div className="mb-4 inline-block rounded-full bg-brand-400 px-4 py-1.5 text-sm font-black text-slate-900">
+            50% 할인
+          </div>
+        ) : null}
         <h3 className="text-lg font-black text-foreground">
-          다음 회차 대비 50% 할인권
+          {showCheckout ? "다음 회차 대비 50% 할인권" : "다음 회차도 화이팅"}
         </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          재도전을 응원합니다! 50% 할인 쿠폰을 드려요.
+          {showCheckout
+            ? "재도전을 응원합니다! 50% 할인 쿠폰을 드려요."
+            : "재도전을 응원합니다. 모의고사로 실력을 이어가 보세요."}
         </p>
-        <button
-          onClick={() => {
-            onCheckout();
-            onClose();
-          }}
-          className="mt-6 w-full rounded-xl bg-brand-400 py-3.5 text-sm font-black text-slate-900 shadow-lg transition-colors hover:bg-brand-500"
-        >
-          50% 할인 적용하여 결제하기
-        </button>
-        <button
-          onClick={onClose}
-          className="mt-2.5 w-full rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-200"
-        >
-          나중에 할게요
-        </button>
+        {showCheckout ? (
+          <>
+            <button
+              onClick={() => {
+                onCheckout();
+                onClose();
+              }}
+              className="mt-6 w-full rounded-xl bg-brand-400 py-3.5 text-sm font-black text-slate-900 shadow-lg transition-colors hover:bg-brand-500"
+            >
+              50% 할인 적용하여 결제하기
+            </button>
+            <button
+              onClick={onClose}
+              className="mt-2.5 w-full rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-200"
+            >
+              나중에 할게요
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={onClose}
+            className="mt-6 w-full rounded-xl bg-[#1e56cd] py-3.5 text-sm font-bold text-white transition-colors hover:bg-[#1e56cd]/90"
+          >
+            확인
+          </button>
+        )}
       </div>
     </div>
   );

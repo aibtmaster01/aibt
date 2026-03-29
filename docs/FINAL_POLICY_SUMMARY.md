@@ -1,12 +1,12 @@
 # 핀셋(FINSET) 최종 정책 정리
 
-팀: 반지고리. 현재 코드 기준 로그인·큐레이션·스탯 정책 요약.
+팀: AiBT. 현재 코드 기준 로그인·큐레이션·스탯 정책 요약.
 
 ---
 
 # FINSET Final Policy Summary (EN)
 
-Team: Banjigori. Current code-base policy: login, curation, stats.
+Team: AiBT. Current code-base policy: login, curation, stats.
 
 ## 1. Login / Auth
 
@@ -33,7 +33,7 @@ Team: Banjigori. Current code-base policy: login, curation, stats.
 
 ## 4. Branding
 
-- Service: 핀셋 / FINSET. Landing: 핀셋-MVP. Team: 반지고리.
+- Service: 핀셋 / FINSET. Landing: 핀셋-MVP. Team: AiBT.
 - Local keys: finset_device_id, finset_guest_quiz_progress, finset_local_cache.
 
 ## 5. Key files

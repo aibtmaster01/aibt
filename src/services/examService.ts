@@ -985,8 +985,18 @@ export function checkExamAccess(params: {
   user: User | null;
   certId: string;
   round: number;
+  /** round 6+ 맞춤형(약점 공략) 여부 — Quiz 등에서 전달 */
+  isWeaknessRound?: boolean;
+  /** 해당 certId에 약점 공략 1회 체험 사용 완료 여부 */
+  weaknessTrialUsed?: boolean;
 }): ExamAccessResult {
-  const { user, certId, round } = params;
+  const {
+    user,
+    certId,
+    round,
+    isWeaknessRound = false,
+    weaknessTrialUsed = false,
+  } = params;
 
   // Admin: 전체 유료 기능 사용 가능
   if (user?.isAdmin) {
@@ -1038,6 +1048,10 @@ export function checkExamAccess(params: {
 
   // === Free 시나리오 (무료 회원): Round 1, 2만 ===
   if (round <= 2) {
+    return { allowed: true };
+  }
+  // 맞춤형(약점 공략) 1회 체험 — 미사용 시 round 6+만 허용 (Quiz·Firestore `weakness_trial_used`와 동기)
+  if (isWeaknessRound && !weaknessTrialUsed) {
     return { allowed: true };
   }
   return {

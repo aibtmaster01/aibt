@@ -3,6 +3,10 @@ import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { auth } from '../firebase';
 import { User } from '../types';
 import { loginWithEmailPassword, logoutUser, getSessionForCurrentAuth, registerWithEmailAndPassword, loginWithGoogle, getGoogleRedirectUser, ensureAppUserFromFirebaseUser, resendVerificationEmail, deleteUnverifiedUser, type GoogleRedirectIntent } from '../services/authService';
+import { recordVisit, getVisitorDateKeyLocal } from '../services/adminService';
+
+/** 세션 내 동일 uid·로컬일 중복 recordVisit 방지 */
+const visitRecordedKeys = new Set<string>();
 
 interface AuthContextValue {
   user: User | null;
@@ -90,6 +94,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try {
             const appUser = await getSessionForCurrentAuth(firebaseUser.uid);
             setUser(appUser ?? null);
+            if (appUser?.id) {
+              const vk = `${appUser.id}_${getVisitorDateKeyLocal()}`;
+              if (!visitRecordedKeys.has(vk)) {
+                visitRecordedKeys.add(vk);
+                void recordVisit(appUser.id);
+              }
+            }
           } catch {
             setUser(null);
           } finally {

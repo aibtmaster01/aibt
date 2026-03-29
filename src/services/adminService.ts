@@ -8,6 +8,7 @@ import {
   setDoc,
   serverTimestamp,
   query,
+  where,
   orderBy,
   limit,
   startAfter,
@@ -311,7 +312,25 @@ export async function updateUserAdminMemo(uid: string, memo: string): Promise<vo
  * 회원이 푼 총 문제 수 (exam_results의 totalQuestions 합계)
  * 퀴즈 완료 시 gradingService.submitQuizResult로 저장된 데이터 기준
  */
-/** 오늘 날짜 (YYYY-MM-DD) 기준 당일 방문자 수 (유저별 1회) */
+
+/** 브라우저 로컬 달력 기준 YYYY-MM-DD (방문 집계·`<input type="date">` 와 동일) */
+export function getVisitorDateKeyLocal(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseLocalYmd(ymd: string): Date {
+  const parts = ymd.split('-').map((x) => parseInt(x, 10));
+  const y = parts[0];
+  const mo = parts[1];
+  const da = parts[2];
+  if (!y || !mo || !da) return new Date(NaN);
+  return new Date(y, mo - 1, da);
+}
+
+/** 오늘 날짜 (YYYY-MM-DD) 기준 당일 방문자 수 (유저별 1회, 로그인 사용자만 집계) */
 export async function fetchTodayVisitorCount(date: string): Promise<number> {
   const ref = collection(db, 'daily_visits', date, 'users');
   try {
@@ -322,21 +341,34 @@ export async function fetchTodayVisitorCount(date: string): Promise<number> {
   }
 }
 
-/** 기간 내 일별 방문자 수 (startDate ~ endDate, YYYY-MM-DD) */
+/** Firestore users 문서의 isPremium == true 인 수 (대시보드 요약용, 필드 기준). 실패 시 null */
+export async function fetchPremiumUserCount(): Promise<number | null> {
+  const usersRef = collection(db, 'users');
+  try {
+    const q = query(usersRef, where('isPremium', '==', true));
+    const snapshot = await getCountFromServer(q);
+    return snapshot.data().count;
+  } catch {
+    return null;
+  }
+}
+
+/** 기간 내 일별 방문자 수 (startDate ~ endDate, YYYY-MM-DD, 로컬 날짜로 순회) */
 export async function fetchVisitorCountsForRange(
   startDate: string,
   endDate: string
 ): Promise<{ date: string; count: number }[]> {
   const result: { date: string; count: number }[] = [];
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  if (start > end) return result;
-  const d = new Date(start);
-  while (d <= end) {
-    const dateStr = d.toISOString().slice(0, 10);
+  const start = parseLocalYmd(startDate);
+  const end = parseLocalYmd(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return result;
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (cur <= endDay) {
+    const dateStr = getVisitorDateKeyLocal(cur);
     const count = await fetchTodayVisitorCount(dateStr);
     result.push({ date: dateStr, count });
-    d.setDate(d.getDate() + 1);
+    cur.setDate(cur.getDate() + 1);
   }
   return result;
 }
@@ -378,9 +410,9 @@ export async function fetchErrorLogs(limitCount: number = 100): Promise<ErrorLog
   }
 }
 
-/** 로그인 유저가 앱 방문 시 호출 - daily_visits/{date}/users/{uid} 에 merge 저장 (당일 1인 1회 집계) */
+/** 로그인 유저가 앱 방문 시 호출 - daily_visits/{date}/users/{uid} 에 merge 저장 (당일·유저당 1문서) */
 export async function recordVisit(uid: string): Promise<void> {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = getVisitorDateKeyLocal();
   const ref = doc(db, 'daily_visits', date, 'users', uid);
   try {
     await setDoc(ref, { at: serverTimestamp() }, { merge: true });

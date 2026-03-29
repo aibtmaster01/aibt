@@ -4,16 +4,16 @@
  * - certification_info 기반 과목별 점수·합격 판정·exam_results 저장
  * - users/{uid}/stats/{certCode} 하위 core_concept_stats, problem_type_stats, subject_stats 3차원 통계
  *   - correct/total/misconception_count: increment(전체 역사 누적)
- *   - proficiency: Elo 스타일 실시간 갱신(최신 회차 가중 반영, 1200 기준 K=32)
- * - exam_results에 predicted_pass_rate 저장
+ *   - proficiency: Elo 스타일 실시간 갱신(누적 total 기반 동적 K, 1200 기준)
+ * - exam_results에 predicted_pass_rate(raw/display)·baseline·pass_rate_kind 저장
  * - Elo 유지
  */
 
-import { collection, doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, Timestamp, increment, query, where, limit } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, Timestamp, increment, query, where, limit, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Question } from '../types';
 import type { Certification, CertificationInfo, ExamResultSubjectScores, SubjectConfig } from '../types';
-import { CERTIFICATIONS } from '../constants';
+import { CERTIFICATIONS, EXAM_ROUNDS } from '../constants';
 import { useBetaCertifications } from '../config/brand';
 
 /** 자격증 표시 이름: certification_info.exam_name 우선, 없으면 constants cert.name */
@@ -31,9 +31,6 @@ const PROBLEM_DIFFICULTY_ELO = 1200;
 const REFERENCE_DIFFICULTY = 0.6;
 /** 난이도 가중치: w_i = 1 + BETA * (d_i - REF). 0.6 근처 문항이 합격률에 직결 */
 const DIFFICULTY_WEIGHT_BETA = 0.5;
-/** proficiency 갱신 민감도 (최신 결과 반영) */
-const PROFICIENCY_K_FACTOR = 32;
-
 /**
  * 약점 우선순위 공식 (examService.calculatePriority 등에서 참조):
  * Priority = (100 - Proficiency) × 0.5 + DaysSince × 0.3 + MisconceptionCount × 5 × 0.2
@@ -67,7 +64,8 @@ function getWeightMultiplier(
     if (isConfused) return 1.1;
     return 1.0;
   }
-  if (isLucked) return 0.2;
+  /** 찍기 정답: proficiency 과대 상승 방지 (기존 0.2 → 극소) */
+  if (isLucked) return 0.05;
   if (isConfused) return 0.4;
   return 1.0;
 }
@@ -76,15 +74,24 @@ function getWeightMultiplier(
  * Elo 스타일 proficiency 갱신: Δ_base = K×(Outcome−Expected), Δ_final = Δ_base × WeightMultiplier
  * 3차원 플래그: isDontKnow(모르겠어요), isConfused(풀이시간≥예상×2.5), isLucked(찍기)
  */
+/** 누적 문항 수 기반 Elo K-factor (초반 적응, 후반 안정) */
+export function proficiencyKFromTotal(total: number): number {
+  const t = Number(total) || 0;
+  if (t < 20) return 40;
+  if (t < 100) return 24;
+  return 16;
+}
+
 function nextProficiencyWithWeight(
   oldProficiency: number,
   outcome: number,
-  weightMultiplier: number
+  weightMultiplier: number,
+  kFactor: number
 ): number {
   const expected = expectedScore(oldProficiency);
   const deltaBase = outcome - expected;
   const deltaFinal = deltaBase * weightMultiplier;
-  const newP = oldProficiency + PROFICIENCY_K_FACTOR * deltaFinal;
+  const newP = oldProficiency + kFactor * deltaFinal;
   return Math.max(100, Math.min(2500, Math.round(newP)));
 }
 
@@ -124,6 +131,10 @@ export interface SubmitQuizResultOptions {
   roundLabel?: string;
   /** 진단 Elo 재조정 시 사용 — 가입 시 선택한 난이도 */
   prepLevel?: 'beginner' | 'intermediate' | 'advanced';
+  /**
+   * true: exam_results는 저장하되 users/stats·Elo·문항 시도 집계는 건너뜀 (UI에서 기능 둘러보기로 표시된 세션)
+   */
+  excludeFromLearningStats?: boolean;
 }
 
 /** stats 하위 문서 내 키별 값: { correct, total, confused, proficiency? } */
@@ -173,11 +184,96 @@ export async function getCertificationInfo(certCode: string): Promise<Certificat
 
 const SIGMOID_CENTER = 60; // 합격선(변곡점)
 const SIGMOID_STEEPNESS = 0.08; // S자 곡선 기울기
-const PASS_RATE_PENALTY_MAX = 20; // 과락 시 최대 감점
+const PASS_RATE_PENALTY_MAX = 20; // 과락 시 최대 감점 (진단·실전형)
+const PASS_RATE_PENALTY_MAX_ADAPTIVE_40 = 12;
+const PASS_RATE_PENALTY_MAX_ADAPTIVE_80 = 15;
+const PASS_RATE_PENALTY_MAX_FOCUS = 14;
+
+const PASS_RATE_BLEND_DIAGNOSTIC_RAW = 0.8;
+const PASS_RATE_BLEND_ADAPTIVE_40_RAW = 0.35;
+const PASS_RATE_BLEND_ADAPTIVE_80_RAW = 0.55;
+const PASS_RATE_BLEND_FOCUS_RAW = 0.4;
+
+/** 직전 시험 대비 display 노이즈 완충: 최대 하락/상승(퍼센트 포인트) */
+const PASS_RATE_GUARDRAIL_MAX_DROP = 5;
+const PASS_RATE_GUARDRAIL_MAX_RISE = 8;
+const ADAPTIVE_QUESTION_COUNT_40_THRESHOLD = 45;
+
 /** 예측 합격률 하한: 처음 망쳐도 절망적인 수치 방지, 희망 유지 */
 export const PASS_RATE_MIN = 15;
 /** 예측 합격률 상한(%) */
 export const PASS_RATE_MAX = 96;
+
+export type PassRateKind = 'diagnostic' | 'adaptive' | 'focus_training';
+
+/** 실력진단 1~3회차(l/m/h_1~3 또는 EXAM_ROUNDS에서 round 1~3) */
+export function isDiagnosticRound(roundId: string | null | undefined): boolean {
+  if (!roundId || typeof roundId !== 'string') return false;
+  if (/^(l|m|h)_[123]$/.test(roundId)) return true;
+  const er = EXAM_ROUNDS.find((r) => r.id === roundId);
+  return Boolean(er && er.round >= 1 && er.round <= 3);
+}
+
+/** 약점 맞춤형 등 round ≥ 4 (또는 명시적 round 인자) */
+export function isAdaptiveRound(roundId: string | null | undefined, round?: number | null): boolean {
+  if (round != null && round >= 4) return true;
+  if (!roundId) return false;
+  const er = EXAM_ROUNDS.find((r) => r.id === roundId);
+  return Boolean(er && er.round >= 4);
+}
+
+function isFocusTrainingRoundId(roundId: string | null | undefined): boolean {
+  if (!roundId) return false;
+  return (
+    roundId === '__subject_strength__' ||
+    roundId === '__weak_type_focus__' ||
+    roundId === '__weak_concept_focus__' ||
+    roundId === '__weakness_retry__' ||
+    roundId === '__subject_retry__' ||
+    roundId === 'weakness_retry'
+  );
+}
+
+export function classifyExamPassRateContext(roundId: string | null | undefined): PassRateKind {
+  if (isFocusTrainingRoundId(roundId)) return 'focus_training';
+  if (isDiagnosticRound(roundId)) return 'diagnostic';
+  if (isAdaptiveRound(roundId)) return 'adaptive';
+  return 'adaptive';
+}
+
+function passRatePenaltyMaxForContext(kind: PassRateKind, questionCount: number): number {
+  if (kind === 'diagnostic') return PASS_RATE_PENALTY_MAX;
+  if (kind === 'focus_training') return PASS_RATE_PENALTY_MAX_FOCUS;
+  return questionCount <= ADAPTIVE_QUESTION_COUNT_40_THRESHOLD
+    ? PASS_RATE_PENALTY_MAX_ADAPTIVE_40
+    : PASS_RATE_PENALTY_MAX_ADAPTIVE_80;
+}
+
+export function passRateLabelHint(kind: PassRateKind): string {
+  if (kind === 'diagnostic') return '예측 합격률';
+  if (kind === 'adaptive') return '실전 환산 합격 가능성';
+  return '학습 구간 점검';
+}
+
+function blendWeightRaw(kind: PassRateKind, questionCount: number): number {
+  if (kind === 'diagnostic') return PASS_RATE_BLEND_DIAGNOSTIC_RAW;
+  if (kind === 'focus_training') return PASS_RATE_BLEND_FOCUS_RAW;
+  return questionCount <= ADAPTIVE_QUESTION_COUNT_40_THRESHOLD
+    ? PASS_RATE_BLEND_ADAPTIVE_40_RAW
+    : PASS_RATE_BLEND_ADAPTIVE_80_RAW;
+}
+
+/**
+ * 문항 수·회차 유형에 따른 단회 결과 신뢰도( raw 가중 ).
+ * display = rawW * rawPass + (1-rawW) * baseline 에 그대로 사용.
+ */
+export function getQuestionCountConfidence(
+  questionCount: number,
+  roundKind: PassRateKind
+): { rawWeight: number; baselineWeight: number } {
+  const rawW = blendWeightRaw(roundKind, questionCount);
+  return { rawWeight: rawW, baselineWeight: 1 - rawW };
+}
 
 /** 시그모이드: 합격선 60점 근처에서 점수 차이가 %에 민감하게 반영되도록 S자 변환 */
 function applySigmoidTransform(score: number): number {
@@ -194,7 +290,8 @@ function applySigmoidTransform(score: number): number {
  */
 function computePredictedPassRate(
   subject_scores: ExamResultSubjectScores,
-  minSubjectScore: number = MIN_SUBJECT_SCORE_FOR_STABILITY
+  minSubjectScore: number = MIN_SUBJECT_SCORE_FOR_STABILITY,
+  penaltyMax: number = PASS_RATE_PENALTY_MAX
 ): number {
   const scores = Object.values(subject_scores);
   if (scores.length === 0) return PASS_RATE_MIN;
@@ -202,12 +299,140 @@ function computePredictedPassRate(
   const minScore = Math.min(...scores);
   let penalty = 0;
   if (minScore < minSubjectScore) {
-    penalty = ((minSubjectScore - minScore) / minSubjectScore) * PASS_RATE_PENALTY_MAX;
+    penalty = ((minSubjectScore - minScore) / minSubjectScore) * penaltyMax;
   }
   let rawPassRate = Math.max(0, Math.min(100, avgScore - penalty));
   const sigmoidPassRate = applySigmoidTransform(rawPassRate);
   const finalPassRate = Math.max(PASS_RATE_MIN, Math.min(PASS_RATE_MAX, sigmoidPassRate));
   return finalPassRate;
+}
+
+/** 난이도 보정(α) 적용 후 원시 예측합격률 (baseline·display 혼합 전) */
+function computeRawPassRateAfterAlpha(
+  subject_scores: ExamResultSubjectScores,
+  minSubjectScore: number,
+  penaltyMax: number,
+  alpha: number
+): number {
+  const P = computePredictedPassRate(subject_scores, minSubjectScore, penaltyMax);
+  return Math.max(PASS_RATE_MIN, Math.min(99, Math.round(alpha * P)));
+}
+
+function estimateBaselineFromSubjectStats(subjectStats: Record<string, StatEntry>): number | null {
+  const keys = Object.keys(subjectStats);
+  if (keys.length === 0) return null;
+  let sum = 0;
+  let n = 0;
+  for (const k of keys) {
+    const ent = subjectStats[k];
+    const prof = ent?.proficiency;
+    if (prof != null && Number.isFinite(prof)) {
+      sum += eloToPercent(prof);
+      n++;
+    } else {
+      const t = ent?.total ?? 0;
+      const c = ent?.correct ?? 0;
+      if (t > 0) {
+        sum += Math.round((c / t) * 100);
+        n++;
+      }
+    }
+  }
+  if (n === 0) return null;
+  const avg = sum / n;
+  return Math.max(PASS_RATE_MIN, Math.min(99, Math.round(avg)));
+}
+
+/** 최근 진단 회차(display→raw 순)에서 baseline용 수치 수집 */
+async function fetchRecentDiagnosticPassRatesForBaseline(uid: string, certCode: string): Promise<number[]> {
+  const examColRef = collection(db, 'users', uid, 'exam_results');
+  let snapshot;
+  try {
+    snapshot = await getDocs(query(examColRef, orderBy('submittedAt', 'desc'), limit(30)));
+  } catch {
+    return [];
+  }
+  const certIdMatch = CERTIFICATIONS.find((c) => c.code === certCode)?.id;
+  const rates: number[] = [];
+  for (const d of snapshot.docs) {
+    const data = d.data() as Record<string, unknown>;
+    const match = data.certCode === certCode || (certIdMatch != null && data.certId === certIdMatch);
+    if (!match) continue;
+    const rid = data.roundId as string | null | undefined;
+    if (!isDiagnosticRound(rid)) continue;
+    const disp = data.predicted_pass_rate_display ?? data.predicted_pass_rate;
+    const raw = data.predicted_pass_rate_raw;
+    const v =
+      typeof disp === 'number' && Number.isFinite(disp)
+        ? disp
+        : typeof raw === 'number' && Number.isFinite(raw)
+          ? raw
+          : null;
+    if (v != null) rates.push(Math.max(PASS_RATE_MIN, Math.min(99, Math.round(Number(v)))));
+    if (rates.length >= 3) break;
+  }
+  return rates;
+}
+
+function weightedDiagnosticRatesAverage(ratesNewestFirst: number[]): number {
+  if (ratesNewestFirst.length === 0) return PASS_RATE_MIN;
+  const weights = [0.2, 0.3, 0.5];
+  const slice = ratesNewestFirst.slice(0, 3);
+  const oldestFirst = [...slice].reverse();
+  const w = weights.slice(weights.length - oldestFirst.length);
+  const wSum = w.reduce((a, b) => a + b, 0);
+  return Math.round(oldestFirst.reduce((acc, val, i) => acc + val * w[i], 0) / wSum);
+}
+
+export async function computeBaselinePassRate(
+  uid: string,
+  certCode: string,
+  subjectStats: Record<string, StatEntry>,
+  rawFallback: number
+): Promise<number> {
+  const diagRates = await fetchRecentDiagnosticPassRatesForBaseline(uid, certCode);
+  if (diagRates.length > 0) {
+    return Math.max(PASS_RATE_MIN, Math.min(99, weightedDiagnosticRatesAverage(diagRates)));
+  }
+  const fromStats = estimateBaselineFromSubjectStats(subjectStats);
+  if (fromStats != null) return fromStats;
+  return Math.max(PASS_RATE_MIN, Math.min(99, Math.round(rawFallback)));
+}
+
+export function blendDisplayPassRate(
+  rawPassRate: number,
+  baselinePassRate: number,
+  kind: PassRateKind,
+  questionCount: number
+): number {
+  const wR = blendWeightRaw(kind, questionCount);
+  const wB = 1 - wR;
+  const blended = wR * rawPassRate + wB * baselinePassRate;
+  return Math.max(PASS_RATE_MIN, Math.min(99, Math.round(blended)));
+}
+
+/** 단회 노이즈 완충: 직전 display 대비 하/상한 클램프 */
+export function applyPassRateGuardrail(previousDisplay: number | null, nextDisplay: number): number {
+  if (previousDisplay == null || !Number.isFinite(previousDisplay)) return nextDisplay;
+  const lo = previousDisplay - PASS_RATE_GUARDRAIL_MAX_DROP;
+  const hi = previousDisplay + PASS_RATE_GUARDRAIL_MAX_RISE;
+  return Math.max(PASS_RATE_MIN, Math.min(99, Math.round(Math.min(hi, Math.max(lo, nextDisplay)))));
+}
+
+async function fetchPreviousDisplayPassRate(uid: string, certCode: string): Promise<number | null> {
+  const certIdMatch = CERTIFICATIONS.find((c) => c.code === certCode)?.id;
+  try {
+    const examColRef = collection(db, 'users', uid, 'exam_results');
+    const snapshot = await getDocs(query(examColRef, orderBy('submittedAt', 'desc'), limit(1)));
+    if (snapshot.empty) return null;
+    const data = snapshot.docs[0].data() as Record<string, unknown>;
+    const match = data.certCode === certCode || (certIdMatch != null && data.certId === certIdMatch);
+    if (!match) return null;
+    const v = data.predicted_pass_rate_display ?? data.predicted_pass_rate;
+    return typeof v === 'number' && Number.isFinite(v) ? Math.max(PASS_RATE_MIN, Math.min(99, v)) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -263,7 +488,9 @@ export async function submitQuizResult(
   options?: SubmitQuizResultOptions
 ): Promise<{ examId: string; subject_scores: ExamResultSubjectScores; is_passed: boolean } | null> {
   const certCode = certIdToCode(certId);
-  if (!certCode) return null;
+  if (!certCode) {
+    return null;
+  }
 
   const certInfo = await getCertificationInfo(certCode);
   const qMap = new Map(questions.map((q) => [q.id, q]));
@@ -327,16 +554,6 @@ export async function submitQuizResult(
     is_passed = noFail && avg >= average_score;
   }
 
-  // ---- 예측 합격률: 시그모이드 합격률 × 난이도 보정(α) ----
-  const P_raw = computePredictedPassRate(subject_scores, minSubjectScore);
-  const avgDifficulty =
-    sessionHistory.length > 0 ? sumDifficulty / sessionHistory.length : REFERENCE_DIFFICULTY;
-  const alpha =
-    avgDifficulty <= REFERENCE_DIFFICULTY
-      ? 0.5 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY)
-      : Math.min(1.2, 0.7 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY));
-  const predicted_pass_rate = Math.max(PASS_RATE_MIN, Math.min(99, Math.round(alpha * P_raw)));
-
   // ---- stats 선로드 (플래그·가중치 계산에 초기 proficiency 필요) ----
   // 서버에서 읽어 2회차 제출 시 캐시된 빈 스냅으로 기존 스탯이 덮어씌워지는 것 방지
   const statsRef = doc(db, 'users', uid, 'stats', certCode);
@@ -371,6 +588,42 @@ export async function submitQuizResult(
   for (const [pathKey, entry] of Object.entries(subCoreIdStats)) {
     subCoreIdProficiencyInit[sanitizeKey(pathKey)] = getProficiency(entry);
   }
+
+  // ---- 예측 합격률: raw(α·가변 과락) → baseline 혼합 → display 가드레일 ----
+  const roundIdPass = options?.roundId ?? null;
+  const passRateKind = classifyExamPassRateContext(roundIdPass);
+  const questionCountUsed = sessionHistory.length;
+  const avgDifficulty =
+    sessionHistory.length > 0 ? sumDifficulty / sessionHistory.length : REFERENCE_DIFFICULTY;
+  const alpha =
+    avgDifficulty <= REFERENCE_DIFFICULTY
+      ? 0.5 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY)
+      : Math.min(1.2, 0.7 + 0.5 * (avgDifficulty / REFERENCE_DIFFICULTY));
+  const penaltyMax = passRatePenaltyMaxForContext(passRateKind, questionCountUsed);
+  const predicted_pass_rate_raw = computeRawPassRateAfterAlpha(
+    subject_scores,
+    minSubjectScore,
+    penaltyMax,
+    alpha
+  );
+  const baseline_pass_rate_used = await computeBaselinePassRate(
+    uid,
+    certCode,
+    subjectStats,
+    predicted_pass_rate_raw
+  );
+  const blended_before_guard = blendDisplayPassRate(
+    predicted_pass_rate_raw,
+    baseline_pass_rate_used,
+    passRateKind,
+    questionCountUsed
+  );
+  const previousDisplay = await fetchPreviousDisplayPassRate(uid, certCode);
+  const predicted_pass_rate_display = applyPassRateGuardrail(previousDisplay, blended_before_guard);
+  /** 호환: 기존 클라이언트는 predicted_pass_rate = UI 표시값과 동일하게 유지 */
+  const predicted_pass_rate = predicted_pass_rate_display;
+  const pass_rate_kind = passRateKind;
+  const pass_rate_label_hint = passRateLabelHint(passRateKind);
 
   const CONFUSED_TIME_MULT = 2.5;
   const LUCKED_TIME_MULT = 0.5;
@@ -417,14 +670,23 @@ export async function submitQuizResult(
   // ---- exam_results 저장 ----
   const examId = options?.examId ?? `exam_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const examRef = doc(db, 'users', uid, 'exam_results', examId);
+  const excludeFromLearningStats = options?.excludeFromLearningStats === true;
+
   const examData = {
     certId,
     certCode,
     roundId: options?.roundId ?? null,
     ...(options?.roundLabel != null && options.roundLabel !== '' ? { roundLabel: options.roundLabel } : {}),
+    ...(excludeFromLearningStats ? { excludeFromLearningStats: true } : {}),
     subject_scores,
     is_passed,
     predicted_pass_rate,
+    predicted_pass_rate_raw,
+    predicted_pass_rate_display,
+    baseline_pass_rate_used,
+    pass_rate_kind,
+    pass_rate_label_hint,
+    question_count_used: questionCountUsed,
     totalQuestions: sessionHistory.length,
     correctCount: sessionHistory.filter((r) => r.isCorrect).length,
     answers: answersWithFlags,
@@ -445,6 +707,10 @@ export async function submitQuizResult(
       error: err,
     });
     throw err;
+  }
+
+  if (excludeFromLearningStats) {
+    return { examId, subject_scores, is_passed };
   }
 
   // ---- 3차원 통계 + 태그 + 세부개념(sub_core_id) 집계 (시간기준 confused, dontknow) ----
@@ -521,6 +787,23 @@ export async function submitQuizResult(
   const subjectProficiency: Record<string, number> = { ...subjectProficiencyInit };
   const subCoreIdProficiency: Record<string, number> = { ...subCoreIdProficiencyInit };
 
+  const conceptTotalForK = new Map<string, number>();
+  for (const [pathKey, entry] of Object.entries(conceptStats)) {
+    conceptTotalForK.set(sanitizeKey(pathKey), entry?.total ?? 0);
+  }
+  const problemTypeTotalForK = new Map<string, number>();
+  for (const [pathKey, entry] of Object.entries(problemTypeStats)) {
+    problemTypeTotalForK.set(sanitizeKey(pathKey), entry?.total ?? 0);
+  }
+  const subjectTotalForK = new Map<string, number>();
+  for (const [pathKey, entry] of Object.entries(subjectStats)) {
+    subjectTotalForK.set(sanitizeKey(pathKey), entry?.total ?? 0);
+  }
+  const subCoreTotalForK = new Map<string, number>();
+  for (const [pathKey, entry] of Object.entries(subCoreIdStats)) {
+    subCoreTotalForK.set(sanitizeKey(pathKey), entry?.total ?? 0);
+  }
+
   for (let i = 0; i < sessionHistory.length; i++) {
     const rec = sessionHistory[i];
     const ans = answersWithFlags[i];
@@ -533,34 +816,54 @@ export async function submitQuizResult(
     const subCoreKey = (q.sub_core_id ?? '').trim();
     if (subCoreKey) {
       const pathKey = sanitizeKey(subCoreKey);
+      const t0 = subCoreTotalForK.get(pathKey) ?? 0;
+      const kSub = proficiencyKFromTotal(t0);
       subCoreIdProficiency[pathKey] = nextProficiencyWithWeight(
         subCoreIdProficiency[pathKey] ?? DEFAULT_ELO,
         outcome,
-        weight
+        weight,
+        kSub
       );
+      subCoreTotalForK.set(pathKey, t0 + 1);
     }
 
     const cKey = sanitizeKey((q.core_concept ?? '').trim() || '기타');
-    conceptProficiency[cKey] = nextProficiencyWithWeight(conceptProficiency[cKey] ?? DEFAULT_ELO, outcome, weight);
+    const tConcept = conceptTotalForK.get(cKey) ?? 0;
+    const kConcept = proficiencyKFromTotal(tConcept);
+    conceptProficiency[cKey] = nextProficiencyWithWeight(
+      conceptProficiency[cKey] ?? DEFAULT_ELO,
+      outcome,
+      weight,
+      kConcept
+    );
+    conceptTotalForK.set(cKey, tConcept + 1);
 
     for (const pt of Array.isArray(q.problem_types) ? q.problem_types : []) {
       if (!pt || typeof pt !== 'string') continue;
       const ptKey = sanitizeKey(String(pt).trim());
       if (!ptKey) continue;
+      const tPt = problemTypeTotalForK.get(ptKey) ?? 0;
+      const kPt = proficiencyKFromTotal(tPt);
       problemTypeProficiency[ptKey] = nextProficiencyWithWeight(
         problemTypeProficiency[ptKey] ?? DEFAULT_ELO,
         outcome,
-        weight
+        weight,
+        kPt
       );
+      problemTypeTotalForK.set(ptKey, tPt + 1);
     }
 
     const subjKey = q.subject_number != null ? String(q.subject_number) : '0';
     const subjPathKey = sanitizeKey(subjKey);
+    const tSubj = subjectTotalForK.get(subjPathKey) ?? 0;
+    const kSubj = proficiencyKFromTotal(tSubj);
     subjectProficiency[subjPathKey] = nextProficiencyWithWeight(
       subjectProficiency[subjPathKey] ?? DEFAULT_ELO,
       outcome,
-      weight
+      weight,
+      kSubj
     );
+    subjectTotalForK.set(subjPathKey, tSubj + 1);
   }
 
   const updates: Record<string, ReturnType<typeof increment> | number | string[]> = {};

@@ -2,12 +2,59 @@ import React, { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { EXAM_ROUNDS, CERTIFICATIONS, CERT_IDS_WITH_QUESTIONS, getRoundNumberFromRoundId } from '../constants';
-import { useBetaCertifications } from '../config/brand';
+import { useBetaCertifications, showCommercialSubscriptionCopy } from '../config/brand';
 import { Lock, Play, FileText, CheckCircle, X, BookOpen, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
 import { getExamService } from '../services/examServiceLoader';
 import { eloToPercent } from '../services/gradingService';
 import { User } from '../types';
 import type { ExamRound } from '../types';
+import { useIsMobile } from '../hooks/use-mobile';
+import { CopyrightNotice } from '../components/copyright';
+
+type LockReason = 'guest' | 'free' | 'premium_sequential' | null;
+
+/** 모바일 카드 한 줄 설명(잠금 시 공통 규칙 문구, 상세는 시트에서) */
+function getMobileRoundSubtitle(
+  roundNum: number,
+  isCuration: boolean,
+  defaultDesc: string,
+  locked: boolean,
+  reason: LockReason,
+  useBetaCertifications: boolean,
+): string {
+  if (isCuration && useBetaCertifications) {
+    if (!locked) return 'AI 맞춤형 · 시작 시 40문항(빠름) 또는 80문항(실전) 선택';
+    if (reason === 'free') {
+      return showCommercialSubscriptionCopy
+        ? '이용권으로 맞춤형 전체 이용'
+        : '1·2회차 학습 후 단계적으로 열려요';
+    }
+    if (reason === 'guest') return '로그인 후 회차 선택';
+  }
+  if (isCuration && !locked) return 'AI 맞춤형 · 약점 기반 큐레이션';
+  if (locked && reason === 'guest') return '로그인 후 이 회차를 풀 수 있어요';
+  if (locked && reason === 'free') {
+    return showCommercialSubscriptionCopy
+      ? '무료는 1·2회차까지 · 전체는 이용권'
+      : '무료는 1·2회차까지 · 이후 회차는 단계적으로 열려요';
+  }
+  if (locked && reason === 'premium_sequential') return '앞 회차를 먼저 완료하면 열려요';
+  return defaultDesc;
+}
+
+function getMobileRoundCtaLabel(
+  isExpired: boolean | undefined,
+  locked: boolean,
+  reason: LockReason,
+): string {
+  if (isExpired) return '결과 미리보기';
+  if (!locked) return '시작하기';
+  if (reason === 'guest') return '로그인';
+  if (reason === 'free') return showCommercialSubscriptionCopy ? '이용권 안내' : '이용 안내';
+  if (reason === 'premium_sequential') return '안내 보기';
+  return '확인';
+}
+
 interface ExamListProps {
   certId: string;
   user: User | null;
@@ -65,6 +112,7 @@ export const ExamList: React.FC<ExamListProps> = ({
   initialRoundId = null,
   onRequestLogin,
 }) => {
+  const isMobile = useIsMobile();
   const initialRoundIdOpenedRef = React.useRef<string | null>(null);
   const [showStaticModal, setShowStaticModal] = useState(false);
   /** 결과 화면에서 "다음 회차"로 진입 시: 5초 오버레이 종료 후 이 값이 있으면 proceedWithRound 호출 */
@@ -267,9 +315,8 @@ export const ExamList: React.FC<ExamListProps> = ({
     }
     if (!user) {
       consumedStartNextRef.current = null;
-      setLockedMessage('로그인이 필요한 서비스입니다.');
-      setLockedAction('login');
-      setShowLockedModal(true);
+      if (onRequestLogin) onRequestLogin();
+      else onNavigate('/login');
       onConsumedStartNext();
       return;
     }
@@ -298,7 +345,7 @@ export const ExamList: React.FC<ExamListProps> = ({
       onSelectRound(nextRound.id, 'exam');
       onConsumedStartNext();
     }
-  }, [startNextAfterRoundId, onConsumedStartNext, certId, allRounds, completedRoundIds, user, isPremiumUser, onSelectRound]);
+  }, [startNextAfterRoundId, onConsumedStartNext, certId, allRounds, completedRoundIds, user, isPremiumUser, onSelectRound, onRequestLogin, onNavigate]);
 
   /** 맞춤형 모의고사 준비: 5초 카운트다운 → 준비 완료 문구 → 목록 복귀 (또는 결과 화면에서 온 자동 다음 회차 시 proceedWithRound 호출) */
   useEffect(() => {
@@ -331,7 +378,6 @@ export const ExamList: React.FC<ExamListProps> = ({
     }
   }, [showPreparingOverlay, preparingPhase, preparingCountdown]);
 
-  type LockReason = 'guest' | 'free' | 'premium_sequential' | null;
   function getLockState(round: ExamRound): { locked: boolean; reason: LockReason } {
     if (isExpired) return { locked: false, reason: null };
     const n = round.round;
@@ -360,9 +406,8 @@ export const ExamList: React.FC<ExamListProps> = ({
     }
     if (locked && reason) {
       if (reason === 'guest') {
-        setLockedMessage('로그인이 필요한 서비스입니다.');
-        setLockedAction('login');
-        setShowLockedModal(true);
+        if (onRequestLogin) onRequestLogin();
+        else onNavigate('/login');
         return;
       }
       if (reason === 'free') {
@@ -429,14 +474,14 @@ export const ExamList: React.FC<ExamListProps> = ({
   };
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto bg-[#edf1f5]">
-    <div className="max-w-6xl mx-auto px-5 py-10 relative">
-      <div className="text-center mb-12">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-[#edf1f5] overscroll-contain">
+    <div className="max-w-6xl mx-auto px-4 sm:px-5 py-5 sm:py-10 relative pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      <div className="text-center mb-5 sm:mb-12">
         <span className={`px-3 py-1 rounded-full text-xs font-black uppercase mb-3 inline-block ${isExpired ? 'bg-slate-200 text-slate-500' : 'bg-[#99ccff] text-[#1e56cd]'}`}>
           {isExpired ? 'Expired Subscription' : 'Certification'}
         </span>
-        <h1 className="text-3xl font-black text-slate-900 mb-2">{cert?.name}</h1>
-        <p className="text-slate-500">원하는 모의고사 회차를 선택하세요.</p>
+        <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mb-2">{cert?.name}</h1>
+        <p className="text-slate-500 text-sm sm:text-base">원하는 모의고사 회차를 선택하세요.</p>
         {!user && (
           <p className="text-sm text-[#1e56cd] font-semibold mt-3">
             로그인 후 회차를 선택하면 모의고사를 풀 수 있습니다. (구글 로그인)
@@ -449,14 +494,12 @@ export const ExamList: React.FC<ExamListProps> = ({
         )}
       </div>
 
-      <div className="space-y-4">
+      <div className={isMobile ? 'space-y-3' : 'space-y-4'}>
         {rounds.map((round, index) => {
           const { locked, reason } = getLockState(round);
           const roundNum = round.round;
           const isCurationSlot = roundNum >= 4;
-          /** 목록에서 보이는 순서 번호 (1, 2, 3, 4, …) → [차시] 및 제목에 사용 */
           const displayOrder = index + 1;
-          /** 약점 공략만 목록 내 순번(1회, 2회, …) — 6회차 이상 항상 약점 강화형 */
           const curationOrderInList = rounds.slice(0, index).filter((r) => r.round >= 4).length + 1;
           const baseTitle =
             roundNum <= 3
@@ -466,18 +509,157 @@ export const ExamList: React.FC<ExamListProps> = ({
           const displayDesc = getRoundDisplayDescription(round, roundNum);
           const isCompleted = completedRoundIds.has(round.id);
           const isCurrent = nextRoundToPlay?.id === round.id;
-          /** 목록에서 첫 맞춤형 슬롯 → 신비로운 그라데이션, 나머지 맞춤형 → 일반 카드 */
           const isMysteryBox = isCurationSlot && nextVisibleCurationRound?.id === round.id && !locked;
           const isNormalCurationBox = isCurationSlot && nextVisibleCurationRound?.id !== round.id;
-          /** 무료 유저 4회차+: 신비로운/일반 큐레이션 스타일 유지 + 자물쇠 덮어씌워 결제 유도 */
           const isFreeLockedCuration = locked && reason === 'free' && isCurationSlot;
+          const gradientHero =
+            isMysteryBox || (isFreeLockedCuration && nextVisibleCurationRound?.id === round.id);
+
+          if (isMobile) {
+            const mobileSubtitle = getMobileRoundSubtitle(
+              roundNum,
+              isCurationSlot,
+              displayDesc,
+              locked,
+              reason,
+              useBetaCertifications,
+            );
+            const mobileCta = getMobileRoundCtaLabel(isExpired, locked, reason);
+            return (
+              <div
+                key={round.id}
+                className={`
+                  rounded-2xl border p-4 flex flex-col gap-3 transition-all shadow-sm
+                  ${locked && !isFreeLockedCuration
+                    ? 'bg-slate-50 border-slate-200 opacity-80'
+                    : isFreeLockedCuration
+                      ? gradientHero
+                        ? 'bg-gradient-to-br from-[#0034d3] via-[#1e56cd] to-[#003087] border-[#1e56cd]/50 shadow-[#1e56cd]/25'
+                        : 'bg-white border-slate-200'
+                      : isMysteryBox
+                        ? 'bg-gradient-to-br from-[#0034d3] via-[#1e56cd] to-[#003087] border-[#1e56cd]/50 shadow-[#1e56cd]/25'
+                        : isNormalCurationBox
+                          ? 'bg-white border-slate-200'
+                          : isCurrent
+                            ? 'bg-[#1e56cd]/10 border-[#1e56cd]/45'
+                            : 'bg-white border-slate-200'}
+                `}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <div
+                    className={`
+                    w-11 h-11 rounded-xl flex items-center justify-center text-sm font-black shrink-0
+                    ${isExpired
+                      ? 'bg-slate-200 text-slate-500'
+                      : gradientHero
+                        ? 'bg-white/15 text-white border border-white/15'
+                        : isFreeLockedCuration && !gradientHero
+                          ? 'bg-[#1e56cd] text-white'
+                          : isCompleted
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : isCurationSlot && !locked
+                              ? 'bg-[#1e56cd] text-white'
+                              : 'bg-slate-100 text-slate-700'}
+                  `}
+                  >
+                    {displayOrder}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                      {isCurationSlot && (
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                            gradientHero ? 'bg-white/20 text-white' : 'bg-[#1e56cd]/15 text-[#1e56cd]'
+                          }`}
+                        >
+                          맞춤형
+                        </span>
+                      )}
+                      {isCompleted && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            gradientHero ? 'bg-white/15 text-white' : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          완료
+                        </span>
+                      )}
+                      {!locked && !isCompleted && isCurrent && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            gradientHero ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-900'
+                          }`}
+                        >
+                          추천
+                        </span>
+                      )}
+                      {locked && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            gradientHero ? 'bg-white/15 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {reason === 'guest'
+                            ? '로그인'
+                            : reason === 'free'
+                              ? showCommercialSubscriptionCopy
+                                ? '이용권'
+                                : '단계'
+                              : reason === 'premium_sequential'
+                                ? '순서'
+                                : '잠금'}
+                        </span>
+                      )}
+                    </div>
+                    <h3
+                      className={`font-bold text-[15px] leading-snug ${
+                        gradientHero ? 'text-white' : 'text-slate-900'
+                      }`}
+                    >
+                      {displayTitle}
+                    </h3>
+                    <p
+                      className={`text-xs mt-1 leading-relaxed line-clamp-2 ${
+                        gradientHero ? 'text-white/85' : 'text-slate-500'
+                      }`}
+                    >
+                      {mobileSubtitle}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRoundClick(round.id, locked, reason)}
+                  className={`
+                    min-h-[48px] w-full rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-colors
+                    ${isExpired
+                      ? 'bg-slate-700 text-white active:bg-slate-800'
+                      : locked && !isFreeLockedCuration
+                        ? 'bg-slate-200 text-slate-800 active:bg-slate-300'
+                        : gradientHero
+                          ? 'bg-white text-[#1e56cd] active:bg-white/90'
+                          : 'bg-[#1e56cd] text-white active:bg-[#1644a8]'}
+                  `}
+                >
+                  {isExpired ? (
+                    <FileText className="w-4 h-4 shrink-0" />
+                  ) : !locked ? (
+                    <Play className="w-4 h-4 shrink-0" fill="currentColor" />
+                  ) : (
+                    <Lock className="w-4 h-4 shrink-0" />
+                  )}
+                  {mobileCta}
+                </button>
+              </div>
+            );
+          }
 
           return (
             <div
               key={round.id}
               onClick={() => handleRoundClick(round.id, locked, reason)}
               className={`
-                group relative border rounded-2xl p-6 flex items-center justify-between transition-all select-none
+                group relative border rounded-2xl p-4 sm:p-6 flex items-center justify-between gap-3 transition-all select-none min-h-[72px]
                 ${locked && !isFreeLockedCuration
                   ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
                   : isFreeLockedCuration
@@ -490,8 +672,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                       ? 'bg-white border-slate-200 hover:border-[#1e56cd] hover:shadow-md cursor-pointer hover:-translate-y-0.5'
                       : isCurrent
                         ? 'bg-[#1e56cd]/10 border-[#1e56cd]/50 hover:border-[#1e56cd] hover:shadow-md cursor-pointer hover:-translate-y-0.5'
-                        : 'bg-white border-slate-200 hover:border-[#1e56cd] hover:shadow-md cursor-pointer hover:-translate-y-0.5'
-                }
+                        : 'bg-white border-slate-200 hover:border-[#1e56cd] hover:shadow-md cursor-pointer hover:-translate-y-0.5'}
               `}
             >
               <div className="flex items-center gap-5">
@@ -514,8 +695,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                             ? 'bg-emerald-100 text-emerald-700'
                             : isCurationSlot
                               ? 'bg-[#1e56cd] text-white shadow-md shadow-[#1e56cd]/30'
-                              : 'bg-slate-100 text-slate-600 group-hover:bg-[#99ccff]/50 group-hover:text-[#1e56cd]'
-                  }
+                              : 'bg-slate-100 text-slate-600 group-hover:bg-[#99ccff]/50 group-hover:text-[#1e56cd]'}
                 `}
                 >
                   {displayOrder}
@@ -525,9 +705,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                     className={`font-bold text-lg flex items-center gap-2 flex-wrap ${
                       isMysteryBox || (isFreeLockedCuration && nextVisibleCurationRound?.id === round.id)
                         ? 'text-white'
-                        : isNormalCurationBox || isFreeLockedCuration
-                          ? 'text-slate-900'
-                          : 'text-slate-900'
+                        : 'text-slate-900'
                     }`}
                   >
                     {displayTitle}
@@ -536,9 +714,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                     className={`text-xs mt-1 font-medium ${
                       isMysteryBox || (isFreeLockedCuration && nextVisibleCurationRound?.id === round.id)
                         ? 'text-white/70'
-                        : isNormalCurationBox || isFreeLockedCuration
-                          ? 'text-slate-400'
-                          : 'text-slate-400'
+                        : 'text-slate-400'
                     }`}
                   >
                     {displayDesc}
@@ -551,15 +727,15 @@ export const ExamList: React.FC<ExamListProps> = ({
                   <FileText className="text-slate-300" />
                 ) : locked ? (
                   isFreeLockedCuration ? (
-<div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         nextVisibleCurationRound?.id === round.id
                           ? 'bg-white/15 text-white border border-white/20'
                           : 'bg-[#99ccff] text-[#1e56cd]'
                       }`}
-                  >
-                    <Lock className="w-5 h-5" />
-                  </div>
+                    >
+                      <Lock className="w-5 h-5" />
+                    </div>
                   ) : (
                     <Lock className="text-slate-400 w-6 h-6" />
                   )
@@ -580,24 +756,34 @@ export const ExamList: React.FC<ExamListProps> = ({
           );
         })}
 
-        {/* 3회 미완료 시 다음 회차 암시용 딤 카드 (클릭 불가) */}
-        {showTeaser4 && (
-          <div
-            className="rounded-2xl p-6 flex items-center justify-between border border-slate-400/50 bg-slate-700/90 opacity-60 cursor-not-allowed select-none"
-            aria-hidden
-          >
-            <div className="flex items-center gap-5">
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-black shrink-0 bg-slate-600 text-white/90">
-                ?
-              </div>
-              <div>
-                <h3 className="font-bold text-lg text-white/90">다음 회차</h3>
-                <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (약점 공략 모의고사)</p>
-              </div>
+        {showTeaser4 &&
+          (isMobile ? (
+            <div
+              className="rounded-2xl p-4 border border-slate-500/40 bg-slate-800/90 text-center cursor-not-allowed select-none opacity-90"
+              aria-hidden
+            >
+              <span className="text-[10px] font-black uppercase tracking-wide text-white/50">맞춤형</span>
+              <p className="text-white font-bold text-sm mt-1">다음 회차</p>
+              <p className="text-white/55 text-xs mt-1">실력 확인 3회 완료 후 열려요</p>
+              <Lock className="w-4 h-4 text-white/35 mx-auto mt-2" />
             </div>
-            <Lock className="text-white/50 w-6 h-6 shrink-0" />
-          </div>
-        )}
+          ) : (
+            <div
+              className="rounded-2xl p-6 flex items-center justify-between border border-slate-400/50 bg-slate-700/90 opacity-60 cursor-not-allowed select-none"
+              aria-hidden
+            >
+              <div className="flex items-center gap-5">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-black shrink-0 bg-slate-600 text-white/90">
+                  ?
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-white/90">다음 회차</h3>
+                  <p className="text-xs mt-1 font-medium text-white/60">3회 완료 후 이용 가능 (약점 공략 모의고사)</p>
+                </div>
+              </div>
+              <Lock className="text-white/50 w-6 h-6 shrink-0" />
+            </div>
+          ))}
       </div>
 
       {/* 4회차 이상 준비: 5초 오버레이 후 /quiz (getQuestionsForRound → user_rounds 박제) */}
@@ -612,9 +798,9 @@ export const ExamList: React.FC<ExamListProps> = ({
             ? `${displayName}님의 취약개념 ${top2Concepts.join(', ')} 개념을 포함해 맞춤 문항을 제작하고 있어요.`
             : '당신의 취약 유형·취약 개념을 반영해 맞춤 문항을 제작하고 있어요.';
         return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden">
-            <div className="px-8 py-10 text-center">
+        <div className={`fixed inset-0 z-[60] flex bg-slate-900/85 backdrop-blur-md ${isMobile ? 'items-stretch justify-stretch p-0' : 'items-center justify-center p-4'}`}>
+          <div className={`w-full max-w-lg bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-600/50 shadow-2xl shadow-black/40 overflow-hidden flex flex-col min-h-0 ${isMobile ? 'max-h-[100dvh] rounded-none mt-auto' : 'rounded-3xl'}`}>
+            <div className={`px-6 py-8 md:px-8 md:py-10 text-center flex-1 flex flex-col justify-center ${isMobile ? 'pb-[max(2rem,env(safe-area-inset-bottom))]' : ''}`}>
               {preparingPhase === 'countdown' ? (
                 <>
                   <div className="flex justify-center mb-6">
@@ -659,17 +845,17 @@ export const ExamList: React.FC<ExamListProps> = ({
         );
       })()}
 
-      {/* 모드 선택: 실전 시험 모드 / AI 학습 모드 (영역 외 클릭 시 닫기) */}
+      {/* 모드 선택: 모바일은 바텀 시트, 데스크톱은 중앙 모달 */}
       {showModeModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-5"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-5"
           onClick={() => { setShowModeModal(false); setPendingRoundId(null); }}
           role="presentation"
           aria-modal="true"
         >
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-none" aria-hidden />
           <div
-            className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-scale-in"
+            className="relative z-10 w-full max-w-sm max-h-[min(92dvh,100%)] bg-white shadow-2xl overflow-y-auto overscroll-contain rounded-2xl p-6 animate-scale-in border border-slate-100"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-black text-slate-900 mb-2">모의고사 모드 선택</h3>
@@ -684,7 +870,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                       <button
                         type="button"
                         onClick={() => setPendingQuestionCount(40)}
-                        className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
+                        className={`flex-1 min-h-[48px] py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
                           pendingQuestionCount === 40 ? 'border-[#1e56cd] bg-[#99ccff]/20 text-[#1e56cd]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                         }`}
                       >
@@ -693,7 +879,7 @@ export const ExamList: React.FC<ExamListProps> = ({
                       <button
                         type="button"
                         onClick={() => setPendingQuestionCount(80)}
-                        className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
+                        className={`flex-1 min-h-[48px] py-2.5 rounded-xl border-2 text-sm font-bold transition-colors ${
                           pendingQuestionCount === 80 ? 'border-[#1e56cd] bg-[#99ccff]/20 text-[#1e56cd]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                         }`}
                       >
@@ -709,7 +895,7 @@ export const ExamList: React.FC<ExamListProps> = ({
               <button
                 type="button"
                 onClick={() => handleModeSelect('study')}
-                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-[#1e56cd] hover:bg-[#99ccff]/20 transition-colors"
+                className="flex items-center gap-3 w-full min-h-[52px] rounded-xl border-2 border-slate-200 p-4 text-left hover:border-[#1e56cd] hover:bg-[#99ccff]/20 transition-colors"
               >
                 <div className="w-10 h-10 rounded-lg bg-[#99ccff] flex items-center justify-center shrink-0">
                   <BookOpen className="w-5 h-5 text-[#1e56cd]" />
@@ -722,7 +908,7 @@ export const ExamList: React.FC<ExamListProps> = ({
               <button
                 type="button"
                 onClick={() => handleModeSelect('exam')}
-                className="flex items-center gap-3 w-full rounded-xl border-2 border-slate-200 p-4 text-left hover:border-[#1e56cd] hover:bg-[#99ccff]/20 transition-colors"
+                className="flex items-center gap-3 w-full min-h-[52px] rounded-xl border-2 border-slate-200 p-4 text-left hover:border-[#1e56cd] hover:bg-[#99ccff]/20 transition-colors"
               >
                 <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
                   <ClipboardCheck className="w-5 h-5 text-slate-600" />
@@ -736,7 +922,7 @@ export const ExamList: React.FC<ExamListProps> = ({
             <button
               type="button"
               onClick={() => { setShowModeModal(false); setPendingRoundId(null); }}
-              className="mt-4 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+              className="mt-4 w-full py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl min-h-[48px]"
             >
               취소
             </button>
@@ -744,15 +930,23 @@ export const ExamList: React.FC<ExamListProps> = ({
         </div>
       )}
 
-      {/* 잠금 안내: 순차 진행 */}
+      {/* 잠금 안내: 모바일 바텀 시트 · 규칙 요약 + 상세 한 줄 */}
       {showLockedModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-5">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLockedModal(false)} />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center animate-scale-in">
+          <div className="relative z-10 w-full max-w-sm max-h-[min(90dvh,100%)] overflow-y-auto overscroll-contain bg-white shadow-2xl text-center rounded-2xl p-6 animate-scale-in">
             <div className="w-12 h-12 rounded-full bg-[#99ccff] flex items-center justify-center mx-auto mb-4">
               <Lock className="w-6 h-6 text-[#1e56cd]" />
             </div>
-            <p className="text-slate-700 font-medium leading-relaxed">{lockedMessage}</p>
+            {isMobile ? (
+              <>
+                <p className="text-xs text-slate-500 font-semibold mb-2">이용 규칙</p>
+                <p className="text-slate-800 font-bold text-sm mb-3">
+                  {lockedAction === 'login' ? '로그인이 필요합니다' : '순서를 지켜 주세요'}
+                </p>
+              </>
+            ) : null}
+            <p className="text-slate-700 font-medium leading-relaxed text-sm px-1">{lockedMessage}</p>
             <button
               type="button"
               onClick={() => {
@@ -762,44 +956,68 @@ export const ExamList: React.FC<ExamListProps> = ({
                   else onNavigate('/login');
                 }
               }}
-              className="mt-5 w-full py-3 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1644a8]"
+              className={`mt-5 w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1644a8] min-h-[48px] ${lockedAction === 'none' ? '' : ''}`}
             >
-              확인
+              {lockedAction === 'login' ? '로그인하기' : '확인'}
             </button>
           </div>
         </div>
       )}
 
-      {/* 무료회원 3회차: 결제 안내 후 결제 화면 */}
+      {/* 무료회원 3회차: 결제 안내 — 모바일 바텀 시트 */}
       {showFreePaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-5">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowFreePaymentModal(false)} />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center animate-scale-in">
+          <div className="relative z-10 w-full max-w-sm max-h-[min(90dvh,100%)] overflow-y-auto overscroll-contain bg-white shadow-2xl text-center rounded-2xl p-6 animate-scale-in">
             <div className="w-12 h-12 rounded-full bg-[#99ccff] flex items-center justify-center mx-auto mb-4">
               <Lock className="w-6 h-6 text-[#1e56cd]" />
             </div>
-            <h3 className="text-lg font-black text-slate-900 mb-2">결제가 필요합니다</h3>
+            <h3 className="text-lg font-black text-slate-900 mb-2">
+              {showCommercialSubscriptionCopy ? '이용권이 필요합니다' : '이 회차는 아직 열리지 않았어요'}
+            </h3>
             <p className="text-sm text-slate-500 mb-5">
-              2회차까지 무료로 이용 가능합니다.
-              <br />
-              결제 후 전체 및 맞춤형 모의고사를 이용하실 수 있습니다.
+              {showCommercialSubscriptionCopy ? (
+                isMobile ? (
+                  <>
+                    무료는 1·2회차까지예요. 결제 후 3회차부터 맞춤형까지 이용할 수 있어요.
+                  </>
+                ) : (
+                  <>
+                    2회차까지 무료로 이용 가능합니다.
+                    <br />
+                    결제 후 전체 및 맞춤형 모의고사를 이용하실 수 있습니다.
+                  </>
+                )
+              ) : isMobile ? (
+                <>무료는 1·2회차까지예요. 베타에서는 이후 회차·맞춤형은 공개 일정에 따라 단계적으로 열려요.</>
+              ) : (
+                <>
+                  2회차까지 무료로 이용할 수 있어요.
+                  <br />
+                  베타 기간에는 3회차 이후·맞춤형 이용 조건이 안내된 순서에 따라 달라질 수 있어요.
+                </>
+              )}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setShowFreePaymentModal(false);
-                onNavigate('/checkout');
-              }}
-              className="w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1644a8]"
-            >
-              결제하러 가기
-            </button>
+            {showCommercialSubscriptionCopy ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFreePaymentModal(false);
+                  onNavigate('/checkout');
+                }}
+                className="w-full py-3.5 rounded-xl bg-[#1e56cd] text-white font-bold text-sm hover:bg-[#1644a8] min-h-[48px]"
+              >
+                결제하러 가기
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowFreePaymentModal(false)}
-              className="mt-3 w-full py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl"
+              className={`w-full py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl min-h-[48px] ${
+                showCommercialSubscriptionCopy ? 'mt-3' : 'mt-0'
+              }`}
             >
-              취소
+              {showCommercialSubscriptionCopy ? '닫기' : '확인'}
             </button>
           </div>
         </div>

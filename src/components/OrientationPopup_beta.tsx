@@ -37,7 +37,7 @@ const SLIDES = [
     id: 1,
     title: <span className="font-bold text-blue-600">안녕하세요, <br/> AiBT 베타테스터에 참여해주셔서 감사합니다!</span>,
     content:
-      '현재 AiBT는 최적화된 분석 환경을 위해 <b> 웹 버전</b>만 운영 중입니다.\n\n다음 안내에 따라 당신만의 합격 세트를 경험해 보세요.',
+      '다음 안내에 따라 당신만의 합격 세트를 경험해 보세요.',
     hasPrev: false,
   },
   {
@@ -139,7 +139,9 @@ export function OrientationPopupBeta({
         <div className="shrink-0 px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <h2 className="text-lg font-bold text-slate-900">
             {phase === 'update_notice'
-              ? (APP_BRAND === 'AiBT' ? '🎉 AiBT 베타 2.0 - 더 똑똑해졌어요!' : '🎉 핀셋 베타 2.0 - 더 똑똑해졌어요!')
+              ? (APP_BRAND === 'AiBT'
+                  ? '🎉 AiBT 베타 3.0 - 오픈베타 시작!!'
+                  : '🎉 핀셋 베타 3.0 - 오픈베타 시작!!')
               : '🚀 AiBT 베타테스터 핵심 기능 가이드'}
           </h2>
           {onLogout && (
@@ -157,7 +159,7 @@ export function OrientationPopupBeta({
           )}
         </div>
 
-        <div className="flex-1 overflow-hidden min-h-[560px] relative flex items-center justify-center">
+        <div className="flex-1 overflow-hidden min-h-[min(560px,calc(100dvh-11rem))] sm:min-h-[560px] relative flex items-center justify-center">
           <AnimatePresence mode="wait" initial={false}>
             {phase === 'update_notice' ? (
               <motion.div
@@ -170,23 +172,23 @@ export function OrientationPopupBeta({
               >
                 <div className="w-full max-w-2xl text-slate-600 text-base text-center space-y-4">
                   <p className="text-blue-600 font-semibold text-lg">
-                    베타 테스터 피드백으로 더 나은 기능을 준비했습니다.
-                  </p>
-                  <p className="text-slate-400 text-xs text-center">
-                    (26/3/10 12:00 기준)
+                    이번 업데이트로 학습 경험과 안내를 한층 정리했습니다.
                   </p>
                   <ul className="list-disc list-inside space-y-1.5 text-left text-slate-700">
-                    <li>진단 50% 단축 (240→120문항)</li>
-                    <li>문제 내 오류신고 기능 추가</li>
-                    <li>과목별 안전도 영역 로직 개선</li>
-                    <li>내 합격률 예측 로직 개선</li>
+                    <li>모바일 학습 환경 개선</li>
+                    <li>보안 및 저작권 보호 기능 강화</li>
+                    <li>예측 합격률 로직 개선</li>
+                    <li>문제 오류 신고 및 학습 편의성 개선</li>
                   </ul>
-                  <p className="text-slate-600 text-sm text-left">
-                    * 합격률 예측은 정확한 측정을 위해, 실력 확인이 완료된 후 제공됩니다.
-                  </p>
-                  <p className="text-slate-500 text-sm text-left">
-                    베타테스트 기간 푼 문제 데이터는, 개선된 로직에서 정교한 분석을 제공하기 위해 반영되지 않음을 양해 부탁드립니다.
-                  </p>
+                  <div className="text-slate-600 text-sm text-left space-y-2 border-t border-slate-100 pt-4">
+                    <p>예측 합격률은 개선된 로직으로 더 정확한 신호에 가깝게 보여 드립니다.</p>
+                    <p>
+                      오픈베타 기간에 제공되는 문제는 <b>무료 공개 문제</b>입니다.
+                    </p>
+                    <p className="text-slate-700">
+                      <b>모든 문제와 해설은 저작권 보호 대상</b>입니다. <b>무단 복제·공유·배포</b>는 허용되지 않습니다.
+                    </p>
+                  </div>
                 </div>
               </motion.div>
             ) : phase === 'level' ? (
@@ -248,14 +250,19 @@ export function OrientationPopupBeta({
                 ) : (
                   <div className="text-slate-700 text-base leading-relaxed text-center w-full">
                     {showOpenBetaFinishPage && (
-                      <div className="text-slate-700 text-base leading-relaxed text-left max-w-xl mx-auto">
-                        <p className="mb-4">
-                          베타에 참여해 주셔서 감사합니다. 본 서비스는{' '}
-                          <span className="font-semibold text-slate-900">2026년 4월 4일 빅데이터분석기사 필기 시험</span> 준비를 돕기 위해 무료로
-                          제공되는 오픈 베타입니다.
+                      <div className="text-slate-700 text-base leading-relaxed text-left max-w-xl mx-auto space-y-3">
+                        <p>
+                          오픈베타에 참여해 주셔서 진심으로 감사합니다.
+                        </p>
+                        <p>
+                          본 기간에 제공되는 문제는 모두 <span className="font-semibold text-slate-900">무료 공개 문제</span>입니다.
+                        </p>
+                        <p>
+                          모든 문제와 해설은 <span className="font-semibold text-slate-900">저작권 보호 대상</span>입니다.{' '}
+                          <span className="font-semibold text-slate-900">무단 복제, 공유, 배포 및 외부 유출</span>은 금지됩니다.
                         </p>
                         <p className="text-slate-600 text-sm">
-                          문의·피드백은 카카오톡 <span className="font-semibold text-slate-800">@aibt_beta</span> 로 연락 주세요.
+                          의견이나 오류 제보는 카카오톡 <span className="font-semibold text-slate-800">@aibt_beta</span> 로 부담 없이 보내 주세요.
                         </p>
                       </div>
                     )}

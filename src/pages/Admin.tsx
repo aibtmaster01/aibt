@@ -46,6 +46,8 @@ import {
   updateUserAdminMemo,
   fetchTodayVisitorCount,
   fetchVisitorCountsForRange,
+  fetchPremiumUserCount,
+  getVisitorDateKeyLocal,
   fetchErrorLogs,
   fetchUserExamResultsForAdmin,
   fetchUserStatsForAdmin,
@@ -114,11 +116,10 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   const [usersNextLoading, setUsersNextLoading] = useState(false);
   const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
   const [trendStart, setTrendStart] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`;
   });
-  const [trendEnd, setTrendEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [trendEnd, setTrendEnd] = useState<string>(() => getVisitorDateKeyLocal());
   const [visitorTrend, setVisitorTrend] = useState<{ date: string; count: number }[]>([]);
   const [trendLoading, setTrendLoading] = useState(false);
   const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([]);
@@ -129,8 +130,11 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
   const [betaReportCount, setBetaReportCount] = useState<number>(0);
   const [betaReportList, setBetaReportList] = useState<ProblemReportEntry[]>([]);
   const [betaLoading, setBetaLoading] = useState(false);
-
+  /** 방문자 집계·로컬 날짜 입력과 동일 키 */
+  const visitorToday = getVisitorDateKeyLocal();
   const today = new Date().toISOString().slice(0, 10);
+  const [dashTotalUsers, setDashTotalUsers] = useState<number | null>(null);
+  const [dashPremiumUsers, setDashPremiumUsers] = useState<number | null>(null);
 
   const paymentFormInitial = useMemo(
     () =>
@@ -300,8 +304,29 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
 
   useEffect(() => {
     if (menu !== 'dashboard') return;
-    fetchTodayVisitorCount(today).then(setTodayVisitors).catch(() => setTodayVisitors(0));
-  }, [menu, today]);
+    fetchTodayVisitorCount(visitorToday).then(setTodayVisitors).catch(() => setTodayVisitors(0));
+  }, [menu, visitorToday]);
+
+  useEffect(() => {
+    if (effectiveMenu !== 'dashboard') return;
+    let cancelled = false;
+    Promise.all([fetchUserCount().catch(() => null), fetchPremiumUserCount()])
+      .then(([total, premium]) => {
+        if (!cancelled) {
+          setDashTotalUsers(total);
+          setDashPremiumUsers(premium);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDashTotalUsers(null);
+          setDashPremiumUsers(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveMenu]);
 
   useEffect(() => {
     if (effectiveMenu !== 'dashboard') return;
@@ -580,39 +605,47 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <p className="text-slate-500 text-sm font-bold mb-1">총 가입자 수</p>
-                  <p className="text-3xl font-black text-slate-900">{stats.total}</p>
+                  <p className="text-3xl font-black text-slate-900">
+                    {dashTotalUsers !== null ? dashTotalUsers : stats.total}
+                  </p>
+                  <p className="text-slate-400 text-xs mt-2">Firestore users 전체 건수</p>
                 </div>
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <p className="text-slate-500 text-sm font-bold mb-1">유료 회원 수</p>
                   <p className="text-3xl font-black text-[#0034d3]">
-                    {stats.premium}
+                    {dashPremiumUsers !== null ? dashPremiumUsers : stats.premium}
                     {stats.premiumToday > 0 && (
                       <span className="ml-2 text-lg font-bold text-green-600">(↑ {stats.premiumToday})</span>
                     )}
                   </p>
+                  <p className="text-slate-400 text-xs mt-2">isPremium 필드 기준 · (↑ )는 목록 연동·당일 시작일 근사</p>
                 </div>
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <p className="text-slate-500 text-sm font-bold mb-1">오늘 신규 가입</p>
                   <p className="text-3xl font-black text-slate-900">{stats.todayNew}</p>
+                  <p className="text-slate-400 text-xs mt-2">실시간 연동 목록(최대 {USERS_PAGE_SIZE}명) 기준 근사</p>
                 </div>
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <p className="text-slate-500 text-sm font-bold mb-1">오늘 방문자 수</p>
                   <p className="text-3xl font-black text-slate-900">
                     {todayVisitors !== null ? todayVisitors : '—'}
                   </p>
+                  <p className="text-slate-400 text-xs mt-2">로그인 유저 · 로컬일 기준 · 일 1인 1회</p>
                 </div>
               </div>
 
-              <h2 className="text-lg font-bold text-slate-700 mb-3">회원수 추이 (방문자 수)</h2>
+              <h2 className="text-lg font-bold text-slate-700 mb-1">일별 방문자 수 추이</h2>
+              <p className="text-slate-500 text-sm mb-3">로그인 사용자만 집계(비로그인 제외). 달력은 브라우저 로컬 날짜 기준입니다.</p>
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-6">
                 <div className="flex flex-wrap items-center gap-3 mb-4">
                   <button
                     type="button"
                     onClick={() => {
-                      const d = new Date();
-                      d.setDate(1);
-                      setTrendStart(d.toISOString().slice(0, 10));
-                      setTrendEnd(new Date().toISOString().slice(0, 10));
+                      const n = new Date();
+                      const y = n.getFullYear();
+                      const m = n.getMonth();
+                      setTrendStart(`${y}-${String(m + 1).padStart(2, '0')}-01`);
+                      setTrendEnd(getVisitorDateKeyLocal());
                     }}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
@@ -621,12 +654,11 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                   <button
                     type="button"
                     onClick={() => {
-                      const d = new Date();
-                      d.setMonth(d.getMonth() - 1);
-                      d.setDate(1);
-                      setTrendStart(d.toISOString().slice(0, 10));
-                      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-                      setTrendEnd(end.toISOString().slice(0, 10));
+                      const n = new Date();
+                      const firstPrev = new Date(n.getFullYear(), n.getMonth() - 1, 1);
+                      const lastPrev = new Date(n.getFullYear(), n.getMonth(), 0);
+                      setTrendStart(getVisitorDateKeyLocal(firstPrev));
+                      setTrendEnd(getVisitorDateKeyLocal(lastPrev));
                     }}
                     className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
@@ -653,8 +685,10 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                 </div>
                 {trendLoading ? (
                   <p className="text-slate-500 text-sm py-4">로딩 중...</p>
+                ) : trendStart > trendEnd ? (
+                  <p className="text-amber-700 text-sm py-4">시작일이 종료일보다 늦습니다. 날짜를 조정해 주세요.</p>
                 ) : visitorTrend.length === 0 ? (
-                  <p className="text-slate-500 text-sm py-4">해당 기간 데이터가 없습니다.</p>
+                  <p className="text-slate-500 text-sm py-4">기간을 불러올 수 없습니다.</p>
                 ) : (
                   <div className="w-full min-w-[200px] min-h-[200px]" style={{ width: '100%', height: 256, minWidth: 200, minHeight: 200 }}>
                     <ResponsiveContainer width="100%" height={256} minWidth={200} minHeight={200}>
@@ -669,9 +703,9 @@ export const Admin: React.FC<AdminProps> = ({ users: usersProp, currentUser: cur
                         <Tooltip
                           contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0' }}
                           labelFormatter={(v) => v}
-                          formatter={(value: number) => [`${value}명`, '방문자']}
+                          formatter={(value: number) => [`${value}명`, '로그인 방문']}
                         />
-                        <Line type="monotone" dataKey="count" stroke="#0034d3" strokeWidth={2} dot={{ fill: '#0034d3', r: 3 }} name="방문자 수" />
+                        <Line type="monotone" dataKey="count" stroke="#0034d3" strokeWidth={2} dot={{ fill: '#0034d3', r: 3 }} name="로그인 방문자 수" />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
